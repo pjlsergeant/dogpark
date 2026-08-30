@@ -23,19 +23,46 @@ export interface RateLimiter {
   peek(key: string): RateVerdict;
   /** Spends without asking, for a cost discovered after the fact. */
   record(key: string): void;
+  /** How many keys are being remembered. For tests and metrics, not verdicts. */
+  size(): number;
 }
 
 const WINDOW_MS = 60_000;
 
 export function createRateLimiter(perMinute: number, now: () => number = Date.now): RateLimiter {
   const hits = new Map<string, number[]>();
+  let lastSweep = now();
 
-  /** The window's live entries, pruned and stored back. */
-  const window = (key: string, at: number): number[] => {
+  /**
+   * The window's live entries. A key whose window has emptied is forgotten
+   * rather than kept as an empty list: the failed-auth keys carry the source
+   * address and whatever id a stranger claimed, so remembering every one ever
+   * seen would be memory growth driven by input that need not be valid.
+   */
+  const prune = (key: string, at: number): number[] => {
     const cutoff = at - WINDOW_MS;
     const recent = (hits.get(key) ?? []).filter((t) => t > cutoff);
+    if (recent.length === 0) hits.delete(key);
+    return recent;
+  };
+
+  /** Pruned and stored back, for a caller about to add to it. */
+  const window = (key: string, at: number): number[] => {
+    sweep(at);
+    const recent = prune(key, at);
     hits.set(key, recent);
     return recent;
+  };
+
+  /**
+   * A key that is hit once and never asked about again is never pruned by
+   * `prune`, so once a window has passed every key is walked. Once per
+   * window, so the walk is amortised over at least as many requests.
+   */
+  const sweep = (at: number): void => {
+    if (at - lastSweep < WINDOW_MS) return;
+    lastSweep = at;
+    for (const key of [...hits.keys()]) prune(key, at);
   };
 
   const verdict = (recent: readonly number[], at: number): RateVerdict => {
@@ -60,7 +87,8 @@ export function createRateLimiter(perMinute: number, now: () => number = Date.no
 
     peek(key) {
       const at = now();
-      return verdict(window(key, at), at);
+      // Asking creates nothing: a key never charged is a key never stored.
+      return verdict(prune(key, at), at);
     },
 
     record(key) {
@@ -69,6 +97,10 @@ export function createRateLimiter(perMinute: number, now: () => number = Date.no
       // Same rule as `check`: an over-budget key stops accumulating, so the
       // recovery point cannot be pushed out by the flood it is refusing.
       if (recent.length < perMinute) recent.push(at);
+    },
+
+    size() {
+      return hits.size;
     },
   };
 }
