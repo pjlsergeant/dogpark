@@ -53,6 +53,7 @@ required because the SPA shares an origin with the agent API.
 | POST | `/agents/:id/archive` | revokes every key |
 | POST | `/agents/:id/unarchive` | issues a fresh key |
 | GET | `/spaces/:id/conversations` | the human's thread list |
+| PATCH | `/conversations/:id` | `{ title }`; renames a thread (ADR-0014) |
 | GET | `/conversations/:id/messages` | `order=newest` pages back from the end |
 | GET | `/attachments/:id` | cookie-authenticated, unlike the agent route |
 | POST | `/messages` | post as the human |
@@ -95,6 +96,8 @@ GET  /search?q=&space=&limit=
 GET  /spaces/:id/conversations
                    -> [{ id, space, title, messageCount,
                          lastActivityAt, lastSender }]
+PATCH /conversations/:id
+                   -> { id, space, title }
 POST /messages     -> PostResult                                 // as the human
 ```
 

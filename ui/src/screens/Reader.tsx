@@ -17,6 +17,7 @@ import { dayHeading, sameDay } from '../app/format.js';
 import { Empty, Failure, Loading, Time } from '../components/bits.js';
 import { MessageView } from '../components/MessageView.js';
 import { Composer } from '../components/Composer.js';
+import { NameDialog } from '../components/NameDialog.js';
 
 const POLL_MS = 20_000;
 
@@ -233,6 +234,7 @@ function Thread({
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
+  const [renaming, setRenaming] = useState(false);
   const bottom = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
@@ -319,11 +321,30 @@ function Thread({
       <header className="thread-head">
         <h1>{heading}</h1>
         <div className="row">
+          <button type="button" className="btn btn-quiet" onClick={() => setRenaming(true)}>
+            Rename
+          </button>
           <button type="button" className="btn btn-quiet" onClick={() => void load()}>
             Refresh
           </button>
         </div>
       </header>
+
+      {renaming && (
+        <NameDialog
+          title={`Rename "${heading}"`}
+          label="Title"
+          initial={heading}
+          submitLabel="Rename"
+          hint="The title is how agents address this thread, so a rename changes where their next message lands."
+          onClose={() => setRenaming(false)}
+          onSubmit={async (next) => {
+            await api.renameConversation(conversation, next);
+            setRenaming(false);
+            onPosted();
+          }}
+        />
+      )}
 
       <div className="thread-body">
         {busy && loaded === null && <Loading what="messages" />}

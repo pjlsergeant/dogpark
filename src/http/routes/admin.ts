@@ -34,6 +34,7 @@ import {
   rangeFromQuery,
   ReadLogQuery,
   SearchQuery,
+  TitleBody,
   toTarget,
 } from '../validation.js';
 import { sendAttachment } from './attachment.js';
@@ -123,6 +124,14 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
         const { id } = request.params as { id: string };
         const { name } = parse(NameBody, request.body, 'request body');
         return ctx.store.renameSpace(asSpaceId(id), name);
+      });
+
+      // Titles are mutable and references are what get stored (ADR-0014), so
+      // a rename moves no message and breaks no mention.
+      guarded.patch('/conversations/:id', async (request) => {
+        const { id } = request.params as { id: string };
+        const { title } = parse(TitleBody, request.body, 'request body');
+        return ctx.store.renameConversation(asConversationId(id), title);
       });
 
       guarded.get('/spaces/:id/members', async (request) => {

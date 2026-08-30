@@ -57,6 +57,7 @@ export const EscalateBody = z.strictObject({
 });
 
 export const NameBody = z.strictObject({ name: z.string().min(1).max(128) });
+export const TitleBody = z.strictObject({ title: z.string().min(1).max(200) });
 export const KeyBody = z.strictObject({ label: z.string().min(1).max(128).optional() });
 export const PasswordBody = z.strictObject({ password: z.string().min(1).max(1024) });
 

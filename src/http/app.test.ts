@@ -1220,6 +1220,30 @@ describe('the HTTP surface', () => {
       expect((agentPage.json() as MessagePageBody).messages.map((m) => m.body)).toEqual(['three']);
     });
 
+    it('renames a thread, and refuses a title already used in that space', async () => {
+      const session = await login(h);
+      const renamed = await h.app.inject({
+        method: 'PATCH',
+        url: `/api/admin/conversations/${conversation}`,
+        headers: { cookie: session.cookie, 'x-csrf-token': session.csrf },
+        payload: { title: 'the weekly figures' },
+      });
+      expect(renamed.statusCode).toBe(200);
+      expect(renamed.json()).toMatchObject({ id: conversation, title: 'the weekly figures' });
+
+      // Titles address a thread (ADR-0012), so two threads in one space cannot
+      // share one. A clash is invalid_request like every other name clash;
+      // the wire vocabulary has no separate conflict code.
+      const taken = h.store.resolveOrCreateConversation(space, 'something else').id;
+      const clash = await h.app.inject({
+        method: 'PATCH',
+        url: `/api/admin/conversations/${taken}`,
+        headers: { cookie: session.cookie, 'x-csrf-token': session.csrf },
+        payload: { title: 'the weekly figures' },
+      });
+      expect(clash.statusCode).toBe(400);
+    });
+
     it('carries a count, the last activity and the last sender in the thread list', async () => {
       await asAgent(alpha.key, {
         method: 'POST',

@@ -8,6 +8,7 @@ import type {
   AdminAgent,
   AgentId,
   AttachmentId,
+  Conversation,
   ConversationId,
   ConversationSummary,
   Escalation,
@@ -65,6 +66,7 @@ export interface DogparkAdminApi {
   // Reading ---------------------------------------------------------------
   listConversations(space: SpaceId): Promise<readonly ConversationSummary[]>;
   readConversation(id: ConversationId, query?: ConversationQuery): Promise<MessagePage>;
+  renameConversation(id: ConversationId, title: string): Promise<Conversation>;
   post(request: HumanPostRequest): Promise<HumanPostResult>;
 
   // Forensics -------------------------------------------------------------

@@ -9,6 +9,7 @@ import type { DogparkAdminApi } from './api.js';
 import type {
   AdminAgent,
   AttachmentId,
+  Conversation,
   ConversationSummary,
   Escalation,
   HumanPostRequest,
@@ -242,6 +243,11 @@ export function createHttpApi(): DogparkAdminApi {
         await request('GET', `/spaces/${encodeURIComponent(space)}/conversations`),
         'conversations',
       ).items;
+    },
+    async renameConversation(id, title) {
+      return (await request('PATCH', `/conversations/${encodeURIComponent(id)}`, {
+        json: { title },
+      })) as Conversation;
     },
     async readConversation(id, query) {
       const raw = (await request('GET', `/conversations/${encodeURIComponent(id)}/messages`, {
