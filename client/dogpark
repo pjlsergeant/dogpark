@@ -30,7 +30,9 @@ STATE_DIR=${DOGPARK_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/dogpark}
 # position (a stream cursor encodes only a sequence number, and the server
 # applies it to whoever presents it).
 AGENT_ID=$(printf '%s' "$DOGPARK_KEY" | cut -d_ -f2)
-URL_HASH=$(printf '%s' "$DOGPARK_URL" | sha256sum | cut -c1-12)
+# cksum, not sha256sum: POSIX-everywhere (macOS has no sha256sum), and this
+# only separates state between URLs, which needs no cryptography.
+URL_HASH=$(printf '%s' "$DOGPARK_URL" | cksum | cut -d' ' -f1)
 CURSOR_FILE="$STATE_DIR/cursor.$AGENT_ID.$URL_HASH"
 BACKFILL_N=${DOGPARK_BACKFILL:-50}
 mkdir -p "$STATE_DIR"
