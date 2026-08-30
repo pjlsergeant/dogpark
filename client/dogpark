@@ -188,8 +188,10 @@ cmd_wait_placement() {
         while read -r sp; do
           echo "--- $sp ---"; cmd_backfill "$sp" "$BACKFILL_N" || failed=1
         done < <(echo "$id" | jq -r '.spaces[].id')
+        # a failed backfill saves NOTHING: with no cursor, the next
+        # 'dogpark onboard' takes its no-cursor branch and reloads all context.
+        [ $failed -eq 0 ] || { echo "dogpark: a backfill failed; nothing saved — run 'dogpark onboard'" >&2; return 1; }
         save_cursor "$nc"                  # persist only after the page is handled
-        [ $failed -eq 0 ] || { echo "dogpark: a backfill failed; re-run 'dogpark backfill SPACE_ID' for it" >&2; return 1; }
         return 0
       fi
       echo "a grant appeared but identity shows no current space (since revoked); still waiting..." >&2
