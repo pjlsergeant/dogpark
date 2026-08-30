@@ -51,6 +51,11 @@ export const MIGRATIONS: readonly Migration[] = [
     name: 'collapse-tip-and-meta',
     sql: sqlFile('0003-collapse-tip-and-meta.sql'),
   },
+  {
+    version: 4,
+    name: 'tip-seq-nullable',
+    sql: sqlFile('0004-tip-seq-nullable.sql'),
+  },
 ];
 
 const VERSION_TABLE = `

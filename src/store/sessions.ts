@@ -28,9 +28,12 @@ export function sessionStore(
     const fingerprint = sha256(passwordHash);
     const recorded = st.getMeta.get({ key: PASSWORD_FINGERPRINT });
     if (recorded?.value === fingerprint) return 0;
-    // Nothing recorded is an upgrade or a fresh database, not a rotation:
-    // there is no earlier password to have changed from.
-    const revoked = recorded === undefined ? 0 : st.deleteAllSessions.run().changes;
+    // Either the hash changed, or this is the first start to record one. The
+    // first sighting cannot tell an upgrade from an upgrade that also rotated
+    // the password, so it trusts nothing: a session minted before any
+    // fingerprint existed has nothing vouching for the verifier behind it. A
+    // fresh database has no sessions, so a first start still revokes nothing.
+    const revoked = st.deleteAllSessions.run().changes;
     st.setMeta.run({ key: PASSWORD_FINGERPRINT, value: fingerprint });
     return revoked;
   });

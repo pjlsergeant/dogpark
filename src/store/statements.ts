@@ -225,9 +225,12 @@ export function prepareStatements(db: Db) {
       'SELECT label FROM label_history WHERE kind = @kind AND subject_id = @subject ' +
         'AND seq > @labelSeq ORDER BY seq ASC LIMIT 1',
     ),
-    readLabelSeq: prepare<{ id: string }, { label_seq: number; read_at: string; tip_seq: number }>(
-      'SELECT label_seq, read_at, tip_seq FROM read_log WHERE id = @id',
-    ),
+    // `tip_seq` is null when the row never recorded a tip (0004); a stored 0 is
+    // a real one — the read ran before any sequence was allocated.
+    readLabelSeq: prepare<
+      { id: string },
+      { label_seq: number; read_at: string; tip_seq: number | null }
+    >('SELECT label_seq, read_at, tip_seq FROM read_log WHERE id = @id'),
     setArchived: prepare<{ id: string; archived: number }, unknown>(
       'UPDATE agent SET archived = @archived WHERE id = @id',
     ),
@@ -589,16 +592,24 @@ export function prepareStatements(db: Db) {
     listReadsForAgent: prepare<ReadLogBounds & { agent: string }, ReadLogRow>(
       READ_LOG_COLUMNS + 'agent_id = @agent' + READ_LOG_TAIL,
     ),
-    // Every empty stream read old enough to compact, in the order the chain
-    // rule walks them: per agent, and within an agent by rowid, which is the
-    // order they were written in. An already-collapsed row is an ordinary
-    // candidate, which is what makes repeated sweeps converge on one row per
-    // idle stretch rather than one per sweep.
-    emptyStreamReads: prepare<{ before: string }, EmptyStreamReadRow>(
+    // One bounded batch of empty stream reads old enough to compact, in rowid
+    // order — the order they were written in, across every agent at once; the
+    // sweep separates the agents as it walks. Keyset on rowid rather than
+    // OFFSET, and a limit rather than the lot: this is the fastest-growing
+    // table here, and a first boot after months of idle polling would otherwise
+    // load every candidate into memory under one transaction.
+    //
+    // An already-collapsed row is an ordinary candidate, which is what makes
+    // repeated sweeps converge on one row per idle stretch rather than one per
+    // sweep.
+    emptyStreamReads: prepare<
+      { before: string; afterRow: number; limit: number },
+      EmptyStreamReadRow
+    >(
       'SELECT rowid AS row_id, agent_id, read_at, params_json, cursor, collapsed_count, ' +
         '       first_read_at ' +
         "  FROM read_log WHERE kind = 'stream' AND item_count = 0 AND read_at < @before " +
-        ' ORDER BY agent_id, rowid',
+        '   AND rowid > @afterRow ORDER BY rowid LIMIT @limit',
     ),
     collapseRead: prepare<{ row: number; count: number; first: string }, unknown>(
       'UPDATE read_log SET collapsed_count = @count, first_read_at = @first WHERE rowid = @row',

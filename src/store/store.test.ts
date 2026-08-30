@@ -1157,15 +1157,35 @@ describe('a read is bounded by the stream tip it recorded', () => {
     ).toEqual(['one']);
   });
 
-  it('falls back to the millisecond bound for a row recorded before tip_seq existed', () => {
+  it('shows nothing for a read taken before any sequence was allocated', () => {
+    const h = harness();
+    // The onboarding order: the agent exists and is polling before the human
+    // puts it anywhere, so its first read saw an empty stream and recorded a
+    // tip of 0. The clock never moves, so only the sequence separates them.
+    const agent = h.store.createAgent('alice').id;
+    h.store.readStream(agent);
+    const read = h.store.readReadLog({ agent }).entries[0]?.id ?? '';
+
+    const space = h.store.createSpace('acme').id;
+    h.store.grantMembership(agent, space);
+    const posted = post(h, agent, space, 'daily', 'after the read');
+
+    // A recorded 0 is a real tip, not the back-fill: nothing existed yet.
+    expect(h.store.readConversationAsOf(read, posted.conversation)?.messages).toEqual([]);
+    expect(h.store.readConversation({ kind: 'human' }, posted.conversation).messages).toHaveLength(
+      1,
+    );
+  });
+
+  it('falls back to the millisecond bound for a row that recorded no tip', () => {
     const h = harness();
     const { agent, space } = scene(h);
     const first = post(h, agent, space, 'daily', 'before the read');
     h.store.readStream(agent);
     const read = h.store.readReadLog({ agent }).entries[0]?.id ?? '';
     post(h, agent, space, 'daily', 'after the read');
-    // What migration 0003 leaves on every row it back-filled: unknown.
-    h.store.database.prepare('UPDATE read_log SET tip_seq = 0').run();
+    // What migration 0004 leaves on every row 0003 back-filled: unknown.
+    h.store.database.prepare('UPDATE read_log SET tip_seq = NULL').run();
 
     // Coarse again, and visibly so: the later message shares the millisecond
     // and comes back.
@@ -1542,11 +1562,17 @@ describe('sessions', () => {
 
   it('revokes every session when the password changes, and none when it has not', () => {
     const h = harness();
-    // The first sighting is an upgrade or a fresh database, not a rotation.
+    // The first sighting cannot tell an upgrade from an upgrade that also
+    // rotated the password, so it revokes: nothing vouches for a session
+    // minted before any fingerprint was recorded.
     const issued = h.store.createSession(3600);
+    expect(h.store.syncPasswordFingerprint('scrypt$first')).toBe(1);
+    expect(h.store.verifySession(issued.token)).toBeUndefined();
+
+    // Settled at that hash: the next start revokes nothing.
+    const settled = h.store.createSession(3600);
     expect(h.store.syncPasswordFingerprint('scrypt$first')).toBe(0);
-    expect(h.store.syncPasswordFingerprint('scrypt$first')).toBe(0);
-    expect(h.store.verifySession(issued.token)?.id).toBe(issued.id);
+    expect(h.store.verifySession(settled.token)?.id).toBe(settled.id);
 
     const other = h.store.createSession(3600);
     expect(h.store.syncPasswordFingerprint('scrypt$second')).toBe(2);
@@ -1563,6 +1589,14 @@ describe('sessions', () => {
       .prepare("SELECT value FROM meta WHERE key = 'password-fingerprint'")
       .get() as { value: string };
     expect(stored.value).not.toBe('scrypt$second');
+  });
+
+  it('logs nobody out on a first boot, which has nobody to log out', () => {
+    const h = harness();
+    expect(h.store.syncPasswordFingerprint('scrypt$first')).toBe(0);
+    const issued = h.store.createSession(3600);
+    expect(h.store.syncPasswordFingerprint('scrypt$first')).toBe(0);
+    expect(h.store.verifySession(issued.token)?.id).toBe(issued.id);
   });
 });
 
@@ -2035,6 +2069,46 @@ describe('runs of empty stream polls are compacted', () => {
       n: number;
     };
     expect(rows.n).toBe(4);
+  });
+
+  it('walks more candidates than one batch holds, and rejoins across the seam', () => {
+    const h = harness();
+    const { agent } = scene(h);
+    const bob = h.store.createAgent('bob').id;
+    const space = h.store.createSpace('other').id;
+    h.store.grantMembership(bob, space);
+    // Two agents polling in step, so the batches interleave them and each run
+    // is only a run because the sweep keeps the agents apart.
+    let mine = settle(h, agent);
+    let theirs = settle(h, bob);
+    const began = h.at();
+    for (let i = 0; i < 7; i += 1) {
+      mine = h.store.readStream(agent, { from: { after: mine } }).nextCursor;
+      theirs = h.store.readStream(bob, { from: { after: theirs } }).nextCursor;
+      h.advance(60);
+    }
+
+    // Three batches of at most five candidates, two runs straddling every
+    // seam: each agent still ends with one row standing for its whole stretch.
+    h.store.collapseEmptyStreamReads(h.at(), 5);
+    for (const [who, cursor] of [
+      [agent, mine],
+      [bob, theirs],
+    ] as const) {
+      const entries = h.store.readReadLog({ agent: who }).entries;
+      expect(entries).toHaveLength(2);
+      expect(entries[0]?.collapsedCount).toBe(7);
+      expect(entries[0]?.firstReadAt).toBe(began);
+      expect(entries[0]?.cursor).toBe(cursor);
+    }
+
+    // Nothing left to do, and a batch size is not an excuse to do it twice.
+    expect(h.store.collapseEmptyStreamReads(h.at(), 5)).toEqual({ collapsed: 0, removed: 0 });
+  });
+
+  it('refuses a batch size that would never finish', () => {
+    const h = harness();
+    expectStoreError(() => h.store.collapseEmptyStreamReads(h.at(), 0), 'invalid_request');
   });
 
   it('merges a later run into the row a previous sweep left', () => {

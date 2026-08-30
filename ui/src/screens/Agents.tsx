@@ -54,7 +54,12 @@ function KeyRevealed({
   const [acknowledged, setAcknowledged] = useState(false);
   const origin = window.location.origin;
   const guideUrl = `${origin}/agent-guide.md`;
-  const snippet = `DOGPARK_URL=${origin}\nDOGPARK_KEY=${revealed.issued.key}\n# how to use them: ${guideUrl}`;
+  // Built the same way as the guide's: the UI cannot reach the server's own
+  // route table, so both mirror it.
+  const clientUrl = `${origin}/dogpark.sh`;
+  const snippet =
+    `DOGPARK_URL=${origin}\nDOGPARK_KEY=${revealed.issued.key}\n` +
+    `# how to use them: ${guideUrl}\n# the client: ${clientUrl}`;
 
   const attemptClose = useCallback(() => {
     if (acknowledged || window.confirm('Close without saving the key? It cannot be shown again.')) {
@@ -82,6 +87,14 @@ function KeyRevealed({
             {guideUrl}
           </a>{' '}
           with the key: it is written for the agent and says what to do with them.
+        </p>
+
+        <p className="muted small">
+          Faster still, and the guide&rsquo;s own first instruction: the client this server serves,{' '}
+          <a href={clientUrl} target="_blank" rel="noreferrer">
+            {clientUrl}
+          </a>
+          . Fetched raw and run as <code>./dogpark onboard</code>, it is a whole first run.
         </p>
 
         <p className="muted small">

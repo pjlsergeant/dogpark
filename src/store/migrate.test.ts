@@ -83,6 +83,44 @@ describe('migrations', () => {
     }
   });
 
+  it('demotes a back-filled tip to unknown, and keeps a real one, through migration 4', () => {
+    const db = new Database(file());
+    try {
+      const upToThree = MIGRATIONS.filter((m) => m.version <= 3);
+      migrate(db, upToThree);
+      // Synthetic rows without an agent behind them: the fixture is the
+      // rebuild, not the references.
+      db.pragma('foreign_keys = OFF');
+      const insert = db.prepare(
+        'INSERT INTO read_log (rowid, id, agent_id, read_at, kind, params_json, cursor, ' +
+          '                      item_count, label_seq, tip_seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      );
+      insert.run(5, 'r5', 'a', '2026-01-01T00:00:00.000Z', 'stream', '{}', 'c1', 0, 0, 0);
+      insert.run(9, 'r9', 'a', '2026-01-01T00:00:01.000Z', 'stream', '{}', 'c2', 0, 0, 7);
+      // v3 could not hold the distinction this migration exists to make.
+      expect(() =>
+        insert.run(10, 'r10', 'a', '2026-01-01T00:00:02.000Z', 'stream', '{}', 'c3', 0, 0, null),
+      ).toThrow(/NOT NULL/);
+
+      const result = migrate(db);
+      expect(result.from).toBe(3);
+      expect(result.applied).toEqual([4]);
+      // The rowid is half the read-log cursor, so the rebuild must keep it. A
+      // stored 0 cannot be told from 0003's back-fill and is demoted to
+      // unknown; anything else was a tip and survives.
+      expect(db.prepare('SELECT rowid, id, tip_seq FROM read_log ORDER BY rowid').all()).toEqual([
+        { rowid: 5, id: 'r5', tip_seq: null },
+        { rowid: 9, id: 'r9', tip_seq: 7 },
+      ]);
+      insert.run(10, 'r10', 'a', '2026-01-01T00:00:02.000Z', 'stream', '{}', 'c3', 0, 0, null);
+      expect(
+        db.prepare('SELECT collapsed_count, first_read_at FROM read_log WHERE id = ?').get('r10'),
+      ).toEqual({ collapsed_count: 1, first_read_at: null });
+    } finally {
+      db.close();
+    }
+  });
+
   it('records what it applied in a version table', () => {
     const db = new Database(file());
     try {

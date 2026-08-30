@@ -114,10 +114,10 @@ GET  /reads/:id    -> one read row, shaped as above
 GET  /reads/:id/conversations/:conversationId/messages?since&until&after&order&limit
                    -> MessagePage, rendered as of that read and ending at it:
                       nothing past the stream position the row recorded is
-                      included. Exact for rows written at schema version 3 or
-                      later; older rows have no position and end at the read's
-                      millisecond instead, which includes a message sent later
-                      in that same millisecond
+                      included. Exact for a row that recorded a position; a row
+                      that recorded none ends at the read's millisecond
+                      instead, which includes a message sent later in that same
+                      millisecond
 GET  /reads/:id/messages/:messageId
                    -> Message
 GET  /agents/:id/keys

@@ -154,6 +154,7 @@ write-ahead log at different moments and produce a database that will not
 open. Either stop the server and copy the directory, or take a live backup:
 
 ```sh
+mkdir -p backup
 sqlite3 dogpark.sqlite "VACUUM INTO 'backup/dogpark.sqlite'"
 cp -r attachments backup/attachments
 ```

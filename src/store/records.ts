@@ -408,9 +408,10 @@ export interface Store {
    * query as `readConversation` for the human, rendered with the labels in
    * force then, and bounded at the read's own moment: nothing sent after the
    * read is included, since the agent could not have seen it. The bound is
-   * the stream tip the row recorded, so it is exact — a row written before
-   * that was recorded (schema versions below 3) falls back to the read's
-   * millisecond, and a message sent later in that same millisecond is shown.
+   * the stream tip the row recorded, so a row that recorded one is exact —
+   * including a recorded tip of 0, a read of a stream nothing had been written
+   * to yet. A row that recorded no tip falls back to the read's millisecond,
+   * and a message sent later in that same millisecond is shown.
    * Not a read: nothing is logged. Undefined if the read or the conversation
    * is unknown.
    */
@@ -459,8 +460,16 @@ export interface Store {
    * and no read of any other kind, is ever touched — so this is a summary,
    * not a retention policy. `collapsed` counts the runs compacted, `removed`
    * the rows that went.
+   *
+   * The walk is batched, so neither memory nor any one transaction grows with
+   * the log. `batchSize` is how many candidates a batch holds; it defaults to a
+   * size no ordinary sweep reaches and exists so a test can cross a batch
+   * boundary without writing thousands of rows.
    */
-  collapseEmptyStreamReads(olderThan: Timestamp): {
+  collapseEmptyStreamReads(
+    olderThan: Timestamp,
+    batchSize?: number,
+  ): {
     readonly collapsed: number;
     readonly removed: number;
   };
@@ -474,9 +483,10 @@ export interface Store {
    * Notices a change of the configured password hash, and revokes every
    * session when it has changed — a rotation is the moment existing cookies
    * stop being trusted. Returns how many were revoked: 0 when the hash is
-   * unchanged, and 0 the first time it is seen, so an upgrade or a fresh
-   * database does not log the human out. What is stored is a hash *of* the
-   * hash, so the table never holds the verifier itself.
+   * unchanged. The first start to record a fingerprint revokes too, since it
+   * cannot tell an upgrade from an upgrade that also rotated the password; a
+   * fresh database has no sessions and so loses nothing. What is stored is a
+   * hash *of* the hash, so the table never holds the verifier itself.
    */
   syncPasswordFingerprint(passwordHash: string): number;
 }

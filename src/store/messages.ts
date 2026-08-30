@@ -418,12 +418,13 @@ export function messageStore(
       // the bound is exact — a message existed at the read iff its seq is at
       // or below it — and the caller's own `until` is left alone.
       //
-      // A row written before tip_seq existed carries 0 and falls back to the
-      // old bound: `until` is exclusive and the clock is millisecond, so the
+      // A row that recorded no tip carries null and falls back to the old
+      // bound: `until` is exclusive and the clock is millisecond, so the
       // ceiling is the millisecond after the read, and a message sent later in
-      // that same millisecond is included.
+      // that same millisecond is included. A recorded 0 is not that row — it
+      // is a read of an empty stream, and its exact ceiling is 0.
       let plan;
-      if (position.tip_seq > 0) {
+      if (position.tip_seq !== null) {
         plan = planQuery(range, limit, position.tip_seq);
       } else {
         const ceiling = new Date(Date.parse(position.read_at) + 1).toISOString() as Timestamp;

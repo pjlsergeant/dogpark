@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { loadConfig } from './config.js';
 import { attachmentRoot, sweepUnreferenced } from './http/attachments.js';
 import { buildApp } from './http/app.js';
-import { hashPassword, readSecret } from './http/password.js';
+import { assertUsablePasswordHash, hashPassword, readSecret } from './http/password.js';
 import { WriteSignals } from './http/signal.js';
 import { escalationQueue } from './notify/queue.js';
 import { Notifier } from './notify/webhook.js';
@@ -77,6 +77,12 @@ async function main(): Promise<void> {
     file: join(config.DOGPARK_DATA_DIR, 'dogpark.sqlite'),
     humanDisplayName: config.DOGPARK_DISPLAY_NAME,
   });
+  // Before the fingerprint is touched: a hash nobody can match must refuse the
+  // start before it is allowed to revoke anything. Syncing first would log
+  // everyone out, record the unusable hash, and only then refuse — and the
+  // corrected hash would look like another rotation on the next boot.
+  // buildApp asserts it again for callers that reach it directly.
+  assertUsablePasswordHash(config.DOGPARK_PASSWORD_HASH);
   // Before the app is built, so no request is served under a password that has
   // changed while sessions minted under the old one are still valid. The log
   // has to wait for the app.
