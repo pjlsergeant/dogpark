@@ -1,0 +1,17 @@
+node_modules/
+dist/
+*.tsbuildinfo
+
+.env
+.env.*
+!.env.example
+
+.DS_Store
+
+# Reviewer scratch: byre-codereview agents fetch pages and sources into the
+# working tree despite being read-only about the repo itself.
+/b.html
+/b.txt
+/p.html
+/p.txt
+/s.py
