@@ -19,12 +19,14 @@ For the reference to stay honest, every input to the rendering must be
 reconstructible: the row itself, membership (history, ADR-0011), and the
 labels — which are journaled on rename in `label_history` (migration 0002).
 Each read-log row records the history's position when it was written, and
-`messageAsRead(id, readLogId)` renders a row with the labels in force at that
-position, so what an agent was handed can be reproduced verbatim after any
-number of renames. Position, not time: a read and a rename in the same
-millisecond are still ordered the way they happened. The one label outside the
-database is the human's display name, which is configuration and changes only
-with a restart.
+`renderAsOfRead(id, readLogId)` renders a row with the labels in force at that
+position, so the wording an agent was handed can be reproduced verbatim after
+any number of renames. Position, not time: a read and a rename in the same
+millisecond are still ordered the way they happened. It is a label snapshot,
+not proof of inclusion — *which* rows a read covered is answered by the row's
+kind, parameters and cursor (ADR-0005), and this answers what those rows said.
+The one label outside the database is the human's display name, which is
+configuration and changes only with a restart.
 
 ## Consequences
 

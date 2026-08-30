@@ -1106,7 +1106,7 @@ describe('the read log', () => {
   });
 });
 
-describe('a read is reproducible after renames', () => {
+describe('the wording of a read is reproducible after renames', () => {
   const reader = (agent: AgentId): Reader => ({ kind: 'agent', id: agent });
   const newestRead = (h: Harness, agent: AgentId): string =>
     h.store.readReadLog({ agent }).entries[0]?.id ?? '';
@@ -1134,23 +1134,23 @@ describe('a read is reproducible after renames', () => {
     const latest = newestRead(h, agent);
 
     // The newest read: every label current.
-    const now = h.store.messageAsRead(posted.id, latest);
+    const now = h.store.renderAsOfRead(posted.id, latest);
     expect(now?.body).toBe('ping @bobby about the figures');
     expect(now?.conversationTitle).toBe('weekly');
     expect(now?.sender.displayName).toBe('alicia');
 
     // The first read: exactly what was handed over — not the first rename's
     // value, which a "latest history row" lookup would have produced.
-    const then = h.store.messageAsRead(posted.id, first);
+    const then = h.store.renderAsOfRead(posted.id, first);
     expect(then?.body).toBe(handed?.body);
     expect(then?.conversationTitle).toBe(handed?.conversationTitle);
     expect(then?.sender.displayName).toBe(handed?.sender.displayName);
     expect(then?.mentions).toEqual([bob]);
 
     // Between the two renames of bob.
-    expect(h.store.messageAsRead(posted.id, between)?.body).toBe('ping @robert about the figures');
-    expect(h.store.messageAsRead('nope' as MessageId, between)).toBeUndefined();
-    expect(h.store.messageAsRead(posted.id, 'nope')).toBeUndefined();
+    expect(h.store.renderAsOfRead(posted.id, between)?.body).toBe('ping @robert about the figures');
+    expect(h.store.renderAsOfRead('nope' as MessageId, between)).toBeUndefined();
+    expect(h.store.renderAsOfRead(posted.id, 'nope')).toBeUndefined();
   });
 
   it('journals nothing for a rename to the same label', () => {

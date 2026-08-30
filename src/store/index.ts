@@ -498,16 +498,20 @@ export interface Store {
   renameConversation(conversation: ConversationId, title: string): Conversation;
 
   /**
-   * One message as it rendered for a given read-log row: the sender's name,
-   * the conversation's title and the mentioned names are the labels in force
-   * when that read was written, from the label history (migration 0002).
-   * Ordered by the history's own sequence rather than by clock, so a read and
-   * a rename in the same millisecond still come out in the order they
-   * happened. This is what makes the read log a reference rather than a
-   * copy: a row plus this reproduces the wording an agent was handed,
-   * whatever has been renamed since. Undefined if either id is unknown.
+   * One message rendered with the labels in force when a given read-log row
+   * was written: the sender's name, the conversation's title and the
+   * mentioned names as they stood then, from the label history (migration
+   * 0002). Ordered by the history's own sequence rather than by clock, so a
+   * read and a rename in the same millisecond still come out in the order
+   * they happened.
+   *
+   * A label snapshot, not proof of inclusion: this does not check that the
+   * message was on that read's page. Whether it was is a question about the
+   * row's kind, parameters and cursor, which the row records; this answers
+   * the other half — given that it was, what wording went out. Undefined if
+   * either id is unknown.
    */
-  messageAsRead(message: MessageId, read: string): Message | undefined;
+  renderAsOfRead(message: MessageId, read: string): Message | undefined;
   /**
    * The thread list: every conversation in a space with its message count,
    * last activity and last sender, ordered by last activity. The admin
@@ -2051,7 +2055,7 @@ export function openStore(options: StoreOptions): Store {
       return renameConversationTx(conversation, title);
     },
 
-    messageAsRead(message, read) {
+    renderAsOfRead(message, read) {
       const row = st.messageById.get({ id: message });
       const position = st.readLabelSeq.get({ id: read });
       if (row === undefined || position === undefined) return undefined;
