@@ -109,7 +109,7 @@ GET  /search?q=&space=&order=&after=&limit=
                    -> { results: [{ message, conversation, space, snippet }],
                         nextCursor, hasMore }
 GET  /spaces/:id/conversations
-                   -> [{ id, space, title, messageCount,
+                   -> [{ id, space, title, openedBy, messageCount,
                          lastActivityAt, lastSender }]
 PATCH /conversations/:id
                    -> { id, space, title }
@@ -120,8 +120,9 @@ POST /messages     -> PostResult                                 // as the human
 during onboarding and quietly afterwards, which is the only window where they
 diagnose anything.
 
-`lastSender` is a whole `Sender` rather than a name, so a thread list renders an
-agent's *current* name rather than one frozen when it last posted.
+`openedBy` (who first posted to the subject line) and `lastSender` are whole
+`Sender`s rather than names, so a thread list renders an agent's *current* name
+rather than one frozen at the time.
 
 `/escalations` pages like `/reads`: a keyset cursor over `(created_at, id)`,
 `order` defaulting to `newest`. `undelivered` counts every row not yet `sent`,

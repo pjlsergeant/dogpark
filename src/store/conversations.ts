@@ -56,6 +56,13 @@ export function conversationStore(
 > {
   const { db, st, now, humanDisplayName, toConversation, requireSpaceRow } = ctx;
 
+  function toOpener(row: ConversationSummaryRow): Sender {
+    if (row.opened_by_agent_id === null) return { kind: 'human', displayName: humanDisplayName };
+    /* c8 ignore next */
+    if (row.opener_name === null) throw new Error('conversation references a missing agent');
+    return { kind: 'agent', id: row.opened_by_agent_id as AgentId, displayName: row.opener_name };
+  }
+
   /** The sender of a conversation's last message, or null if it has none. */
   function toLastSender(row: ConversationSummaryRow): Sender | null {
     if (row.last_sender_kind === null) return null;
@@ -117,6 +124,7 @@ export function conversationStore(
       requireSpaceRow(space);
       return st.conversationSummaries.all({ space }).map((row) => ({
         ...toConversation(row),
+        openedBy: toOpener(row),
         messageCount: row.message_count,
         lastActivityAt: row.last_sent_at as Timestamp | null,
         lastSender: toLastSender(row),

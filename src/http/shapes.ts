@@ -82,14 +82,15 @@ export function spaceMembers(store: Store, space: SpaceId): unknown {
 /**
  * One row of the human's thread list.
  *
- * `lastSender` is the whole `Sender`, not a name, so the UI renders an agent's
- * current name rather than one frozen when the message was written.
+ * `openedBy` and `lastSender` are whole `Sender`s, not names, so the UI
+ * renders an agent's current name rather than one frozen at the time.
  */
 export function conversationRow(summary: ConversationSummary): unknown {
   return {
     id: summary.id,
     space: summary.space,
     title: summary.title,
+    openedBy: summary.openedBy,
     messageCount: summary.messageCount,
     lastActivityAt: summary.lastActivityAt,
     lastSender: summary.lastSender,

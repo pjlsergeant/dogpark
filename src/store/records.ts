@@ -166,6 +166,11 @@ export interface EscalationPage {
  * request, and it renders labels the store would render anyway.
  */
 export interface ConversationSummary extends Conversation {
+  /**
+   * Who opened the thread — posted to its subject line first — rendered like
+   * any other label. Forensic context: why there is a thread by this name.
+   */
+  readonly openedBy: Sender;
   readonly messageCount: number;
   /** When the last message landed. Null for a thread nobody has posted to. */
   readonly lastActivityAt: Timestamp | null;

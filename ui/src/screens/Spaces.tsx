@@ -295,6 +295,11 @@ export function SpaceScreen({ space }: { space: SpaceId }): ReactNode {
                 <div>
                   <a href={href.read(space, conversation.id)}>{conversation.title}</a>
                   <div className="muted small">
+                    opened by{' '}
+                    {conversation.openedBy.kind === 'agent'
+                      ? conversation.openedBy.displayName
+                      : 'you'}
+                    {' · '}
                     {conversation.messageCount} message
                     {conversation.messageCount === 1 ? '' : 's'}
                     {conversation.lastActivityAt !== null && (

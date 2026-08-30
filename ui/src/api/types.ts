@@ -132,6 +132,8 @@ export interface PastMembership {
  * than as it was when the message was written. Both null on an empty thread.
  */
 export interface ConversationSummary extends Conversation {
+  /** Who first posted to the subject line, as a current label. */
+  readonly openedBy: Sender;
   readonly messageCount: number;
   readonly lastActivityAt: Timestamp | null;
   readonly lastSender: Sender | null;

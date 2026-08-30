@@ -1436,10 +1436,12 @@ describe('the HTTP surface', () => {
         messageCount: number;
         lastActivityAt: string | null;
         lastSender: { kind: string; displayName: string } | null;
+        openedBy: { kind: string; displayName: string };
       }[];
 
       const busy = threads.find((t) => t.id === conversation);
       expect(busy?.messageCount).toBe(1);
+      expect(busy?.openedBy).toMatchObject({ kind: 'human' });
       expect(busy?.lastActivityAt).toEqual(expect.any(String));
       // The whole Sender, not a name: the UI renders an agent's current name
       // rather than one frozen when the message was written.

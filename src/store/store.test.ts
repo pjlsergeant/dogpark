@@ -1913,6 +1913,13 @@ describe('conversation summaries', () => {
     const alpha = summaries[1];
     expect(alpha?.messageCount).toBe(2);
     expect(alpha?.lastSender).toEqual({ kind: 'agent', id: agent, displayName: 'alice' });
+    // Who opened each thread, as a current label: alice renamed reads as such.
+    expect(alpha?.openedBy).toEqual({ kind: 'agent', id: agent, displayName: 'alice' });
+    h.store.renameAgent(agent, 'alicia');
+    expect(h.store.listConversationSummaries(space)[1]?.openedBy).toMatchObject({
+      displayName: 'alicia',
+    });
+    expect(summaries[2]?.openedBy).toEqual({ kind: 'human', displayName: 'the human' });
 
     const gamma = summaries[2];
     expect(gamma?.id).toBe(empty.id);

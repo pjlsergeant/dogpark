@@ -107,6 +107,9 @@ export interface ReadLogBounds {
 }
 
 export interface ConversationSummaryRow extends ConversationRow {
+  /** Null for a thread the human opened. */
+  opened_by_agent_id: string | null;
+  opener_name: string | null;
   message_count: number;
   last_sent_at: string | null;
   last_sender_kind: string | null;
@@ -469,10 +472,12 @@ export function prepareStatements(db: Db) {
     // last under DESC, so empty threads fall to the bottom.
     conversationSummaries: prepare<{ space: string }, ConversationSummaryRow>(
       'SELECT c.id AS id, c.space_id AS space_id, c.title AS title, ' +
+        '       c.created_by_agent_id AS opened_by_agent_id, opener.display_name AS opener_name, ' +
         '       COUNT(m.seq) AS message_count, MAX(m.seq) AS last_seq, ' +
         '       m.sent_at AS last_sent_at, m.sender_kind AS last_sender_kind, ' +
         '       m.sender_agent_id AS last_sender_agent_id, a.display_name AS last_sender_name ' +
         '  FROM conversation c ' +
+        '  LEFT JOIN agent opener ON opener.id = c.created_by_agent_id ' +
         '  LEFT JOIN message m ON m.conversation_id = c.id ' +
         '  LEFT JOIN agent a ON a.id = m.sender_agent_id ' +
         ' WHERE c.space_id = @space ' +

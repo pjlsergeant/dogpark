@@ -9,7 +9,13 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import type { ApiError, ConversationId, MessageId, SpaceId } from '../api/index.js';
+import type {
+  ApiError,
+  ConversationId,
+  ConversationSummary,
+  MessageId,
+  SpaceId,
+} from '../api/index.js';
 import { useApi } from '../app/api-context.js';
 import { toApiError, useAsync } from '../app/useAsync.js';
 import { href, navigate } from '../app/router.js';
@@ -190,7 +196,7 @@ function SpaceReader({
             space={space}
             conversation={conversation}
             highlight={message}
-            title={threads.find((t) => t.id === conversation)?.title ?? null}
+            summary={threads.find((t) => t.id === conversation) ?? null}
             onPosted={() => conversations.reload()}
           />
         )}
@@ -207,13 +213,14 @@ function Thread({
   space,
   conversation,
   highlight,
-  title,
+  summary,
   onPosted,
 }: {
   space: SpaceId;
   conversation: ConversationId;
   highlight?: MessageId | undefined;
-  title: string | null;
+  /** The thread list's row for this thread, once the list has loaded. */
+  summary: ConversationSummary | null;
   onPosted: () => void;
 }): ReactNode {
   const api = useApi();
@@ -362,12 +369,24 @@ function Thread({
     if (onFirstPage) bottom.current?.scrollIntoView({ block: 'end' });
   }, [arrivals, newestId, onFirstPage]);
 
-  const heading = title ?? messages[0]?.conversationTitle ?? 'Conversation';
+  const heading = summary?.title ?? messages[0]?.conversationTitle ?? 'Conversation';
 
   return (
     <>
       <header className="thread-head">
-        <h1>{heading}</h1>
+        <div>
+          <h1>{heading}</h1>
+          {summary !== null && (
+            <p className="muted small">
+              opened by{' '}
+              {summary.openedBy.kind === 'agent' ? (
+                <a href={href.agents(summary.openedBy.id)}>{summary.openedBy.displayName}</a>
+              ) : (
+                'you'
+              )}
+            </p>
+          )}
+        </div>
         <div className="row">
           <button type="button" className="btn btn-quiet" onClick={() => setRenaming(true)}>
             Rename
