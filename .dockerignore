@@ -1,0 +1,17 @@
+# The build runs `npm ci` and `npm run build` itself; anything produced by a
+# previous local build would only shadow what this one makes.
+.git
+.gitignore
+node_modules
+dist
+*.tsbuildinfo
+
+# Never into an image: the data directory is a volume, and the secrets are
+# environment.
+data
+.env
+.env.*
+
+.DS_Store
+core
+core.*

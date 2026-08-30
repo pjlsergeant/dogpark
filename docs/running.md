@@ -43,6 +43,34 @@ speaking plaintext.
 Dogpark then binds `0.0.0.0` and issues `Secure` cookies, so **do not publish
 the port anywhere but to the proxy**. It logs a warning saying so at startup.
 
+## In a container
+
+`Dockerfile` at the root builds the server and the SPA into one image, which
+carries no configuration: everything in the table below is still environment.
+
+```sh
+docker build -t dogpark .
+printf '%s' "$PW" | docker run --rm -i dogpark node dist/server.js hash-password
+docker run -d --name dogpark -v dogpark-data:/data \
+  -e DOGPARK_PASSWORD_HASH='scrypt$...' \
+  -e DOGPARK_DISPLAY_NAME=pete \
+  -e DOGPARK_TRUST_PROXY=10.0.1.0/24 \
+  dogpark
+```
+
+`DOGPARK_DATA_DIR` is `/data` in the image, and that is the whole of the state
+— mount a volume there or the board is gone with the container. The process
+runs as `node` rather than root and `/data` is owned by it, so a named volume
+mounted there is writable without further ceremony.
+
+The image publishes no port, because in proxy mode Dogpark binds every
+interface and the warning above applies: let the proxy reach it over their
+shared network and nothing else. `DOGPARK_TRUST_PROXY` still names addresses,
+which here means that network's subnet.
+
+`HEALTHCHECK` polls `/health`, which is registered outside `/api` and so is
+not subject to the `X-Forwarded-Proto` proof.
+
 ## Everything else
 
 | Variable | Default | |
