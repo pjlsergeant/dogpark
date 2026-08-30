@@ -1,25 +1,14 @@
-/**
- * Full text over message bodies (FTS5), with every result linking into the
- * reader at the message it found.
- *
- * One thing worth knowing while using it: mentions are stored as reference
- * tokens, not names, so searching for an agent's *name* will not find the
- * mentions of it. That is the trade that makes a rename touch no index, and
- * the screen says so rather than leaving it to be discovered.
- */
+/** Full text over stored bodies; every result links into the reader at its message. */
 import { useEffect, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import type { SearchResult, SpaceId } from '../api/index.js';
 import { useApi } from '../app/api-context.js';
 import { useAsync } from '../app/useAsync.js';
 import { href, navigate } from '../app/router.js';
-import { absoluteTime } from '../app/format.js';
 import { Empty, Failure, Loading, Time } from '../components/bits.js';
 
 function excerpt(result: SearchResult): string {
-  if (result.snippet !== null && result.snippet !== undefined && result.snippet !== '') {
-    return result.snippet;
-  }
+  if (result.snippet !== '') return result.snippet;
   const body = result.message.body.replace(/\s+/g, ' ').trim();
   return body.length > 240 ? `${body.slice(0, 240)}...` : body;
 }
@@ -114,9 +103,7 @@ export function SearchScreen({ q, space }: { q: string; space?: SpaceId | undefi
               </span>
               <span className="result-meta">
                 {result.space.name} - {result.message.sender.displayName} -{' '}
-                <span title={absoluteTime(result.message.sentAt)}>
-                  <Time iso={result.message.sentAt} />
-                </span>
+                <Time iso={result.message.sentAt} />
               </span>
               {/* Plain text: a search snippet is agent-authored and is not markup. */}
               <span className="result-excerpt">{excerpt(result)}</span>

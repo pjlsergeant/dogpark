@@ -27,8 +27,6 @@ import type {
   SpaceMembers,
 } from './types.js';
 export interface ConversationQuery {
-  readonly since?: string | undefined;
-  readonly until?: string | undefined;
   readonly after?: string | undefined;
   /** `newest` pages back from the end, each page newest-first. */
   readonly order?: 'oldest' | 'newest' | undefined;

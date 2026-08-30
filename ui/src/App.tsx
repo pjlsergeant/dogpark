@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { DogparkAdminApi } from './api/index.js';
-import { ApiError, createApi } from './api/index.js';
+import { ApiError, createHttpApi } from './api/index.js';
 import { AppProvider, useApp } from './app/api-context.js';
 import type { Session } from './app/api-context.js';
 import { href, navigate, useRoute } from './app/router.js';
@@ -70,8 +70,7 @@ export function App(): ReactNode {
   useEffect(() => {
     let live = true;
     void (async () => {
-      const client = await createApi();
-      if (!live) return;
+      const client = createHttpApi();
       setApi(client);
       // The cookie may still be good even though the CSRF token, which lives
       // only in memory, went away with the last page.

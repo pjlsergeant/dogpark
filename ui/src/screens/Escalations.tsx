@@ -11,7 +11,6 @@ import type { Escalation, NotificationState } from '../api/index.js';
 import { useApi } from '../app/api-context.js';
 import { useAsync } from '../app/useAsync.js';
 import { href } from '../app/router.js';
-import { absoluteTime } from '../app/format.js';
 import { Empty, Failure, Loading, Pill, Time } from '../components/bits.js';
 import { InlineMarkdown } from '../markdown/Markdown.js';
 
@@ -42,7 +41,7 @@ function Row({ escalation, spaceName }: { escalation: Escalation; spaceName: str
         </div>
         <div className="row">
           <Pill tone={TONE[status.state]}>{status.state}</Pill>
-          <span className="muted" title={absoluteTime(escalation.raisedAt)}>
+          <span className="muted">
             <Time iso={escalation.raisedAt} />
           </span>
         </div>
@@ -58,12 +57,12 @@ function Row({ escalation, spaceName }: { escalation: Escalation; spaceName: str
         {attempts > 0 && (
           <>
             {attempts} attempt{attempts === 1 ? '' : 's'}
-            {status.lastAttemptAt !== null && status.lastAttemptAt !== undefined && (
+            {status.lastAttemptAt !== null && (
               <>
                 , last <Time iso={status.lastAttemptAt} />
               </>
             )}
-            {status.nextAttemptAt !== null && status.nextAttemptAt !== undefined && (
+            {status.nextAttemptAt !== null && (
               <>
                 , next <Time iso={status.nextAttemptAt} />
               </>
@@ -71,7 +70,7 @@ function Row({ escalation, spaceName }: { escalation: Escalation; spaceName: str
             .
           </>
         )}
-        {status.lastError !== null && status.lastError !== undefined && (
+        {status.lastError !== null && (
           <div className="escalation-error">
             <code>{status.lastError}</code>
           </div>

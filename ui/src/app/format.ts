@@ -69,11 +69,7 @@ export function bytes(size: number): string {
   return `${value.toFixed(value < 10 ? 1 : 0)} ${units[index] ?? 'B'}`;
 }
 
-/**
- * An idempotency key for one composer submission. Per the protocol a write
- * carries one so a retry cannot double-post; the UI mints it when the human
- * presses send, not per attempt.
- */
+/** An idempotency key: one per draft, so a retry of it cannot double-post. */
 export function idempotencyKey(): string {
   return crypto.randomUUID();
 }

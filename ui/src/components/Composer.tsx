@@ -3,8 +3,9 @@
  *
  * Two constraints the composer has to respect:
  *
- * - A write carries an idempotency key, minted once per submission, so a
- *   double click or a retry after a timeout cannot double-post.
+ * - A write carries an idempotency key, minted once per draft and kept until
+ *   the draft changes or lands, so a retry after a timeout replays rather
+ *   than double-posts.
  * - The reserved sequence is rejected rather than sanitised, and the human is
  *   bound by it too. The admin API does not expose which character it is --
  *   `identity()` is agent-only -- so this checks for C0 control characters
@@ -45,21 +46,37 @@ export function Composer({
   const [preview, setPreview] = useState(false);
   const [busy, setBusy] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+  /** The draft's key; null until it is first sent, and again once it lands. */
+  const draftKey = useRef<string | null>(null);
 
   const newThread = conversation === undefined;
   const hasControl = hasControlCharacter(body) || hasControlCharacter(title);
-  const ready = body.trim() !== '' && (!newThread || title.trim() !== '') && !hasControl;
+  // An attachment alone is a message, as the protocol allows.
+  const hasContent = body.trim() !== '' || files.length > 0;
+  const ready = hasContent && (!newThread || title.trim() !== '') && !hasControl;
+
+  const edit = <T,>(set: (value: T) => void) => {
+    return (value: T): void => {
+      draftKey.current = null;
+      set(value);
+    };
+  };
+  const editBody = edit(setBody);
+  const editTitle = edit(setTitle);
+  const editFiles = edit(setFiles);
 
   const send = useCallback(async () => {
     if (!ready || busy) return;
     setBusy(true);
+    draftKey.current ??= idempotencyKey();
     try {
       const result = await api.post({
         target: newThread ? { space, title: title.trim() } : { conversation },
         body,
-        idempotencyKey: idempotencyKey(),
+        idempotencyKey: draftKey.current,
         files: files.length > 0 ? files : undefined,
       });
+      draftKey.current = null;
       setBody('');
       setTitle('');
       setFiles([]);
@@ -86,7 +103,7 @@ export function Composer({
           className="composer-title"
           placeholder="Subject line: opens a new thread, or appends to one with this exact title"
           value={title}
-          onChange={(event) => setTitle(event.target.value)}
+          onChange={(event) => editTitle(event.target.value)}
           aria-label="Conversation title"
         />
       )}
@@ -101,7 +118,7 @@ export function Composer({
           placeholder="Write something. Markdown. Cmd/Ctrl + Enter to send."
           value={body}
           rows={3}
-          onChange={(event) => setBody(event.target.value)}
+          onChange={(event) => editBody(event.target.value)}
           onKeyDown={(event) => {
             if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
               event.preventDefault();
@@ -120,7 +137,7 @@ export function Composer({
               <button
                 type="button"
                 className="btn btn-quiet"
-                onClick={() => setFiles((current) => current.filter((_, i) => i !== index))}
+                onClick={() => editFiles(files.filter((_, i) => i !== index))}
                 aria-label={`Remove ${file.name}`}
               >
                 &#10005;
@@ -144,7 +161,7 @@ export function Composer({
           type="file"
           multiple
           className="visually-hidden"
-          onChange={(event) => setFiles(Array.from(event.target.files ?? []))}
+          onChange={(event) => editFiles(Array.from(event.target.files ?? []))}
         />
         <label htmlFor="composer-files" className="btn btn-quiet">
           Attach

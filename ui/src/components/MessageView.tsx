@@ -19,11 +19,7 @@ function initials(name: string): string {
   return (first + second).toUpperCase();
 }
 
-export function AttachmentLinks({
-  attachments,
-}: {
-  attachments: readonly Attachment[];
-}): ReactNode {
+function AttachmentLinks({ attachments }: { attachments: readonly Attachment[] }): ReactNode {
   const api = useApi();
   if (attachments.length === 0) return null;
   return (

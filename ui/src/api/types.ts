@@ -1,9 +1,7 @@
 /**
- * The admin API as this UI understands it.
- *
- * Domain types come from `src/types.ts` and are imported, never redefined.
- * What is declared here is the *admin* surface. The response shapes pinned in
- * `docs/http-api.md` ("Admin response shapes") are followed exactly.
+ * The admin API as this UI understands it: the response shapes pinned in
+ * `docs/http-api.md` ("Admin response shapes"). Domain types come from
+ * `src/types.ts` and are imported, never redefined.
  */
 import type {
   Agent,
@@ -12,7 +10,6 @@ import type {
   AttachmentId,
   Conversation,
   ConversationId,
-  Cursor,
   ErrorCode,
   Message,
   MessageId,
@@ -31,7 +28,6 @@ export type {
   MessagePage,
   Conversation,
   ConversationId,
-  Cursor,
   Message,
   MessageId,
   Space,
@@ -69,10 +65,7 @@ export class ApiError extends Error {
 // Session
 // ---------------------------------------------------------------------------
 
-/**
- * `POST /session` and `GET /session`. Both also carry `expiresAt`, which this
- * UI does not read: nothing warns before a session ends.
- */
+/** Both session routes also carry `expiresAt`, which this UI does not read. */
 export interface SessionCredentials {
   readonly csrfToken: string;
   readonly displayName: string;
@@ -82,10 +75,6 @@ export interface SessionCredentials {
 // Agents
 // ---------------------------------------------------------------------------
 
-/**
- * `GET /agents -> [{ id, displayName, archived, lastSeenAt,
- * failedAttemptsClaimingId, hasEverAuthenticated }]`.
- */
 export interface AdminAgent extends Agent {
   readonly archived: boolean;
   /** Null until the agent has authenticated successfully at least once. */
@@ -109,30 +98,19 @@ export interface ApiKeySummary {
   readonly revokedAt: Timestamp | null;
 }
 
-/**
- * The one moment a key exists in plaintext:
- * `POST /agents -> { agent, key }`, `POST /agents/:id/keys -> { keyId, key }`.
- */
+/** The one moment a key exists in plaintext: creating, issuing, unarchiving. */
 export interface IssuedKey {
   /** `dgp_<agent-id>_<secret>`. Never retrievable again. */
   readonly key: string;
-  /** Present on `POST /agents/:id/keys`. */
-  readonly keyId?: string | undefined;
-  /** Present on `POST /agents`. */
-  readonly agent?: Agent | undefined;
+  readonly keyId: string;
+  readonly agent: Agent;
 }
 
 // ---------------------------------------------------------------------------
 // Spaces and membership
 // ---------------------------------------------------------------------------
 
-/**
- * `GET /spaces/:id/members -> { current: [{ agent, grantedAt }],
- * history: [{ agent, grantedAt, revokedAt }] }`.
- *
- * The response does not carry the space, so a screen showing one space's
- * members takes its name from `GET /spaces`.
- */
+/** Does not carry the space: a screen showing one space's members names it from `GET /spaces`. */
 export interface SpaceMembers {
   readonly current: readonly CurrentMembership[];
   readonly history: readonly PastMembership[];
@@ -150,8 +128,6 @@ export interface PastMembership {
 }
 
 /**
- * `GET /spaces/:id/conversations` -- "the human's thread list".
- *
  * `lastSender` is the whole `Sender`, so a name renders as it is now rather
  * than as it was when the message was written. Both null on an empty thread.
  */
@@ -165,13 +141,7 @@ export interface ConversationSummary extends Conversation {
 // Posting as the human
 // ---------------------------------------------------------------------------
 
-/**
- * `POST /messages -> PostResult`.
- *
- * `PostRequest` minus the agent-shaped parts: the same `PostTarget`, the same
- * idempotency key, and files as multipart in the same `request`-part-then-files
- * form as the agent route.
- */
+/** `PostRequest` with files as `File`s, sent multipart in the agent route's form. */
 export interface HumanPostRequest {
   readonly target:
     { readonly conversation: ConversationId } | { readonly space: SpaceId; readonly title: string };
@@ -189,7 +159,6 @@ export interface HumanPostResult {
 // The read log
 // ---------------------------------------------------------------------------
 
-/** `GET /reads -> [{ agent, at, parameters, cursor, itemCount }]`. */
 export interface ReadLogEntry {
   readonly agent: Agent;
   readonly at: Timestamp;
@@ -216,10 +185,6 @@ export interface NotificationStatus {
   readonly lastError: string | null;
 }
 
-/**
- * `GET /escalations -> [{ id, agent, conversation, reason, raisedAt,
- * notification }]`.
- */
 export interface Escalation {
   readonly id: EscalationId;
   readonly agent: Agent;
@@ -233,16 +198,12 @@ export interface Escalation {
 // Search
 // ---------------------------------------------------------------------------
 
-/**
- * `GET /search?q= -> [{ message, conversation, space, snippet }]`.
- *
- * The snippet is agent-authored like the body, and is rendered as plain text.
- */
 export interface SearchResult {
   readonly message: Message;
   readonly conversation: Conversation;
   readonly space: Space;
-  readonly snippet: string | null;
+  /** Agent-authored like the body; rendered as plain text. */
+  readonly snippet: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -250,8 +211,9 @@ export interface SearchResult {
 // ---------------------------------------------------------------------------
 
 /**
- * `/reads` answers `{ reads, nextCursor, hasMore }`; `/escalations` and
- * `/search` answer bare arrays, which read as one unbounded page.
+ * `/reads` answers `{ reads, nextCursor, hasMore }`. `/escalations` and
+ * `/search` answer bare arrays capped at the page size, with no cursor to
+ * continue from: a single page, presented as if it were the whole list.
  */
 export interface Page<T> {
   readonly items: readonly T[];

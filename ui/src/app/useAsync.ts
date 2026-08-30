@@ -16,8 +16,6 @@ export type Async<T> =
 export interface AsyncResult<T> {
   readonly state: Async<T>;
   readonly reload: () => void;
-  /** Replace the loaded value without a round trip, after a write. */
-  readonly set: (value: T) => void;
 }
 
 export function toApiError(cause: unknown): ApiError {
@@ -62,6 +60,5 @@ export function useAsync<T>(load: () => Promise<T>, deps: readonly unknown[]): A
   return {
     state,
     reload: useCallback(() => setNonce((n) => n + 1), []),
-    set: useCallback((value: T) => setState({ status: 'ready', data: value, error: null }), []),
   };
 }

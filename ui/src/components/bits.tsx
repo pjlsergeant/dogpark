@@ -4,11 +4,11 @@ import type { ReactNode } from 'react';
 import type { ApiError } from '../api/index.js';
 import { absoluteTime, relativeTime } from '../app/format.js';
 
-export function Time({ iso, prefix }: { iso: string | null; prefix?: string }): ReactNode {
+/** Relative, with the absolute time on hover. */
+export function Time({ iso }: { iso: string | null }): ReactNode {
   if (iso === null) return <span className="muted">never</span>;
   return (
     <time dateTime={iso} title={absoluteTime(iso)}>
-      {prefix === undefined ? '' : `${prefix} `}
       {relativeTime(iso)}
     </time>
   );

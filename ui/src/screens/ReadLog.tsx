@@ -40,11 +40,14 @@ export function ReadLogScreen({ agent }: { agent?: AgentId | undefined }): React
    */
   const generation = useRef(0);
 
-  useEffect(() => {
+  /** Forget the tail; the first page it hung off is being replaced. */
+  const reset = useCallback(() => {
     generation.current += 1;
     setTail(null);
     setMoreFailed(false);
-  }, [agent]);
+  }, []);
+
+  useEffect(reset, [agent, reset]);
 
   const first = reads.state.data;
   const entries = [...(first?.items ?? []), ...(tail?.items ?? [])];
@@ -56,11 +59,9 @@ export function ReadLogScreen({ agent }: { agent?: AgentId | undefined }): React
   // newest-first, so a tail fetched from the old cursor either repeats rows or
   // skips the one the boundary moved past.
   const refresh = useCallback(() => {
-    generation.current += 1;
-    setTail(null);
-    setMoreFailed(false);
+    reset();
     reads.reload();
-  }, [reads]);
+  }, [reads, reset]);
 
   const loadMore = useCallback(async () => {
     if (nextCursor === null) return;

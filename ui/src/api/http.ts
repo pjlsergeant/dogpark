@@ -64,18 +64,19 @@ function toApiError(status: number, body: unknown, fallback: string): ApiError {
   });
 }
 
-/**
- * A collection is either a bare array — one unbounded page — or the read log's
- * `{ <key>, nextCursor, hasMore }` envelope (docs/http-api.md).
- */
+/** A `{ <key>, nextCursor, hasMore }` envelope (docs/http-api.md). */
 function toPage<T>(raw: unknown, key: string): Page<T> {
-  if (Array.isArray(raw)) return { items: raw as T[], nextCursor: null, hasMore: false };
   const record = raw as Record<string, unknown>;
   return {
     items: record[key] as T[],
     nextCursor: typeof record['nextCursor'] === 'string' ? record['nextCursor'] : null,
     hasMore: record['hasMore'] === true,
   };
+}
+
+/** A bare array: one page, capped at the server's page size, with no cursor. */
+function asPage<T>(raw: unknown): Page<T> {
+  return { items: raw as T[], nextCursor: null, hasMore: false };
 }
 
 export function createHttpApi(): DogparkAdminApi {
@@ -179,7 +180,7 @@ export function createHttpApi(): DogparkAdminApi {
     },
 
     async listSpaces() {
-      return toPage<Space>(await request('GET', '/spaces'), 'spaces').items;
+      return (await request('GET', '/spaces')) as Space[];
     },
     async createSpace(name) {
       return (await request('POST', '/spaces', { json: { name } })) as Space;
@@ -207,7 +208,7 @@ export function createHttpApi(): DogparkAdminApi {
     },
 
     async listAgents() {
-      return toPage<AdminAgent>(await request('GET', '/agents'), 'agents').items;
+      return (await request('GET', '/agents')) as AdminAgent[];
     },
     async createAgent(name) {
       return (await request('POST', '/agents', { json: { name } })) as IssuedKey;
@@ -234,10 +235,10 @@ export function createHttpApi(): DogparkAdminApi {
     },
 
     async listConversations(space) {
-      return toPage<ConversationSummary>(
-        await request('GET', `/spaces/${encodeURIComponent(space)}/conversations`),
-        'conversations',
-      ).items;
+      return (await request(
+        'GET',
+        `/spaces/${encodeURIComponent(space)}/conversations`,
+      )) as ConversationSummary[];
     },
     async renameConversation(id, title) {
       return (await request('PATCH', `/conversations/${encodeURIComponent(id)}`, {
@@ -246,12 +247,7 @@ export function createHttpApi(): DogparkAdminApi {
     },
     async readConversation(id, query) {
       const raw = (await request('GET', `/conversations/${encodeURIComponent(id)}/messages`, {
-        query: {
-          since: query?.since,
-          until: query?.until,
-          after: query?.after,
-          order: query?.order,
-        },
+        query: { after: query?.after, order: query?.order },
       })) as Record<string, unknown> | null;
       const page = toPage<Message>(raw, 'messages');
       return {
@@ -280,20 +276,15 @@ export function createHttpApi(): DogparkAdminApi {
       );
     },
     async listEscalations() {
-      return toPage<Escalation>(await request('GET', '/escalations'), 'escalations');
+      return asPage<Escalation>(await request('GET', '/escalations'));
     },
     async search(query: SearchQuery) {
-      return toPage<SearchResult>(
-        await request('GET', '/search', {
-          query: { q: query.q, space: query.space },
-        }),
-        'results',
+      return asPage<SearchResult>(
+        await request('GET', '/search', { query: { q: query.q, space: query.space } }),
       );
     },
 
     attachmentHref(id: AttachmentId) {
-      // Under `/api/admin`, because the human authenticates with a session
-      // and the only attachment route in the contract is bearer-only.
       return `${BASE}/attachments/${encodeURIComponent(id)}`;
     },
   };

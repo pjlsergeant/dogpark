@@ -7,7 +7,6 @@
 import type { ReactNode } from 'react';
 import type { ReadLogEntry } from '../api/index.js';
 import { href } from '../app/router.js';
-import { absoluteTime } from '../app/format.js';
 import { Id, Pill, Time } from '../components/bits.js';
 
 /**
@@ -53,18 +52,16 @@ export function ReadLogRows({ entries }: { entries: readonly ReadLogEntry[] }): 
         </tr>
       </thead>
       <tbody>
-        {entries.map((entry, index) => (
-          <tr key={entry.id ?? index}>
-            <td title={absoluteTime(entry.at)}>
+        {entries.map((entry) => (
+          <tr key={entry.id}>
+            <td>
               <Time iso={entry.at} />
             </td>
             <td>
               <a href={href.agents(entry.agent.id)}>{entry.agent.displayName}</a>
             </td>
             <td>
-              {entry.kind !== undefined && (
-                <Pill tone={entry.kind === 'stream' ? 'info' : 'muted'}>{entry.kind}</Pill>
-              )}
+              <Pill tone={entry.kind === 'stream' ? 'info' : 'muted'}>{entry.kind}</Pill>
               {isSeekToTip(entry) && (
                 <span
                   className="jump"

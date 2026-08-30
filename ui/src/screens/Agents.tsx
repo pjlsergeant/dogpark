@@ -40,7 +40,7 @@ interface Revealed {
 }
 
 function activeCount(keys: readonly ApiKeySummary[]): number {
-  return keys.filter((key) => key.revokedAt === null || key.revokedAt === undefined).length;
+  return keys.filter((key) => key.revokedAt === null).length;
 }
 
 /** The once-only reveal. Deliberately hard to dismiss without reading. */
@@ -74,12 +74,10 @@ function KeyRevealed({
         <h3>For the agent&rsquo;s environment</h3>
         <Copyable value={snippet} label="the environment snippet" multiline />
 
-        {revealed.issued.keyId !== undefined && (
-          <p className="muted small">
-            Key id <Id value={revealed.issued.keyId} />, revocable on its own, so rotation is
-            add&#8209;deploy&#8209;revoke.
-          </p>
-        )}
+        <p className="muted small">
+          Key id <Id value={revealed.issued.keyId} />, revocable on its own, so rotation is
+          add&#8209;deploy&#8209;revoke.
+        </p>
 
         <label className="check">
           <input
@@ -196,12 +194,8 @@ export function AgentsScreen({ selected }: { selected?: AgentId | undefined }): 
                         last seen <Time iso={agent.lastSeenAt} />
                       </>
                     )}
-                    {
-                      <>
-                        {' - '}
-                        {activeCount(keys)} active key{activeCount(keys) === 1 ? '' : 's'}
-                      </>
-                    }
+                    {' - '}
+                    {activeCount(keys)} active key{activeCount(keys) === 1 ? '' : 's'}
                   </div>
                 </div>
                 <div className="row">
@@ -235,11 +229,9 @@ export function AgentsScreen({ selected }: { selected?: AgentId | undefined }): 
                     <Fact name="Id">
                       <Id value={agent.id} />
                     </Fact>
-                    {agent.createdAt !== undefined && (
-                      <Fact name="Created">
-                        <Time iso={agent.createdAt} />
-                      </Fact>
-                    )}
+                    <Fact name="Created">
+                      <Time iso={agent.createdAt} />
+                    </Fact>
                     <Fact name="Last seen">
                       {agent.lastSeenAt === null ? (
                         <span className="muted">never</span>
@@ -388,10 +380,9 @@ export function AgentsScreen({ selected }: { selected?: AgentId | undefined }): 
           onClose={() => setCreating(false)}
           onSubmit={async (name) => {
             const issued = await api.createAgent(name);
-            const id = issued.agent?.id;
-            setRevealed({ issued, agentName: issued.agent?.displayName ?? name });
+            setRevealed({ issued, agentName: issued.agent.displayName });
             agents.reload();
-            if (id !== undefined) navigate(href.agents(id));
+            navigate(href.agents(issued.agent.id));
           }}
         />
       )}

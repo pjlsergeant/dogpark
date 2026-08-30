@@ -279,7 +279,7 @@ export function SpaceScreen({ space }: { space: SpaceId }): ReactNode {
         </div>
 
         <div className="panel">
-          <h2>Conversations</h2>
+          <h2>Threads</h2>
           {conversations.state.status === 'loading' && conversations.state.data === null && (
             <Loading what="conversations" />
           )}
@@ -295,22 +295,16 @@ export function SpaceScreen({ space }: { space: SpaceId }): ReactNode {
                 <div>
                   <a href={href.read(space, conversation.id)}>{conversation.title}</a>
                   <div className="muted small">
-                    {conversation.messageCount !== undefined && (
+                    {conversation.messageCount} message
+                    {conversation.messageCount === 1 ? '' : 's'}
+                    {conversation.lastActivityAt !== null && (
                       <>
-                        {conversation.messageCount} message
-                        {conversation.messageCount === 1 ? '' : 's'}
+                        {' · '}
+                        <Time iso={conversation.lastActivityAt} />
+                        {conversation.lastSender !== null &&
+                          ` · ${conversation.lastSender.displayName}`}
                       </>
                     )}
-                    {conversation.lastActivityAt !== null &&
-                      conversation.lastActivityAt !== undefined && (
-                        <>
-                          {conversation.messageCount === undefined ? '' : ' · '}
-                          <Time iso={conversation.lastActivityAt} />
-                          {conversation.lastSender?.displayName !== null &&
-                            conversation.lastSender?.displayName !== undefined &&
-                            ` · ${conversation.lastSender?.displayName}`}
-                        </>
-                      )}
                   </div>
                 </div>
               </li>
