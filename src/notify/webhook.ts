@@ -28,6 +28,15 @@ export interface EscalationQueue {
 
 export interface NotifierOptions {
   readonly webhookUrl?: string | undefined;
+  /**
+   * Abort a send that has not answered in this long.
+   *
+   * Without it a hung webhook holds the re-entrancy guard for the life of the
+   * process, so every later escalation is silently never sent — a worse
+   * outcome than the double-send the guard prevents, because nobody is paged
+   * and nothing says so.
+   */
+  readonly timeoutMs?: number;
   /** Give up after this many failures; the escalation stays visible in the UI. */
   readonly maxAttempts?: number;
   readonly now?: () => number;
@@ -55,6 +64,7 @@ export class Notifier {
   #maxAttempts: number;
   #now: () => number;
   #fetch: typeof globalThis.fetch;
+  #timeoutMs: number;
   #timer: NodeJS.Timeout | undefined;
   #draining = false;
 
@@ -64,6 +74,7 @@ export class Notifier {
     this.#maxAttempts = options.maxAttempts ?? 8;
     this.#now = options.now ?? Date.now;
     this.#fetch = options.fetch ?? globalThis.fetch;
+    this.#timeoutMs = options.timeoutMs ?? 10_000;
   }
 
   /**
@@ -97,6 +108,7 @@ export class Notifier {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ text: formatMessage(e) }),
+          signal: AbortSignal.timeout(this.#timeoutMs),
         });
         if (!res.ok) throw new Error(`webhook responded ${res.status}`);
         this.#queue.markSent(e.id);

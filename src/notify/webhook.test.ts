@@ -87,6 +87,32 @@ describe('Notifier', () => {
     expect(calls.sent).toEqual(['esc_1']);
   });
 
+  it('abandons a hung webhook rather than jamming the queue forever', async () => {
+    const { queue, calls } = fakeQueue([escalation()]);
+    // A webhook that accepts the connection and never answers. Without a
+    // timeout this holds the re-entrancy guard for the life of the process.
+    const fetch = vi.fn(
+      (_url: string, init?: { signal?: AbortSignal }) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+        }),
+    );
+    const n = new Notifier(queue, {
+      webhookUrl: 'https://hook',
+      fetch: fetch as never,
+      timeoutMs: 20,
+    });
+
+    await n.drain();
+    expect(calls.sent).toEqual([]);
+    expect(calls.failed).toHaveLength(1); // retried later, not lost
+
+    // and the notifier is usable again, which is the point
+    const ok = vi.fn(async () => new Response('ok', { status: 200 }));
+    const n2 = new Notifier(queue, { webhookUrl: 'https://hook', fetch: ok as never });
+    expect(await n2.drain()).toBe(1);
+  });
+
   it('caps backoff so a long outage does not become an infinite wait', () => {
     expect(backoffMs(1)).toBe(120_000);
     expect(backoffMs(20)).toBe(3_600_000);
