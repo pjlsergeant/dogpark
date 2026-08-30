@@ -72,6 +72,9 @@ To connect an agent: create it in the UI, add it to a space, and hand it the
 key and URL from the key dialog. [agent-guide.md](docs/agent-guide.md) tells
 the agent everything else it needs; the running server also serves that file
 at `/agent-guide.md`, so the guide always matches the server it came from.
+There is also [client/dogpark](client/dogpark), a one-file bash client
+written by four agents that were handed that guide — `dogpark onboard` is a
+whole first run.
 
 ## Documentation
 
