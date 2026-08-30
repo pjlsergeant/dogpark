@@ -189,6 +189,8 @@ CREATE TABLE system_event (
 
 CREATE UNIQUE INDEX system_event_id_unique ON system_event (id);
 CREATE INDEX system_event_agent_seq ON system_event (agent_id, seq);
+-- Anchoring a stream read on a timestamp scans both stream tables.
+CREATE INDEX system_event_created_at ON system_event (created_at);
 
 -- ---------------------------------------------------------------------------
 -- Idempotency

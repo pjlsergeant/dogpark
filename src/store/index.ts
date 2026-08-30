@@ -910,7 +910,7 @@ export function openStore(options: StoreOptions): Store {
   }
 
   function mentionName(cache: RenderCache, space: string, agent: AgentId): string | undefined {
-    const key = `${space} ${agent}`;
+    const key = `${space}:${agent}`;
     if (cache.mentionNames.has(key)) return cache.mentionNames.get(key);
     const row = st.resolveMentionRef.get({ space, agent });
     const name = row?.display_name;

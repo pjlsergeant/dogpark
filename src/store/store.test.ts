@@ -269,6 +269,24 @@ describe('readStream access filter', () => {
     expect(again.nextCursor).toBe(page.nextCursor);
   });
 
+  it('leaves the cursor at the live edge when the tail was all filtered out', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const peer = h.store.createAgent('bob').id;
+    h.store.grantMembership(peer, space);
+
+    h.store.revokeMembership(agent, space);
+    // Written after the revocation, so it is behind the cursor and invisible.
+    post(h, peer, space, 'notes', 'unreachable');
+
+    const page = h.store.readStream(agent);
+    expect(bodies(page.items)).toEqual([]);
+    // The cursor moved past the filtered tail rather than stopping at the last
+    // item it could deliver: the tip is where a fresh reader would start.
+    expect(page.nextCursor).toBe(h.store.readStream(peer, { from: { from: 'tip' } }).nextCursor);
+    expect(h.store.listReadLog({ agent })[0]?.cursor).toBe(page.nextCursor);
+  });
+
   it('never re-delivers what it skipped, even after access returns', () => {
     const h = harness();
     const { agent, space } = scene(h);
