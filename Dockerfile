@@ -13,7 +13,16 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 
-COPY . .
+# Named rather than `COPY . .`: the build needs exactly these, and a wildcard
+# copy takes whatever else is sitting untracked in a working tree -- an
+# `.npmrc` with a registry token, an editor directory, a tool's scratch notes
+# -- into a build layer. A new top-level source directory has to be added
+# here, which is the intended cost.
+COPY tsconfig.json tsconfig.build.json ./
+COPY src ./src
+COPY ui ./ui
+COPY docs ./docs
+
 # The server, then the SPA it serves from `dist/ui`. `npm prune` afterwards
 # rather than a second `npm ci --omit=dev` in a fresh stage: it carries through
 # exactly the tree that was just built, without resolving a second one.

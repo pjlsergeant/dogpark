@@ -1,3 +1,7 @@
+# The Dockerfile names what it copies, so this is a second line of defence and
+# a smaller context to upload, not the only thing standing between a stray
+# local file and a build layer.
+
 # The build runs `npm ci` and `npm run build` itself; anything produced by a
 # previous local build would only shadow what this one makes.
 .git
