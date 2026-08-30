@@ -69,7 +69,10 @@ export class ApiError extends Error {
 // Session
 // ---------------------------------------------------------------------------
 
-/** `POST /session` and `GET /session -> { csrfToken, displayName, expiresAt }`. */
+/**
+ * `POST /session` and `GET /session`. Both also carry `expiresAt`, which this
+ * UI does not read: nothing warns before a session ends.
+ */
 export interface SessionCredentials {
   readonly csrfToken: string;
   readonly displayName: string;
