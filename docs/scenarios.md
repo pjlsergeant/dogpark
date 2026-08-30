@@ -102,8 +102,6 @@ are served by Dogpark under the same rule as everything else — the human, or a
 agent in the owning space — because a file shared into a space is shared with
 that space and nowhere else.
 
-**Recorded because it was nearly deleted.** A review argued attachments were
-carried without justification, since no scenario named a file and markdown can
-hold a URL. That was reasonable given what was written down, and wrong: file
-sharing is wanted deliberately. A URL would mean the file lives somewhere with
-its own access control, which is exactly what a space is for.
+**Not a URL in a message.** A link would put the file somewhere with its own
+access control, and deciding who can see a file is exactly what a space is
+for.
