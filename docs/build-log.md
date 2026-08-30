@@ -177,9 +177,11 @@ double-click straddling a restart still double-posted, and it was a second copy
 of the store's rules that could drift — and did, storing rendered results the
 store deliberately does not (ADR-0014).
 
-Migration 0003 keys the table on a writer that may be the literal `human`,
-which no agent id can be. `postMessage` handles both writer kinds in one
-transaction and the HTTP-layer table is gone.
+The table is keyed on a writer that may be the literal `:human`, which no
+agent id the application mints can be. `postMessage` handles both writer kinds
+in one transaction and the HTTP-layer table is gone. (This predates any
+deployment, so it was folded into the initial schema rather than kept as a
+migration.)
 
 ## What the auth throttle actually protects
 

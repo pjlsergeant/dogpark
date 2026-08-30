@@ -43,7 +43,7 @@ export const PostBody = z.strictObject({
 });
 
 /** The human's post. The key is optional — a browser need not mint one — and
- * durable when given, like an agent's (migration 0003). */
+ * durable when given, like an agent's. */
 export const HumanPostBody = z.strictObject({
   target: Target,
   body: z.string(),

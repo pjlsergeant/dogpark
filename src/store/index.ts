@@ -152,7 +152,7 @@ export interface PostMessageInput {
   readonly target: PostTarget;
   readonly body: string;
   readonly attachments?: readonly AttachmentInput[] | undefined;
-  /** Scoped per writer: each agent, and the human (migration 0003). */
+  /** Scoped per writer: each agent, and the human (schema.sql). */
   readonly idempotencyKey?: IdempotencyKey | undefined;
 }
 
@@ -567,9 +567,8 @@ export interface Store {
  * `HUMAN_WRITER`, which carries a character the id alphabet does not, so no id
  * the application mints can equal it. `agent.id` itself is unconstrained TEXT,
  * so an agent hand-written into the table could still carry the sentinel —
- * migration 0003 refuses to migrate such a row, and this refuses to write for
- * one, so the collision is enforced away at both junctions rather than argued
- * away at neither (see the migration's header).
+ * this refuses to write for one, so the collision is enforced rather than
+ * argued away (schema.sql, Idempotency).
  */
 const HUMAN_WRITER = ':human';
 

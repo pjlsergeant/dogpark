@@ -196,10 +196,17 @@ CREATE INDEX system_event_created_at ON system_event (created_at);
 -- Idempotency
 -- ---------------------------------------------------------------------------
 
--- Scoped per agent. The row is written in the same transaction as the write it
--- covers, so a key never exists without its outcome or the other way round.
+-- Scoped per writer: an agent id, or the literal `:human` for the human, who
+-- has no agent row to reference — which is also why there is no foreign key.
+-- No id the application mints can equal the sentinel (`:` is outside the id
+-- alphabet), and `writerOf` in index.ts refuses to mint it for an agent, so a
+-- hand-written agent row cannot reach the human's keys through a post. A
+-- direct write into this table is beyond what any schema can police.
+--
+-- The row is written in the same transaction as the write it covers, so a key
+-- never exists without its outcome or the other way round.
 CREATE TABLE idempotency (
-  agent_id TEXT NOT NULL REFERENCES agent (id),
+  writer TEXT NOT NULL,
   key TEXT NOT NULL,
   -- Replaying a key with a different request is an error, not a silent replay
   -- of the old answer.
@@ -208,7 +215,7 @@ CREATE TABLE idempotency (
   -- a replay must re-render rather than return a frozen title (ADR-0014).
   outcome_json TEXT NOT NULL,
   created_at TEXT NOT NULL,
-  PRIMARY KEY (agent_id, key)
+  PRIMARY KEY (writer, key)
 ) STRICT;
 
 -- ---------------------------------------------------------------------------
@@ -232,6 +239,9 @@ CREATE TABLE read_log (
 CREATE INDEX read_log_agent_read_at ON read_log (agent_id, read_at);
 -- Answers "where did this agent last read to" without scanning the log.
 CREATE INDEX read_log_agent_kind_id ON read_log (agent_id, kind, read_at);
+-- The forensic view pages unfiltered too — ordering is `read_at DESC,
+-- rowid DESC`, and the trailing rowid comes for free.
+CREATE INDEX read_log_read_at ON read_log (read_at);
 
 -- ---------------------------------------------------------------------------
 -- Escalations

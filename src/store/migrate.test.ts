@@ -41,59 +41,6 @@ describe('migrations', () => {
     }
   });
 
-  it('carries existing agent keys across the idempotency rebuild', () => {
-    const path = file();
-    const db = new Database(path);
-    try {
-      // Stop at 2, which is the shape 0003 has to migrate away from.
-      migrate(
-        db,
-        MIGRATIONS.filter((m) => m.version <= 2),
-      );
-      db.prepare(
-        "INSERT INTO agent (id, display_name, created_at, archived) VALUES ('a', 'alice', 'then', 0)",
-      ).run();
-      db.prepare(
-        'INSERT INTO idempotency (agent_id, key, request_hash, outcome_json, created_at) ' +
-          "VALUES ('a', 'k', 'h', '{\"messageId\":\"m\"}', 'then')",
-      ).run();
-
-      const result = migrate(db);
-      expect(result.applied).toContain(3);
-
-      const rows = db.prepare('SELECT writer, key, request_hash FROM idempotency').all();
-      expect(rows).toEqual([{ writer: 'a', key: 'k', request_hash: 'h' }]);
-    } finally {
-      db.close();
-    }
-  });
-
-  it('refuses to migrate an agent that holds the reserved writer id', () => {
-    const path = file();
-    const db = new Database(path);
-    try {
-      migrate(
-        db,
-        MIGRATIONS.filter((m) => m.version <= 2),
-      );
-      // agent.id is unconstrained TEXT, so only a hand-written row can carry
-      // the sentinel — and copying its keys into the human's namespace would
-      // make them indistinguishable ever after. The migration must refuse.
-      db.prepare(
-        "INSERT INTO agent (id, display_name, created_at, archived) VALUES (':human', 'impostor', 'then', 0)",
-      ).run();
-
-      expect(() => migrate(db)).toThrow(/migration 3/);
-      // The refusal rolled back: the database is still at version 2, intact.
-      const version = db.prepare('SELECT MAX(version) AS v FROM schema_version').get() as {
-        v: number;
-      };
-      expect(version.v).toBe(2);
-    } finally {
-      db.close();
-    }
-  });
-
   it('records what it applied in a version table', () => {
     const db = new Database(file());
     try {

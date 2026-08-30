@@ -614,7 +614,7 @@ describe('idempotency', () => {
     const space = h.store.createSpace('acme').id;
     // The schema does not constrain agent.id, so a hand-written row can hold
     // anything. The human's writer carries a character the id alphabet does
-    // not, so no such row can reach into the human's keys (migration 0003).
+    // not, so no such row can reach into the human's keys (schema.sql).
     h.store.database
       .prepare(
         "INSERT INTO agent (id, display_name, created_at, archived) VALUES ('human', 'impostor', 'then', 0)",
