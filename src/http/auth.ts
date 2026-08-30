@@ -61,7 +61,43 @@ function bearerToken(header: string | undefined): string | undefined {
   return match?.[1];
 }
 
-/** Bearer authentication, then this agent's share of `requestsPerMinute`. */
+/**
+ * The id in the middle of `dgp_<agent-id>_<secret>`, which travels in the clear
+ * by design so that a rejected authentication is still attributable (see
+ * `parseKey` in the store). Read here — never verified here — so a refused
+ * attempt can be counted against the id it claimed without hashing anything.
+ *
+ * A token in no recognisable shape claims nothing, and every such attempt
+ * shares one bucket.
+ */
+function claimedAgentId(presented: string): string {
+  const parts = presented.split('_');
+  const [prefix, agent, secret] = parts;
+  if (parts.length !== 3 || prefix !== 'dgp' || agent === undefined || !secret) return '';
+  return agent;
+}
+
+/**
+ * Bearer authentication, then this agent's share of `requestsPerMinute`.
+ *
+ * Failed authentication is limited *before* verification, because verification
+ * is the cost: a SHA-256 over the presented key on the event loop, and a bump
+ * of `failed_auth_attempts` against the id the key claimed. Every agent id is
+ * public — it is the middle of every key, and any agent can list its peers —
+ * so without this anyone who can reach the port can make a healthy agent look
+ * broken, for free and without limit.
+ *
+ * Two buckets, and a refusal needs *both* to be exhausted. Either alone is a
+ * lockout waiting to happen: the claimed id is attacker-supplied, so gating on
+ * it alone would let anyone shut a named agent out; the source address is
+ * shared by every agent on one host, so gating on it alone would let one agent
+ * with a stale key shut out its neighbours. Requiring both means a flood is
+ * stopped where it comes from, while an agent whose own key verifies — and so
+ * has spent nothing from either bucket — is never caught in it.
+ *
+ * Only failures are charged. A valid key costs nothing here and is limited by
+ * `requestsPerMinute` like every other agent call.
+ */
 export function authenticateAgent(ctx: AppContext) {
   return async function agentGuard(request: FastifyRequest): Promise<void> {
     const presented = bearerToken(request.headers.authorization);
@@ -69,10 +105,24 @@ export function authenticateAgent(ctx: AppContext) {
       throw unauthenticated('expected an Authorization: Bearer dgp_… header');
     }
 
+    const byAddress = `ip:${request.ip}`;
+    const byClaim = `id:${claimedAgentId(presented)}`;
+    const address = ctx.failedAuthLimiter.peek(byAddress);
+    const claim = ctx.failedAuthLimiter.peek(byClaim);
+    if (!address.allowed && !claim.allowed) {
+      throw new HttpError('rate_limited', 'too many failed authentication attempts', {
+        retryAfterSeconds: Math.max(address.retryAfterSeconds, claim.retryAfterSeconds),
+      });
+    }
+
     // The store counts a rejected attempt against the id the key claimed, so
     // a bad key is still attributable.
     const auth = ctx.store.verifyKey(presented);
-    if (auth === undefined) throw unauthenticated('that key is not valid');
+    if (auth === undefined) {
+      ctx.failedAuthLimiter.record(byAddress);
+      ctx.failedAuthLimiter.record(byClaim);
+      throw unauthenticated('that key is not valid');
+    }
 
     const verdict = ctx.agentLimiter.check(auth.agent.id);
     if (!verdict.allowed) {

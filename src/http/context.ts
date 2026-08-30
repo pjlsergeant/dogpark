@@ -16,6 +16,11 @@ export interface AppContext {
   readonly agentLimiter: RateLimiter;
   /** Login is not an agent call, so it is limited by source address instead. */
   readonly loginLimiter: RateLimiter;
+  /**
+   * Failed bearer authentication, charged before the key is verified. Keyed
+   * both by source address and by the id the key claimed; see `auth.ts`.
+   */
+  readonly failedAuthLimiter: RateLimiter;
   readonly humanPosts: HumanIdempotency;
   readonly secureCookies: boolean;
   readonly sessionTtlSeconds: number;

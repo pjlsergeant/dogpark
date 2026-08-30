@@ -1,9 +1,27 @@
+import { createHash } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdir, stat, unlink } from 'node:fs/promises';
+import { mkdir, readdir, stat, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { tooLarge } from './errors.js';
+
+/** What one file turned out to be, learned on the way past. */
+export interface WrittenFile {
+  readonly sizeBytes: number;
+  /**
+   * `sha256:<hex>` over the bytes as they streamed. Hashed here rather than by
+   * re-reading the file: the bytes are already in hand, and a second pass over
+   * a fifty-megabyte upload to learn something we just had is a waste of the
+   * volume.
+   *
+   * It exists so that a retried post identifies the *file* and not just what
+   * the client said about it — without it, two uploads agreeing on name, type
+   * and size are the same request as far as an idempotency key is concerned,
+   * whatever the bytes say.
+   */
+  readonly contentDigest: string;
+}
 
 /**
  * Attachment bytes on the volume; their metadata is a row in SQLite.
@@ -14,11 +32,17 @@ import { tooLarge } from './errors.js';
  * reaches a path.
  */
 export interface AttachmentFiles {
-  /** Writes `source`, refusing at `maxBytes`. Returns the bytes written. */
-  write(id: string, source: Readable, maxBytes: number): Promise<number>;
+  /** Writes `source`, refusing at `maxBytes`. Returns what it turned out to be. */
+  write(id: string, source: Readable, maxBytes: number): Promise<WrittenFile>;
   open(id: string): Promise<Readable | undefined>;
   /** Best effort: a file that cannot be removed is an unreferenced file. */
   discard(id: string): Promise<void>;
+}
+
+/** Where attachment bytes live beneath the data directory. One answer, used
+ * by the app that writes them and the sweep that collects the strays. */
+export function attachmentRoot(dataDir: string): string {
+  return join(dataDir, 'attachments');
 }
 
 /** Ids are generated, but a path is never built from a string nobody checked. */
@@ -37,19 +61,22 @@ export function createAttachmentFiles(root: string): AttachmentFiles {
       const path = pathFor(root, id);
       await mkdir(dirname(path), { recursive: true });
       let written = 0;
+      const digest = createHash('sha256');
       try {
         await pipeline(
           source,
-          // Counted here rather than checked against Content-Length: the
-          // declared length is the client's claim, and a chunked upload has
-          // none at all. Refusing mid-stream is the only enforcement that
-          // costs the disk what the caller actually sent.
+          // Counted and hashed here rather than checked against
+          // Content-Length: the declared length is the client's claim, and a
+          // chunked upload has none at all. Refusing mid-stream is the only
+          // enforcement that costs the disk what the caller actually sent, and
+          // the same pass that counts the bytes may as well hash them.
           async function* (chunks: AsyncIterable<Buffer>) {
             for await (const chunk of chunks) {
               written += chunk.length;
               if (written > maxBytes) {
                 throw tooLarge(`attachment exceeds maxAttachmentBytes (${maxBytes})`);
               }
+              digest.update(chunk);
               yield chunk;
             }
           },
@@ -59,7 +86,7 @@ export function createAttachmentFiles(root: string): AttachmentFiles {
         await this.discard(id);
         throw error;
       }
-      return written;
+      return { sizeBytes: written, contentDigest: `sha256:${digest.digest('hex')}` };
     },
 
     async open(id) {
@@ -80,6 +107,66 @@ export function createAttachmentFiles(root: string): AttachmentFiles {
       }
     },
   };
+}
+
+/**
+ * Collects files the volume holds and no message references.
+ *
+ * Files are written before the message row commits, deliberately: a crash
+ * between the two leaves an unreferenced file rather than a message pointing
+ * at nothing. Nothing ever collected them, so this does — at startup, where
+ * there is no upload in flight to race.
+ *
+ * `minimumAgeMs` is belt and braces for the case where there is: a file
+ * younger than that is left alone, because a file being streamed right now is
+ * not yet referenced by anything either.
+ *
+ * Returns the ids removed. Best effort throughout: a volume that cannot be
+ * read is not a reason to refuse to start.
+ */
+export async function sweepUnreferenced(
+  root: string,
+  isReferenced: (id: string) => boolean,
+  options: { readonly now?: number | undefined; readonly minimumAgeMs?: number | undefined } = {},
+): Promise<readonly string[]> {
+  const now = options.now ?? Date.now();
+  const minimumAgeMs = options.minimumAgeMs ?? 60 * 60_000;
+  const removed: string[] = [];
+
+  let fanout: string[];
+  try {
+    fanout = (await readdir(root, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name);
+  } catch {
+    // Nothing has ever been uploaded, or the volume is not there. Either way
+    // there is nothing to collect.
+    return removed;
+  }
+
+  for (const bucket of fanout) {
+    let names: string[];
+    try {
+      names = (await readdir(join(root, bucket), { withFileTypes: true }))
+        .filter((entry) => entry.isFile())
+        .map((entry) => entry.name);
+    } catch {
+      continue;
+    }
+    for (const id of names) {
+      // A name that is not an id was not written here; leave it for a human.
+      if (!SAFE_ID.test(id) || isReferenced(id)) continue;
+      try {
+        const info = await stat(join(root, bucket, id));
+        if (now - info.mtimeMs < minimumAgeMs) continue;
+        await unlink(join(root, bucket, id));
+        removed.push(id);
+      } catch {
+        /* Gone already, or not ours to remove. */
+      }
+    }
+  }
+  return removed;
 }
 
 /**

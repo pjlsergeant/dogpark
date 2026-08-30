@@ -1,7 +1,7 @@
 import type { FastifyRequest } from 'fastify';
 import type { z } from 'zod';
-import { newId } from '../store/ids.js';
 import type { AttachmentInput } from '../store/index.js';
+import { newAttachmentId } from '../store/index.js';
 import type { AttachmentId } from '../types.js';
 import type { AppContext } from './context.js';
 import { invalid, tooLarge } from './errors.js';
@@ -33,7 +33,7 @@ export async function collectPost<T>(
     return { payload: parse(schema, request.body, 'request body'), attachments: [], discard: noop };
   }
 
-  const written: string[] = [];
+  const written: AttachmentId[] = [];
   const attachments: AttachmentInput[] = [];
   const discard = async (): Promise<void> => {
     for (const id of written) await ctx.files.discard(id);
@@ -56,16 +56,23 @@ export async function collectPost<T>(
       // strand bytes on the volume for a request that was never valid.
       if (raw === undefined) throw invalid('the request part must come before any files');
 
-      const id = newId();
-      const sizeBytes = await ctx.files.write(id, part.file, ctx.limits.maxAttachmentBytes);
+      // Minted through the store's own export rather than by reaching past it
+      // into `store/ids.js`: the alphabet and the length are the store's.
+      const id = newAttachmentId();
+      const file = await ctx.files.write(id, part.file, ctx.limits.maxAttachmentBytes);
       written.push(id);
       attachments.push({
-        id: id as AttachmentId,
+        id,
         // Metadata only. Files are stored under generated ids, so a supplied
         // name never becomes part of a path.
         filename: part.filename === '' ? 'attachment' : part.filename,
         contentType: part.mimetype,
-        sizeBytes,
+        sizeBytes: file.sizeBytes,
+        // Hashed while streaming to the volume, never by reading it back. It
+        // is what makes a retry identify the file rather than the client's
+        // description of it: without it, re-posting a *different* file under
+        // the same name, type and size replays the original message.
+        contentDigest: file.contentDigest,
       });
     }
   } catch (error) {

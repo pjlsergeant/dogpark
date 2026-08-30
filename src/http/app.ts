@@ -4,7 +4,7 @@ import Fastify from 'fastify';
 import type { FastifyInstance, FastifyServerOptions } from 'fastify';
 import type { Config } from '../config.js';
 import type { Store } from '../store/index.js';
-import { createAttachmentFiles } from './attachments.js';
+import { attachmentRoot, createAttachmentFiles } from './attachments.js';
 import type { AppContext } from './context.js';
 import { limitsFrom } from './context.js';
 import { invalid, toWireError } from './errors.js';
@@ -30,6 +30,15 @@ const SESSION_TTL_SECONDS = 12 * 60 * 60;
 /** A password is the one credential worth guessing, so logins get their own. */
 const LOGINS_PER_MINUTE = 10;
 
+/**
+ * Failed bearer authentications tolerated per minute, per source address and
+ * per claimed agent id. A key that does not verify is never a healthy client's
+ * ordinary traffic, so this is deliberately far below `requestsPerMinute`: it
+ * is the ceiling on unauthenticated hashing, and on how fast a stranger can
+ * inflate an agent's failed-attempt counter.
+ */
+const FAILED_AUTHS_PER_MINUTE = 20;
+
 const DEFAULT_CSP = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'";
 
 export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
@@ -43,10 +52,11 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     store,
     config,
     limits,
-    files: createAttachmentFiles(`${config.DOGPARK_DATA_DIR}/attachments`),
+    files: createAttachmentFiles(attachmentRoot(config.DOGPARK_DATA_DIR)),
     writes: new WriteSignal(),
     agentLimiter: createRateLimiter(limits.requestsPerMinute),
     loginLimiter: createRateLimiter(LOGINS_PER_MINUTE),
+    failedAuthLimiter: createRateLimiter(FAILED_AUTHS_PER_MINUTE),
     humanPosts: createHumanIdempotency(),
     // Only a deployment that has declared a TLS-terminating proxy can send a
     // Secure cookie back at all; without one Dogpark binds loopback and a

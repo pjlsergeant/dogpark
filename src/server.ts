@@ -3,13 +3,14 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Config } from './config.js';
 import { loadConfig } from './config.js';
+import { attachmentRoot, sweepUnreferenced } from './http/attachments.js';
 import { buildApp } from './http/app.js';
 import { hashPassword } from './http/password.js';
 import type { EscalationQueue, PendingEscalation } from './notify/webhook.js';
 import { Notifier } from './notify/webhook.js';
 import type { Store } from './store/index.js';
 import { migrate, openStore } from './store/index.js';
-import type { Timestamp } from './types.js';
+import type { AttachmentId, Timestamp } from './types.js';
 
 /**
  * The entry point: configuration, storage, HTTP, notification, and a shutdown
@@ -81,6 +82,25 @@ export function escalationQueue(store: Store): EscalationQueue {
   };
 }
 
+/**
+ * Files on the volume that no message references, collected at startup.
+ *
+ * The write ordering is deliberate — bytes first, message row last, so a crash
+ * between them strands a file rather than leaving a message pointing at
+ * nothing — but nothing ever collected the strays. Startup is where there is
+ * no upload in flight to race, and an age floor covers the case where there
+ * somehow is.
+ *
+ * Never fatal: a volume that cannot be swept is not a reason to refuse to
+ * serve.
+ */
+async function sweepOrphanedAttachments(store: Store, config: Config): Promise<readonly string[]> {
+  return sweepUnreferenced(
+    attachmentRoot(config.DOGPARK_DATA_DIR),
+    (id) => store.getAttachment(id as AttachmentId) !== undefined,
+  );
+}
+
 /** `dist/ui` beside the compiled server, or beneath the working directory. */
 function findUiRoot(): string | undefined {
   const candidates = [
@@ -124,11 +144,29 @@ async function main(): Promise<void> {
     { schemaVersion: schema.to, trustProxy: config.behindProxy, host: binding.host },
     'dogpark starting',
   );
-  if (!config.behindProxy) {
+  if (config.behindProxy) {
+    // 0.0.0.0 is the whole point of the declaration — the proxy has to reach
+    // us — but it is also every other interface. If the port is published, the
+    // proxy is no longer the only way in, and the TLS refusal that
+    // `X-Forwarded-Proto` powers is bypassed by simply not sending the header.
+    app.log.warn(
+      { host: binding.host, trustedProxies: config.trustProxy },
+      'listening on every interface because a proxy is declared: publish this port only to ' +
+        'that proxy, or anything that can reach it speaks to Dogpark directly, in plaintext',
+    );
+  } else {
     app.log.warn(
       'DOGPARK_TRUST_PROXY=no: listening on loopback only and issuing non-Secure ' +
-        'session cookies. Set it to yes when a TLS-terminating proxy is in front.',
+        "session cookies. Set it to the proxy's address when a TLS-terminating proxy " +
+        'is in front.',
     );
+  }
+
+  // Before the notifier and before listening: it walks the volume, and there
+  // is nothing in flight to race at this point.
+  const swept = await sweepOrphanedAttachments(store, config);
+  if (swept.length > 0) {
+    app.log.info({ count: swept.length }, 'collected attachment files no message references');
   }
 
   const notifier = new Notifier(escalationQueue(store), {

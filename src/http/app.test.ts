@@ -1,4 +1,4 @@
-import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { FastifyInstance, InjectOptions, LightMyRequestResponse } from 'fastify';
@@ -7,9 +7,9 @@ import type { Config } from '../config.js';
 import { loadConfig } from '../config.js';
 import type { Store } from '../store/index.js';
 import { openStore, RESERVED_SEQUENCE } from '../store/index.js';
-import type { AgentId, ConversationId, SpaceId } from '../types.js';
+import type { AgentId, AttachmentId, ConversationId, SpaceId } from '../types.js';
 import { buildApp } from './app.js';
-import { contentDisposition, safeContentType } from './attachments.js';
+import { contentDisposition, safeContentType, sweepUnreferenced } from './attachments.js';
 import { hashPassword } from './password.js';
 
 const PASSWORD = 'a correct horse battery staple';
@@ -88,6 +88,20 @@ function multipart(parts: readonly MultipartPart[]): { body: Buffer; contentType
     body: Buffer.concat(chunks),
     contentType: `multipart/form-data; boundary=${boundary}`,
   };
+}
+
+/** `GET /reads` as it arrives on the wire, with only what the tests read. */
+interface ReadLogBody {
+  readonly reads: readonly { readonly id: string; readonly kind: string }[];
+  readonly nextCursor: string | null;
+  readonly hasMore: boolean;
+}
+
+/** `MessagePage` as it arrives on the wire, with only what the tests read. */
+interface MessagePageBody {
+  readonly messages: readonly { readonly body: string }[];
+  readonly nextCursor: string;
+  readonly hasMore: boolean;
 }
 
 async function login(h: Harness): Promise<{ cookie: string; csrf: string }> {
@@ -204,6 +218,63 @@ describe('the HTTP surface', () => {
       } finally {
         await teardown(limited);
       }
+    });
+
+    it('bounds failed authentication, which is free and unauthenticated otherwise', async () => {
+      const attempt = (from: string): Promise<LightMyRequestResponse> =>
+        h.app.inject({
+          method: 'GET',
+          url: '/api/agent/identity',
+          headers: { authorization: `Bearer dgp_${alpha.id}_notthesecret` },
+          remoteAddress: from,
+        });
+
+      const codes: number[] = [];
+      for (let i = 0; i < 30; i += 1) codes.push((await attempt('10.0.0.1')).statusCode);
+      expect(codes.filter((c) => c === 429).length).toBeGreaterThan(0);
+
+      const refused = await attempt('10.0.0.1');
+      expect(refused.statusCode).toBe(429);
+      expect(refused.json()).toMatchObject({ code: 'rate_limited' });
+      expect(refused.headers['retry-after']).toBeDefined();
+
+      // Every agent id is public — it is the middle of every key — so this
+      // counter is what a stranger could otherwise drive up without limit,
+      // making a healthy agent look broken. It stops at the budget.
+      expect(h.store.getAgent(alpha.id)?.failedAuthAttempts).toBeLessThanOrEqual(
+        codes.filter((c) => c === 401).length,
+      );
+      expect(h.store.getAgent(alpha.id)?.failedAuthAttempts).toBeGreaterThan(0);
+    });
+
+    it('never lets that flood shut out a key that verifies', async () => {
+      for (let i = 0; i < 30; i += 1) {
+        await h.app.inject({
+          method: 'GET',
+          url: '/api/agent/identity',
+          headers: { authorization: `Bearer dgp_${alpha.id}_notthesecret` },
+          remoteAddress: '10.0.0.1',
+        });
+      }
+
+      // The flood exhausted the address it came from and the id it claimed.
+      // Neither alone may refuse anyone: the id is attacker-supplied, and the
+      // address is shared by every agent on one host.
+      const victim = await h.app.inject({
+        method: 'GET',
+        url: '/api/agent/identity',
+        headers: { authorization: `Bearer ${alpha.key}` },
+        remoteAddress: '10.0.0.2',
+      });
+      expect(victim.statusCode).toBe(200);
+
+      const neighbour = await h.app.inject({
+        method: 'GET',
+        url: '/api/agent/identity',
+        headers: { authorization: `Bearer ${beta.key}` },
+        remoteAddress: '10.0.0.1',
+      });
+      expect(neighbour.statusCode).toBe(200);
     });
   });
 
@@ -509,6 +580,115 @@ describe('the HTTP surface', () => {
       expect(attachmentFiles(h)).toEqual([]);
     });
 
+    it('tells two files of the same name, type and size apart on a retry', async () => {
+      const upload = (bytes: string): Promise<LightMyRequestResponse> => {
+        const form = multipart([
+          {
+            name: 'request',
+            value: JSON.stringify({ target: { conversation }, body: 'here', idempotencyKey: 'd1' }),
+          },
+          {
+            name: 'files',
+            filename: 'report.csv',
+            contentType: 'text/csv',
+            data: Buffer.from(bytes),
+          },
+        ]);
+        return asAgent(alpha.key, {
+          method: 'POST',
+          url: '/api/agent/messages',
+          payload: form.body,
+          headers: { 'content-type': form.contentType },
+        });
+      };
+
+      const first = await upload('x');
+      expect(first.statusCode).toBe(200);
+      const idOf = (r: LightMyRequestResponse): string =>
+        (r.json() as { message: { id: string } }).message.id;
+
+      // The same file again is the same request: a replay, and the bytes just
+      // written belong to no message, so they are not left behind.
+      const retry = await upload('x');
+      expect(retry.statusCode).toBe(200);
+      expect(idOf(retry)).toBe(idOf(first));
+      expect(attachmentFiles(h)).toHaveLength(1);
+
+      // A different file of the same name, type and size is a different
+      // request. Without a digest of the bytes nothing here can tell, and this
+      // replays the first message — quietly answering with the wrong file.
+      const different = await upload('y');
+      expect(different.statusCode).toBe(400);
+      expect(different.json()).toMatchObject({ code: 'invalid_request' });
+      expect(attachmentFiles(h)).toHaveLength(1);
+    });
+
+    it('does the same for the human, whose idempotency is the HTTP layer\u2019s', async () => {
+      const session = await login(h);
+      const upload = (bytes: string): Promise<LightMyRequestResponse> => {
+        const form = multipart([
+          {
+            name: 'request',
+            value: JSON.stringify({ target: { conversation }, body: 'here', idempotencyKey: 'h1' }),
+          },
+          {
+            name: 'files',
+            filename: 'report.csv',
+            contentType: 'text/csv',
+            data: Buffer.from(bytes),
+          },
+        ]);
+        return h.app.inject({
+          method: 'POST',
+          url: '/api/admin/messages',
+          payload: form.body,
+          headers: {
+            'content-type': form.contentType,
+            cookie: session.cookie,
+            'x-csrf-token': session.csrf,
+          },
+        });
+      };
+
+      expect((await upload('x')).statusCode).toBe(200);
+      const different = await upload('y');
+      expect(different.statusCode).toBe(400);
+      expect(different.json()).toMatchObject({ code: 'invalid_request' });
+    });
+
+    it('collects a file no message references, and keeps one that is', async () => {
+      const form = multipart([
+        {
+          name: 'request',
+          value: JSON.stringify({ target: { conversation }, body: 'kept', idempotencyKey: 's1' }),
+        },
+        { name: 'files', filename: 'a.csv', contentType: 'text/csv', data: Buffer.from('x') },
+      ]);
+      const posted = await asAgent(alpha.key, {
+        method: 'POST',
+        url: '/api/agent/messages',
+        payload: form.body,
+        headers: { 'content-type': form.contentType },
+      });
+      expect(posted.statusCode).toBe(200);
+
+      // What a crash between the file write and the message commit leaves: the
+      // bytes are on the volume and nothing points at them.
+      const stray = 'deadbeefdeadbeef';
+      const root = join(h.dir, 'attachments');
+      mkdirSync(join(root, stray.slice(0, 2)), { recursive: true });
+      writeFileSync(join(root, stray.slice(0, 2), stray), 'orphaned');
+      expect(attachmentFiles(h)).toHaveLength(2);
+
+      const swept = await sweepUnreferenced(
+        root,
+        (id) => h.store.getAttachment(id as AttachmentId) !== undefined,
+        { minimumAgeMs: 0 },
+      );
+      expect(swept).toEqual([stray]);
+      expect(attachmentFiles(h)).toHaveLength(1);
+    });
+
     it('refuses a body over maxMessageBytes', async () => {
       const tiny = await harness({ DOGPARK_MAX_MESSAGE_BYTES: '32' });
       try {
@@ -637,7 +817,8 @@ describe('the HTTP surface', () => {
         hasMore: boolean;
       };
       expect(rows).toHaveLength(1);
-      expect(nextCursor).toBeNull();
+      // A real position, not a placeholder: the log is resumable.
+      expect(nextCursor).toEqual(expect.any(String));
       expect(hasMore).toBe(false);
       expect(rows[0]?.agent.id).toBe(alpha.id);
       expect(rows[0]?.kind).toBe('stream');
@@ -659,9 +840,57 @@ describe('the HTTP surface', () => {
       expect(body.hasMore).toBe(true);
     });
 
-    it('refuses a read-log filter the store cannot honour, rather than dropping it', async () => {
+    it('pages the log with the cursor it handed back, oldest continuing after newest', async () => {
+      await asAgent(alpha.key, { method: 'GET', url: '/api/agent/stream?tip=true' });
+      await asAgent(alpha.key, { method: 'GET', url: `/api/agent/spaces/${space}/messages` });
       const session = await login(h);
-      for (const query of ['since=2020-01-01T00:00:00Z', 'until=2020-01-01T00:00:00Z', 'after=x']) {
+      const reads = async (query: string): Promise<ReadLogBody> => {
+        const response = await h.app.inject({
+          method: 'GET',
+          url: `/api/admin/reads?${query}`,
+          headers: { cookie: session.cookie },
+        });
+        expect(response.statusCode).toBe(200);
+        return response.json() as ReadLogBody;
+      };
+
+      // Newest first, so the space read comes before the stream read that
+      // preceded it.
+      const first = await reads('limit=1');
+      expect(first.reads.map((r) => r.kind)).toEqual(['space']);
+      expect(first.hasMore).toBe(true);
+      expect(first.nextCursor).toEqual(expect.any(String));
+
+      const next = await reads(`limit=1&after=${encodeURIComponent(first.nextCursor ?? '')}`);
+      expect(next.reads.map((r) => r.kind)).toEqual(['stream']);
+      expect(next.hasMore).toBe(false);
+      // Continuing strictly older: the page it already had is not repeated.
+      expect(next.reads[0]?.id).not.toBe(first.reads[0]?.id);
+    });
+
+    it('bounds the log by since and until, which are what a forensic view asks', async () => {
+      await asAgent(alpha.key, { method: 'GET', url: '/api/agent/stream?tip=true' });
+      const session = await login(h);
+      const reads = async (query: string): Promise<ReadLogBody> => {
+        const response = await h.app.inject({
+          method: 'GET',
+          url: `/api/admin/reads?${query}`,
+          headers: { cookie: session.cookie },
+        });
+        expect(response.statusCode).toBe(200);
+        return response.json() as ReadLogBody;
+      };
+
+      expect((await reads('since=2020-01-01T00:00:00Z')).reads).toHaveLength(1);
+      // `until` is exclusive and bounds when the read happened, so a window
+      // that closed before this process started holds nothing.
+      expect((await reads('until=2020-01-01T00:00:00Z')).reads).toEqual([]);
+      expect((await reads('since=2999-01-01T00:00:00Z')).reads).toEqual([]);
+    });
+
+    it('refuses a filter it cannot read, rather than answering as if it were absent', async () => {
+      const session = await login(h);
+      for (const query of ['since=the-day-before-yesterday', 'after=not-a-cursor']) {
         const response = await h.app.inject({
           method: 'GET',
           url: `/api/admin/reads?${query}`,
@@ -945,21 +1174,91 @@ describe('the HTTP surface', () => {
       expect(unknown.statusCode).toBe(404);
     });
 
-    it('refuses order=newest rather than answering with the oldest', async () => {
+    it('reads a thread backwards from the newest, and pages older with after', async () => {
+      for (const body of ['one', 'two', 'three']) {
+        h.store.postMessage({ sender: { kind: 'human' }, target: { conversation }, body });
+      }
       const session = await login(h);
-      const refused = await h.app.inject({
-        method: 'GET',
-        url: `/api/admin/conversations/${conversation}/messages?order=newest`,
-        headers: { cookie: session.cookie },
-      });
-      expect(refused.statusCode).toBe(400);
-      expect(refused.json()).toMatchObject({ code: 'invalid_request' });
+      const backwards = (after?: string): Promise<LightMyRequestResponse> =>
+        h.app.inject({
+          method: 'GET',
+          url:
+            `/api/admin/conversations/${conversation}/messages?order=newest&limit=2` +
+            (after === undefined ? '' : `&after=${encodeURIComponent(after)}`),
+          headers: { cookie: session.cookie },
+        });
 
-      const accepted = await asAgent(alpha.key, {
+      const first = await backwards();
+      expect(first.statusCode).toBe(200);
+      const page = first.json() as MessagePageBody;
+      // Newest first, which is the whole point: the last thing said is the
+      // first thing read.
+      expect(page.messages.map((m) => m.body)).toEqual(['three', 'two']);
+      expect(page.hasMore).toBe(true);
+
+      const older = (await backwards(page.nextCursor)).json() as MessagePageBody;
+      expect(older.messages.map((m) => m.body)).toEqual(['one']);
+      expect(older.hasMore).toBe(false);
+
+      // The same range read forwards is the same messages, the other way up.
+      const forwards = await asAgent(alpha.key, {
         method: 'GET',
         url: `/api/agent/conversations/${conversation}/messages?order=oldest`,
       });
-      expect(accepted.statusCode).toBe(200);
+      expect(forwards.statusCode).toBe(200);
+      expect((forwards.json() as MessagePageBody).messages.map((m) => m.body)).toEqual([
+        'one',
+        'two',
+        'three',
+      ]);
+
+      // And an agent gets it too, since it is the reader the ordering exists
+      // for: fifty messages of recent context without walking from day one.
+      const agentPage = await asAgent(alpha.key, {
+        method: 'GET',
+        url: `/api/agent/conversations/${conversation}/messages?order=newest&limit=1`,
+      });
+      expect((agentPage.json() as MessagePageBody).messages.map((m) => m.body)).toEqual(['three']);
+    });
+
+    it('carries a count, the last activity and the last sender in the thread list', async () => {
+      await asAgent(alpha.key, {
+        method: 'POST',
+        url: '/api/agent/messages',
+        payload: { target: { conversation }, body: 'the figures', idempotencyKey: 'tl-1' },
+      });
+      const quiet = h.store.resolveOrCreateConversation(space, 'nobody has posted here').id;
+
+      const session = await login(h);
+      const response = await h.app.inject({
+        method: 'GET',
+        url: `/api/admin/spaces/${space}/conversations`,
+        headers: { cookie: session.cookie },
+      });
+      expect(response.statusCode).toBe(200);
+      const threads = response.json() as {
+        id: string;
+        title: string;
+        messageCount: number;
+        lastMessageAt: string | null;
+        lastActivityAt: string | null;
+        lastSenderName: string | null;
+        lastSender: { kind: string; displayName: string } | null;
+      }[];
+
+      const busy = threads.find((t) => t.id === conversation);
+      expect(busy?.messageCount).toBe(1);
+      expect(busy?.lastMessageAt).toEqual(expect.any(String));
+      expect(busy?.lastActivityAt).toBe(busy?.lastMessageAt);
+      expect(busy?.lastSenderName).toBe('alpha');
+      expect(busy?.lastSender).toMatchObject({ kind: 'agent', displayName: 'alpha' });
+
+      // A thread nobody has posted to is still a thread, and says so rather
+      // than being left out of the list.
+      const empty = threads.find((t) => t.id === quiet);
+      expect(empty?.messageCount).toBe(0);
+      expect(empty?.lastMessageAt).toBeNull();
+      expect(empty?.lastSenderName).toBeNull();
     });
 
     it('404s a space that does not exist rather than answering emptily', async () => {

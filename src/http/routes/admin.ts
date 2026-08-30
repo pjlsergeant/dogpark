@@ -3,12 +3,13 @@ import type { AgentRecord } from '../../store/index.js';
 import type { Agent, AttachmentId } from '../../types.js';
 import { authenticateHuman, csrfTokenFor, requireSession, SESSION_COOKIE } from '../auth.js';
 import type { AppContext } from '../context.js';
-import { invalid, notFound, unauthenticated } from '../errors.js';
+import { notFound, unauthenticated } from '../errors.js';
 import { verifyPassword } from '../password.js';
 import { assertBodyFits, collectPost } from '../post.js';
 import {
   adminAgent,
   bare,
+  conversationRow,
   escalationRow,
   keySummary,
   readLogRow,
@@ -19,7 +20,9 @@ import {
   AdminAgentsQuery,
   asAgentId,
   asConversationId,
+  asReadLogCursor,
   asSpaceId,
+  asTimestamp,
   EscalationsQuery,
   HumanPostBody,
   isTruthyFlag,
@@ -216,9 +219,15 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
       // Reading and posting
       // ---------------------------------------------------------------------
 
+      /**
+       * The thread list, with what a list needs to be scannable: how many
+       * messages, when the last one landed and who wrote it. Derived by the
+       * store in one grouped query — folding it here would mean reading every
+       * message in the space per request.
+       */
       guarded.get('/spaces/:id/conversations', async (request) => {
         const { id } = request.params as { id: string };
-        return ctx.store.listConversations(asSpaceId(id));
+        return ctx.store.listConversationSummaries(asSpaceId(id)).map(conversationRow);
       });
 
       guarded.get('/conversations/:id/messages', async (request) => {
@@ -240,6 +249,9 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
 
           // Attachment ids are minted per request, so they are left out of the
           // replay hash: a retry uploading the same file is the same request.
+          // The digest is in, for the same reason the store keeps it — without
+          // it a *different* file of the same name, type and size replays the
+          // original message.
           const shape = {
             target: payload.target,
             body: payload.body,
@@ -247,6 +259,7 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
               filename: a.filename,
               contentType: a.contentType,
               sizeBytes: a.sizeBytes,
+              contentDigest: a.contentDigest ?? null,
             })),
           };
           if (payload.idempotencyKey !== undefined) {
@@ -288,36 +301,30 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
       // Forensics
       // ---------------------------------------------------------------------
 
+      /**
+       * The read log: the fastest-growing table here, and the forensic view.
+       * Every filter is the store's — keyset paging over `(read_at, rowid)`,
+       * bounded by `since` and `until` — so a page is never a window fetched
+       * here and trimmed, which in the one view whose whole job is
+       * completeness would silently drop rows.
+       *
+       * `after` arrives opaque and goes back unread. A malformed one is the
+       * store's `invalid_request`, like a malformed timestamp.
+       */
       guarded.get('/reads', async (request) => {
         const query = parse(ReadLogQuery, request.query, 'query');
-        // The store filters the read log by agent and nothing else. Ranging or
-        // paging it here would mean fetching a window and trimming it, which
-        // in the one view whose whole job is completeness would silently drop
-        // rows. Refused until the store can do it. Reported.
-        for (const [name, value] of Object.entries({
-          since: query.since,
-          until: query.until,
-          after: query.after,
-        })) {
-          if (value !== undefined) {
-            throw invalid(`the read log cannot be filtered by ${name} yet`);
-          }
-        }
-
-        const limit = pageLimit(query.limit);
         const cache = new Map<string, Agent>();
-        const rows = ctx.store.listReadLog({
+        const page = ctx.store.readReadLog({
           ...(query.agent === undefined ? {} : { agent: asAgentId(query.agent) }),
-          // One more than asked for, so `hasMore` is observed rather than
-          // guessed.
-          limit: limit + 1,
+          ...(query.since === undefined ? {} : { since: asTimestamp(query.since) }),
+          ...(query.until === undefined ? {} : { until: asTimestamp(query.until) }),
+          ...(query.after === undefined ? {} : { after: asReadLogCursor(query.after) }),
+          limit: pageLimit(query.limit),
         });
         return {
-          reads: rows.slice(0, limit).map((entry) => readLogRow(ctx.store, cache, entry)),
-          // Null, not a token: there is nothing to resume from until the store
-          // offers a cursor over this table.
-          nextCursor: null,
-          hasMore: rows.length > limit,
+          reads: page.entries.map((entry) => readLogRow(ctx.store, cache, entry)),
+          nextCursor: page.nextCursor,
+          hasMore: page.hasMore,
         };
       });
 
@@ -329,31 +336,22 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
           .map((record) => escalationRow(ctx.store, cache, record));
       });
 
+      /**
+       * The store turns FTS5's own parse failure into `invalid_request` — the
+       * human's typo, not a server fault — so nothing is caught here. The
+       * catch that used to be here matched every `SQLITE*` code, which by the
+       * time it could still fire meant reporting a locked or corrupt database
+       * as a bad search query.
+       */
       guarded.get('/search', async (request) => {
         const query = parse(SearchQuery, request.query, 'query');
-        // FTS5 parses `q` itself and rejects malformed syntax with an opaque
-        // SQLite error. That is the human's typo, not a server fault.
-        try {
-          return ctx.store
-            .searchMessages(query.q, {
-              ...(query.space === undefined ? {} : { space: asSpaceId(query.space) }),
-              limit: pageLimit(query.limit),
-            })
-            .map((hit) => searchRow(ctx.store, hit));
-        } catch (error) {
-          if (isSqliteError(error)) throw invalid(`search query is not valid FTS5 syntax`);
-          throw error;
-        }
+        return ctx.store
+          .searchMessages(query.q, {
+            ...(query.space === undefined ? {} : { space: asSpaceId(query.space) }),
+            limit: pageLimit(query.limit),
+          })
+          .map((hit) => searchRow(ctx.store, hit));
       });
     });
   };
-}
-
-function isSqliteError(error: unknown): boolean {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    typeof (error as { code?: unknown }).code === 'string' &&
-    (error as { code: string }).code.startsWith('SQLITE')
-  );
 }

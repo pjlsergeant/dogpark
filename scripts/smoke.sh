@@ -74,6 +74,21 @@ CONV2=$(echo "$B" | jq -r '.conversation.id // empty')
 { [ -n "$CONV" ] && [ "$CONV" = "$CONV2" ]; } && ok "same title appends to the same thread" \
   || bad "title addressing" "one thread" "$CONV vs $CONV2"
 
+step "reading a thread from its newest end"
+agent "$ACC_KEY" POST /messages "{\"target\":{\"conversation\":\"$CONV\"},\"body\":\"latest entry\",\"idempotencyKey\":\"$(key)\"}" >/dev/null
+NEWEST=$(agent "$ACC_KEY" GET "/conversations/$CONV/messages?order=newest&limit=1")
+TOP=$(echo "$NEWEST" | jq -r '.messages[0].body // empty')
+[ "$TOP" = "latest entry" ] && ok "order=newest returns the last message first" \
+  || bad "order=newest" "the newest message" "$NEWEST"
+CURSOR=$(echo "$NEWEST" | jq -r '.nextCursor // empty')
+OLDER=$(agent "$ACC_KEY" GET "/conversations/$CONV/messages?order=newest&limit=1&after=$CURSOR")
+PREV=$(echo "$OLDER" | jq -r '.messages[0].body // empty')
+{ [ -n "$PREV" ] && [ "$PREV" != "$TOP" ]; } && ok "after pages backwards into older messages" \
+  || bad "backwards paging" "an older message" "$OLDER"
+FIRST=$(agent "$ACC_KEY" GET "/conversations/$CONV/messages?order=oldest&limit=1" | jq -r '.messages[0].body // empty')
+[ "$FIRST" = "first entry" ] && ok "the same thread forwards still starts at the beginning" \
+  || bad "order=oldest" "first entry" "$FIRST"
+
 step "idempotency"
 K=$(key)
 R1=$(agent "$ACC_KEY" POST /messages "{\"target\":{\"conversation\":\"$CONV\"},\"body\":\"once\",\"idempotencyKey\":\"$K\"}")
@@ -105,9 +120,54 @@ ESC=$(agent "$ACC_KEY" POST /escalations "{\"conversation\":\"$CONV\",\"reason\"
 INBOX=$(admin GET /escalations | jq -r 'length')
 [ "${INBOX:-0}" -ge 1 ] && ok "escalation reaches the human's inbox" || bad "escalation" ">=1" "$INBOX / $ESC"
 
+step "attachments: a retried upload of a different file is not the original message"
+UP=$(mktemp -d); DUP=$(key)
+REQ="{\"target\":{\"conversation\":\"$CONV\"},\"body\":\"the numbers\",\"idempotencyKey\":\"$DUP\"}"
+upload() { # file
+  curl -sS -H "Authorization: Bearer $ACC_KEY" \
+    --form-string "request=$REQ" \
+    -F "files=@$1;type=text/csv" "$URL/api/agent/messages"
+}
+printf 'alpha' > "$UP/report.csv"
+SENT=$(upload "$UP/report.csv")
+SENT_ID=$(echo "$SENT" | jq -r '.message.id // empty')
+[ -n "$SENT_ID" ] && ok "a file uploads with its message" || bad "upload" "a message id" "$SENT"
+AGAIN=$(upload "$UP/report.csv")
+[ "$(echo "$AGAIN" | jq -r '.message.id // empty')" = "$SENT_ID" ] \
+  && ok "re-sending the same file replays the same message" || bad "upload replay" "$SENT_ID" "$AGAIN"
+# Same name, same type, same length, different bytes: only a digest of the
+# content can tell these apart, and replaying the first would answer with the
+# wrong file.
+printf 'omega' > "$UP/report.csv"
+SWAPPED=$(upload "$UP/report.csv")
+[ "$(echo "$SWAPPED" | jq -r '.code // empty')" = "invalid_request" ] \
+  && ok "a different file under the same key is refused, not replayed" \
+  || bad "upload digest" "invalid_request" "$SWAPPED"
+rm -rf "$UP"
+
+step "the human's thread list carries what a list needs"
+THREADS=$(admin GET "/spaces/$SPACE/conversations")
+echo "$THREADS" | jq -e --arg c "$CONV" \
+  '[.[] | select(.id == $c)][0] | (.messageCount > 0) and (.lastMessageAt != null) and (.lastSenderName != null)' \
+  >/dev/null && ok "threads carry a count, last activity and last sender" \
+  || bad "thread list" "count, last activity, last sender" "$THREADS"
+
 step "the read log recorded reads, with their parameters"
-LOG=$(admin GET "/reads?agent=$ACC_ID")
-echo "$LOG" | jq -e 'length > 0' >/dev/null && ok "reads recorded" || bad "read log" ">0 rows" "$LOG"
+LOG=$(admin GET "/reads?agent=$ACC_ID&limit=1")
+echo "$LOG" | jq -e '.reads | length == 1' >/dev/null && ok "reads recorded, one page at a time" \
+  || bad "read log" "one row" "$LOG"
+echo "$LOG" | jq -e '.reads[0].parameters != null' >/dev/null && ok "with the parameters read with" \
+  || bad "read log" "parameters" "$LOG"
+LOG_CURSOR=$(echo "$LOG" | jq -r '.nextCursor // empty')
+[ -n "$LOG_CURSOR" ] && ok "the log hands back a position to resume from" \
+  || bad "read log cursor" "a cursor" "$LOG"
+PAGE2=$(admin GET "/reads?agent=$ACC_ID&limit=1&after=$LOG_CURSOR")
+ID1=$(echo "$LOG" | jq -r '.reads[0].id'); ID2=$(echo "$PAGE2" | jq -r '.reads[0].id // empty')
+{ [ -n "$ID2" ] && [ "$ID1" != "$ID2" ]; } && ok "after continues into older reads" \
+  || bad "read log paging" "an older row" "$PAGE2"
+FUTURE=$(admin GET "/reads?since=2999-01-01T00:00:00Z" | jq -r '.reads | length')
+[ "$FUTURE" = "0" ] && ok "since bounds the log by when the read happened" \
+  || bad "read log range" "0 rows" "$FUTURE"
 
 step "revocation hides the space immediately"
 admin DELETE "/spaces/$SPACE/members/$STR_ID" >/dev/null

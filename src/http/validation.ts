@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { ReadLogCursor } from '../store/index.js';
 import type {
   AgentId,
   ConversationId,
@@ -119,16 +120,13 @@ export function readFromQuery(query: z.infer<typeof StreamQuery>): ReadFrom | un
   return undefined;
 }
 
+/**
+ * `order` is passed straight through. The store pages backwards from the end
+ * for `newest` and returns each page newest-first, so nothing here has to
+ * re-page a read — which is why this was refused rather than shimmed while the
+ * store ordered by sequence ascending, full stop.
+ */
 export function rangeFromQuery(query: z.infer<typeof RangeQuery>): Range {
-  // `order=newest` is in the contract and in `Range`, and the storage layer
-  // does not implement it: `readConversation` and `readSpace` order by
-  // sequence ascending, full stop. Refusing is the only answer that is not a
-  // lie — an agent asking for a thread's last fifty messages and silently
-  // getting its first fifty cannot tell the difference. Reported; the fix
-  // belongs in the store, not in a shim here that would re-page every read.
-  if (query.order === 'newest') {
-    throw invalid('order=newest is not supported by this deployment yet');
-  }
   return {
     ...(query.since === undefined ? {} : { since: query.since as Timestamp }),
     ...(query.until === undefined ? {} : { until: query.until as Timestamp }),
@@ -147,3 +145,10 @@ export const asAgentId = (value: string): AgentId => value as AgentId;
 export const asSpaceId = (value: string): SpaceId => value as SpaceId;
 export const asConversationId = (value: string): ConversationId => value as ConversationId;
 export const asIdempotencyKey = (value: string): IdempotencyKey => value as IdempotencyKey;
+export const asTimestamp = (value: string): Timestamp => value as Timestamp;
+/**
+ * The read log's own cursor brand, minted by the store and handed back to it
+ * unread. Cast at the boundary like the ids: what a malformed one means is the
+ * store's to say, and it says `invalid_request`.
+ */
+export const asReadLogCursor = (value: string): ReadLogCursor => value as ReadLogCursor;

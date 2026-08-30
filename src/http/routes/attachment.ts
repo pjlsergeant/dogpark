@@ -24,7 +24,12 @@ export async function sendAttachment(
 ): Promise<FastifyReply> {
   const record = ctx.store.getAttachment(id);
   if (record === undefined) throw notFound('attachment');
-  if (ctx.store.getMessage(reader, record.message) === undefined) throw notFound('attachment');
+  // The record carries the space, so the message's visibility is decided here
+  // rather than by fetching and rendering the whole message just to discard
+  // it. The human sees everything; an agent sees its current spaces.
+  if (reader.kind === 'agent' && !ctx.store.isCurrentMember(reader.id, record.space)) {
+    throw notFound('attachment');
+  }
 
   const stream = await ctx.files.open(id);
   // Metadata without bytes: the row committed but the file is gone, or was

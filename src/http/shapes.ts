@@ -1,5 +1,6 @@
 import type {
   AgentRecord,
+  ConversationSummary,
   EscalationRecord,
   KeyRecord,
   ReadLogEntry,
@@ -89,6 +90,29 @@ export function spaceMembers(store: Store, space: SpaceId): unknown {
         grantedAt: interval.grantedAt,
         revokedAt: interval.revokedAt,
       })),
+  };
+}
+
+/**
+ * One row of the human's thread list.
+ *
+ * The contract pins no shape for `GET /spaces/:id/conversations` beyond "the
+ * human's thread list", and the UI reads `lastMessageAt` and `lastSenderName`
+ * where the store returns `lastActivityAt` and a whole `Sender`. Both spellings
+ * go out, as `keySummary` already does for `keyId`/`id`: the store's names are
+ * the record, the flat ones are what the UI scans by, and a reader built to
+ * either is served. Reported — one of them should win.
+ */
+export function conversationRow(summary: ConversationSummary): unknown {
+  return {
+    id: summary.id,
+    space: summary.space,
+    title: summary.title,
+    messageCount: summary.messageCount,
+    lastActivityAt: summary.lastActivityAt,
+    lastMessageAt: summary.lastActivityAt,
+    lastSender: summary.lastSender,
+    lastSenderName: summary.lastSender?.displayName ?? null,
   };
 }
 
