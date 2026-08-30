@@ -16,7 +16,13 @@ import type {
   Timestamp,
 } from '../types.js';
 import { StoreError } from './errors.js';
-import { newAttachmentId, openStore, type Store, type ReadLogCursor } from './index.js';
+import {
+  newAttachmentId,
+  openStore,
+  type Reader,
+  type ReadLogCursor,
+  type Store,
+} from './index.js';
 import { referenceToken, RESERVED_SEQUENCE } from './text.js';
 
 // ---------------------------------------------------------------------------
@@ -1101,6 +1107,10 @@ describe('the read log', () => {
 });
 
 describe('a read is reproducible after renames', () => {
+  const reader = (agent: AgentId): Reader => ({ kind: 'agent', id: agent });
+  const newestRead = (h: Harness, agent: AgentId): string =>
+    h.store.readReadLog({ agent }).entries[0]?.id ?? '';
+
   it('renders a message as it read at the time, from the label history', () => {
     const h = harness();
     const { agent, space } = scene(h);
@@ -1108,37 +1118,39 @@ describe('a read is reproducible after renames', () => {
     h.store.grantMembership(bob, space);
     const posted = post(h, agent, space, 'daily', 'ping @bob about the figures');
 
-    h.advance(10);
-    const handed = h.store.readSpace({ kind: 'agent', id: agent }, space).messages[0];
-    const readAt = h.store.readReadLog({ agent }).entries[0]?.readAt;
+    const handed = h.store.readSpace(reader(agent), space).messages[0];
+    const first = newestRead(h, agent);
     expect(handed?.body).toBe('ping @bob about the figures');
-    expect(readAt).toBe(h.at());
 
-    h.advance(60);
+    // No clock advance: the read and the renames share a millisecond, which
+    // is why the history is ordered by its own sequence and not by time.
     h.store.renameAgent(bob, 'robert');
     h.store.renameConversation(posted.conversation, 'weekly');
     h.store.renameAgent(agent, 'alicia');
-    const between = h.at();
-    h.advance(60);
+    h.store.readSpace(reader(agent), space);
+    const between = newestRead(h, agent);
     h.store.renameAgent(bob, 'bobby');
+    h.store.readSpace(reader(agent), space);
+    const latest = newestRead(h, agent);
 
-    // Now: every label current.
-    const now = h.store.messageAsOf(posted.id, h.at());
+    // The newest read: every label current.
+    const now = h.store.messageAsRead(posted.id, latest);
     expect(now?.body).toBe('ping @bobby about the figures');
     expect(now?.conversationTitle).toBe('weekly');
     expect(now?.sender.displayName).toBe('alicia');
 
-    // At the read: exactly what was handed over — not the first rename's
+    // The first read: exactly what was handed over — not the first rename's
     // value, which a "latest history row" lookup would have produced.
-    const then = h.store.messageAsOf(posted.id, readAt as Timestamp);
+    const then = h.store.messageAsRead(posted.id, first);
     expect(then?.body).toBe(handed?.body);
     expect(then?.conversationTitle).toBe(handed?.conversationTitle);
     expect(then?.sender.displayName).toBe(handed?.sender.displayName);
     expect(then?.mentions).toEqual([bob]);
 
     // Between the two renames of bob.
-    expect(h.store.messageAsOf(posted.id, between)?.body).toBe('ping @robert about the figures');
-    expect(h.store.messageAsOf('nope' as MessageId, between)).toBeUndefined();
+    expect(h.store.messageAsRead(posted.id, between)?.body).toBe('ping @robert about the figures');
+    expect(h.store.messageAsRead('nope' as MessageId, between)).toBeUndefined();
+    expect(h.store.messageAsRead(posted.id, 'nope')).toBeUndefined();
   });
 
   it('journals nothing for a rename to the same label', () => {

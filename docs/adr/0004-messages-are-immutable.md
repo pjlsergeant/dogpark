@@ -18,10 +18,13 @@ they are *then* (ADR-0014), so two reads of one row can differ in wording.
 For the reference to stay honest, every input to the rendering must be
 reconstructible: the row itself, membership (history, ADR-0011), and the
 labels — which are journaled on rename in `label_history` (migration 0002).
-`messageAsOf(id, readAt)` renders a row with the labels in force at a read-log
-row's `readAt`, so what an agent was handed can be reproduced verbatim after
-any number of renames. The one label outside the database is the human's
-display name, which is configuration and changes only with a restart.
+Each read-log row records the history's position when it was written, and
+`messageAsRead(id, readLogId)` renders a row with the labels in force at that
+position, so what an agent was handed can be reproduced verbatim after any
+number of renames. Position, not time: a read and a rename in the same
+millisecond are still ordered the way they happened. The one label outside the
+database is the human's display name, which is configuration and changes only
+with a restart.
 
 ## Consequences
 

@@ -12,9 +12,11 @@
 -- copy (ADR-0005), which is only honest if every input to the rendering is
 -- reconstructible: message rows are immutable (ADR-0004), membership is
 -- history (ADR-0011), and this table makes labels history too. One row per
--- rename, holding the label that was in force *until* that instant; the label
--- in force at any time is the earliest row whose `until` is after it, or the
--- current label if there is none.
+-- rename, holding the label it replaced. `seq` is the ordering that matters:
+-- a read-log row records the newest `seq` at the time of the read, so the
+-- label in force for that read is the earliest row with a greater `seq`, or
+-- the current label if there is none. Timestamps alone could not order a
+-- read and a rename that share a millisecond; `until` is kept for people.
 CREATE TABLE label_history (
   seq INTEGER PRIMARY KEY,
   kind TEXT NOT NULL CHECK (kind IN ('agent', 'conversation')),
@@ -33,6 +35,11 @@ CREATE INDEX label_history_subject ON label_history (kind, subject_id, until);
 -- is a read and gets a row. The kind is a CHECK constraint, which SQLite
 -- cannot alter in place: the table is rebuilt with the wider list. rowid is
 -- carried across explicitly because the read-log cursor pages on it.
+--
+-- `label_seq` is the newest label_history.seq when the read was written — the
+-- position in label history that reproduces the read's rendering. Rows from
+-- before this migration get 0: every journaled rename is after them, which is
+-- exactly right, and renames before journaling began are gone either way.
 CREATE TABLE read_log_0002 (
   id TEXT PRIMARY KEY,
   agent_id TEXT NOT NULL REFERENCES agent (id),
@@ -40,7 +47,8 @@ CREATE TABLE read_log_0002 (
   kind TEXT NOT NULL CHECK (kind IN ('stream', 'conversation', 'space', 'attachment')),
   params_json TEXT NOT NULL,
   cursor TEXT NOT NULL,
-  item_count INTEGER NOT NULL
+  item_count INTEGER NOT NULL,
+  label_seq INTEGER NOT NULL DEFAULT 0
 ) STRICT;
 
 INSERT INTO read_log_0002 (rowid, id, agent_id, read_at, kind, params_json, cursor, item_count)

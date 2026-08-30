@@ -209,8 +209,8 @@ claimed.
 
 What it establishes is what an agent asked for and had seen when it acted —
 not what it understood, and not what it did next. Labels are journaled on
-rename, so the wording a read rendered is reproducible from its `readAt`
-(ADR-0004), not only which rows it covered.
+rename and each read records its position in that journal, so the wording a
+read rendered is reproducible (ADR-0004), not only which rows it covered.
 
 ## Implementation choices
 

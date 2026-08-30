@@ -25,8 +25,8 @@ a span, and position becomes derivable rather than claimed.
 
 The forensic question it answers is "what had this agent asked for, and what
 had it seen, when it acted". Not what it understood, and not what it did with
-it. "Seen" includes the wording: a row's `readAt` and the label history
-(ADR-0004) reproduce the rendering that went out, not only which rows.
+it. "Seen" includes the wording: a row's position in the label history
+(ADR-0004) reproduces the rendering that went out, not only which rows.
 
 Each row commits before its response is sent — a long poll writes one row
 before it waits and one for the page it returns — so the log says what was

@@ -63,15 +63,15 @@ describe('migrations', () => {
       const result = migrate(db);
       expect(result.from).toBe(1);
       expect(result.applied).toContain(2);
-      const rows = db.prepare('SELECT rowid, id, kind FROM read_log ORDER BY rowid').all() as {
-        rowid: number;
-        id: string;
-        kind: string;
-      }[];
-      // The read-log cursor pages on rowid, so the rebuild must keep it.
+      const rows = db
+        .prepare('SELECT rowid, id, kind, label_seq FROM read_log ORDER BY rowid')
+        .all() as { rowid: number; id: string; kind: string; label_seq: number }[];
+      // The read-log cursor pages on rowid, so the rebuild must keep it. Rows
+      // from before label history began sit at position 0: every journaled
+      // rename is after them.
       expect(rows).toEqual([
-        { rowid: 5, id: 'r5', kind: 'stream' },
-        { rowid: 9, id: 'r9', kind: 'space' },
+        { rowid: 5, id: 'r5', kind: 'stream', label_seq: 0 },
+        { rowid: 9, id: 'r9', kind: 'space', label_seq: 0 },
       ]);
       insert.run(10, 'r10', 'a', '2026-01-01T00:00:02.000Z', 'attachment', '{}', '', 1);
       expect(() =>

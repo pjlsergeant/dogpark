@@ -365,6 +365,8 @@ interface ReadLogRow {
   params_json: string;
   cursor: string;
   item_count: number;
+  /** The newest label_history.seq when the row was written (migration 0002). */
+  label_seq: number;
 }
 
 /** Everything the read-log statements bind apart from the agent. */
@@ -394,7 +396,8 @@ const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 1000;
 
 const READ_LOG_COLUMNS =
-  'SELECT rowid AS row_id, id, agent_id, read_at, kind, params_json, cursor, item_count ' +
+  'SELECT rowid AS row_id, id, agent_id, read_at, kind, params_json, cursor, item_count, ' +
+  '       label_seq ' +
   '  FROM read_log WHERE ';
 
 /**
@@ -495,13 +498,16 @@ export interface Store {
   renameConversation(conversation: ConversationId, title: string): Conversation;
 
   /**
-   * One message as it rendered at `at`: the sender's name, the conversation's
-   * title and the mentioned names are the labels in force then, from the
-   * label history (migration 0002). This is what makes the read log a
-   * reference rather than a copy: a row's `readAt` plus this reproduces the
-   * wording an agent was handed, whatever has been renamed since.
+   * One message as it rendered for a given read-log row: the sender's name,
+   * the conversation's title and the mentioned names are the labels in force
+   * when that read was written, from the label history (migration 0002).
+   * Ordered by the history's own sequence rather than by clock, so a read and
+   * a rename in the same millisecond still come out in the order they
+   * happened. This is what makes the read log a reference rather than a
+   * copy: a row plus this reproduces the wording an agent was handed,
+   * whatever has been renamed since. Undefined if either id is unknown.
    */
-  messageAsOf(message: MessageId, at: Timestamp): Message | undefined;
+  messageAsRead(message: MessageId, read: string): Message | undefined;
   /**
    * The thread list: every conversation in a space with its message count,
    * last activity and last sender, ordered by last activity. The admin
@@ -646,11 +652,14 @@ export function openStore(options: StoreOptions): Store {
       'INSERT INTO label_history (kind, subject_id, label, until) ' +
         'VALUES (@kind, @subject, @label, @until)',
     ),
-    // The label in force at @at: the earliest row that outlived it. None
-    // means the current label was already in force.
-    labelAsOf: db.prepare<{ kind: string; subject: string; at: string }, { label: string }>(
+    // The label in force when history stood at @labelSeq: the earliest rename
+    // after that point holds it. None means the current label was in force.
+    labelAsOf: db.prepare<{ kind: string; subject: string; labelSeq: number }, { label: string }>(
       'SELECT label FROM label_history WHERE kind = @kind AND subject_id = @subject ' +
-        'AND until > @at ORDER BY until ASC, seq ASC LIMIT 1',
+        'AND seq > @labelSeq ORDER BY seq ASC LIMIT 1',
+    ),
+    readLabelSeq: db.prepare<{ id: string }, { label_seq: number }>(
+      'SELECT label_seq FROM read_log WHERE id = @id',
     ),
     setArchived: db.prepare<{ id: string; archived: number }, unknown>(
       'UPDATE agent SET archived = @archived WHERE id = @id',
@@ -967,8 +976,12 @@ export function openStore(options: StoreOptions): Store {
       },
       unknown
     >(
-      'INSERT INTO read_log (id, agent_id, read_at, kind, params_json, cursor, item_count) ' +
-        'VALUES (@id, @agent, @at, @kind, @params, @cursor, @count)',
+      // `label_seq` is taken inside the read's own transaction, so it is the
+      // history position the rendering actually used.
+      'INSERT INTO read_log (id, agent_id, read_at, kind, params_json, cursor, item_count, ' +
+        '                      label_seq) ' +
+        'VALUES (@id, @agent, @at, @kind, @params, @cursor, @count, ' +
+        '        (SELECT COALESCE(MAX(seq), 0) FROM label_history))',
     ),
     // Keyset paging, not OFFSET: the log only grows, and a page taken by
     // offset while it grows either repeats rows or skips them — in the one
@@ -1154,18 +1167,18 @@ export function openStore(options: StoreOptions): Store {
     titles: Map<string, string>;
     names: Map<string, string>;
     mentionNames: Map<string, string | undefined>;
-    /** Render labels as they were at this instant; absent means now. */
-    asOf: Timestamp | undefined;
+    /** Render labels as they stood at this label-history position; absent means now. */
+    labelSeq: number | undefined;
   }
 
-  function newRenderCache(asOf?: Timestamp): RenderCache {
-    return { titles: new Map(), names: new Map(), mentionNames: new Map(), asOf };
+  function newRenderCache(labelSeq?: number): RenderCache {
+    return { titles: new Map(), names: new Map(), mentionNames: new Map(), labelSeq };
   }
 
-  /** `current` unless a rename since `cache.asOf` says the label was different then. */
+  /** `current` unless a rename after `cache.labelSeq` says the label was different then. */
   function labelAsOf(cache: RenderCache, kind: string, subject: string, current: string): string {
-    if (cache.asOf === undefined) return current;
-    return st.labelAsOf.get({ kind, subject, at: cache.asOf })?.label ?? current;
+    if (cache.labelSeq === undefined) return current;
+    return st.labelAsOf.get({ kind, subject, labelSeq: cache.labelSeq })?.label ?? current;
   }
 
   function conversationTitle(cache: RenderCache, id: string): string {
@@ -2038,10 +2051,11 @@ export function openStore(options: StoreOptions): Store {
       return renameConversationTx(conversation, title);
     },
 
-    messageAsOf(message, at) {
+    messageAsRead(message, read) {
       const row = st.messageById.get({ id: message });
-      if (row === undefined) return undefined;
-      return toMessage(row, newRenderCache(normalizeTimestamp('at', at)));
+      const position = st.readLabelSeq.get({ id: read });
+      if (row === undefined || position === undefined) return undefined;
+      return toMessage(row, newRenderCache(position.label_seq));
     },
 
     listConversationSummaries(space) {
