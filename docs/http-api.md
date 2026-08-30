@@ -22,6 +22,12 @@ codes from `ErrorCode`. Anything the caller may not see is `not_found`, never
 | GET | `/attachments/:id` | — | the file |
 | POST | `/escalations` | `EscalateRequest` | `204` |
 
+A title — opened by a post target or set by the admin rename — is at most 200
+characters; an escalation `reason` at most 2000. Bodies are bounded by
+`Limits.maxMessageBytes`. Titles and reasons are labels, not content, and are
+capped so one call cannot amplify into the database, the UI and a webhook
+payload.
+
 `POST /messages` is multipart when it carries attachments: one `request` part
 holding the JSON, then one part per file. Files are written first and the
 message row commits last, so a crash leaves an unreferenced file rather than a

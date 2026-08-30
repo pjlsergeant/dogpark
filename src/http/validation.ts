@@ -21,6 +21,17 @@ import { invalid } from './errors.js';
  */
 const Id = z.string().min(1).max(128);
 
+/**
+ * The same ceiling whichever door a title comes through: a thread opened by a
+ * post target and one renamed afterwards are the same title.
+ */
+export const MAX_TITLE_CHARS = 200;
+/**
+ * A reason is the agent's own words and goes into a webhook payload, so it is
+ * bounded like a title rather than like a body.
+ */
+export const MAX_REASON_CHARS = 2000;
+
 export function parse<T>(schema: z.ZodType<T>, value: unknown, what: string): T {
   const result = schema.safeParse(value);
   if (result.success) return result.data;
@@ -33,7 +44,7 @@ export function parse<T>(schema: z.ZodType<T>, value: unknown, what: string): T 
 
 const Target = z.union([
   z.strictObject({ conversation: Id }),
-  z.strictObject({ space: Id, title: z.string().min(1) }),
+  z.strictObject({ space: Id, title: z.string().min(1).max(MAX_TITLE_CHARS) }),
 ]);
 
 export const PostBody = z.strictObject({
@@ -52,12 +63,12 @@ export const HumanPostBody = z.strictObject({
 
 export const EscalateBody = z.strictObject({
   conversation: Id,
-  reason: z.string().min(1),
+  reason: z.string().min(1).max(MAX_REASON_CHARS),
   idempotencyKey: z.string().min(1).max(200),
 });
 
 export const NameBody = z.strictObject({ name: z.string().min(1).max(128) });
-export const TitleBody = z.strictObject({ title: z.string().min(1).max(200) });
+export const TitleBody = z.strictObject({ title: z.string().min(1).max(MAX_TITLE_CHARS) });
 export const KeyBody = z.strictObject({ label: z.string().min(1).max(128).optional() });
 export const PasswordBody = z.strictObject({ password: z.string().min(1).max(1024) });
 

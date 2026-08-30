@@ -386,6 +386,44 @@ describe('the HTTP surface', () => {
   });
 
   // -------------------------------------------------------------------------
+  describe('bounded labels', () => {
+    it('caps a title opened by a post target like a rename does', async () => {
+      const over = await asAgent(alpha.key, {
+        method: 'POST',
+        url: '/api/agent/messages',
+        payload: {
+          target: { space, title: 't'.repeat(201) },
+          body: 'hello',
+          idempotencyKey: 'cap-title',
+        },
+      });
+      expect(over.statusCode).toBe(400);
+      expect(over.json()).toMatchObject({ code: 'invalid_request' });
+      expect((over.json() as { message: string }).message).toContain('title');
+
+      const fits = await asAgent(alpha.key, {
+        method: 'POST',
+        url: '/api/agent/messages',
+        payload: {
+          target: { space, title: 't'.repeat(200) },
+          body: 'hello',
+          idempotencyKey: 'cap-title-ok',
+        },
+      });
+      expect(fits.statusCode).toBe(200);
+    });
+
+    it('caps an escalation reason', async () => {
+      const over = await asAgent(alpha.key, {
+        method: 'POST',
+        url: '/api/agent/escalations',
+        payload: { conversation, reason: 'r'.repeat(2001), idempotencyKey: 'cap-reason' },
+      });
+      expect(over.statusCode).toBe(400);
+      expect((over.json() as { message: string }).message).toContain('reason');
+    });
+  });
+
   describe('untrusted content', () => {
     async function upload(filename: string, contentType: string): Promise<string> {
       const form = multipart([
