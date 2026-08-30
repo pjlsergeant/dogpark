@@ -65,6 +65,8 @@ required because the SPA shares an origin with the agent API.
 | GET | `/attachments/:id` | cookie-authenticated, unlike the agent route |
 | POST | `/messages` | post as the human |
 | GET | `/reads` | the read log, filterable by agent; limit and cursor, because it is the one table that grows without bound. `kind` is `stream`, `conversation`, `space` or `attachment`; an attachment read has an empty cursor |
+| GET | `/reads/:id` | one row, with the conversation or space it read resolved for linking |
+| GET | `/reads/:id/conversations/:conversationId/messages` | the thread as it read on that row: `readConversation` for the human, labels as of then; paged the same way; nothing logged |
 | GET | `/reads/:id/messages/:messageId` | a message rendered with the labels in force when that row was written (ADR-0004). A label snapshot, not proof the message was on that page: that is the row's kind, parameters and cursor |
 | GET | `/escalations` | the inbox, newest first; `order`, `after`, `limit`; carries `undelivered`, counted over the whole table |
 | GET | `/search` | `q`; FTS5 over stored bodies. `order` is `relevance` (default) or `newest`; `after`, `limit` |
@@ -96,6 +98,10 @@ GET  /agents       -> [{ id, displayName, archived, createdAt, lastSeenAt,
 GET  /reads?agent&since&until&limit&after
                    -> { reads: [{ id, agent, kind, at, parameters, cursor,
                                   itemCount }], nextCursor, hasMore }
+GET  /reads/:id    -> one read row, plus `conversation` { id, space, title } for a
+                      conversation read or `space` { id, name } for a space read
+GET  /reads/:id/conversations/:conversationId/messages?since&until&after&order&limit
+                   -> MessagePage, rendered as of that read
 GET  /reads/:id/messages/:messageId
                    -> Message
 GET  /agents/:id/keys

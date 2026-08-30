@@ -242,7 +242,11 @@ export function createHttpApi(): DogparkAdminApi {
       })) as Conversation;
     },
     async readConversation(id, query) {
-      const raw = (await request('GET', `/conversations/${encodeURIComponent(id)}/messages`, {
+      const path =
+        query?.asOf === undefined
+          ? `/conversations/${encodeURIComponent(id)}/messages`
+          : `/reads/${encodeURIComponent(query.asOf)}/conversations/${encodeURIComponent(id)}/messages`;
+      const raw = (await request('GET', path, {
         query: { after: query?.after, order: query?.order },
       })) as Record<string, unknown> | null;
       const page = toPage<Message>(raw, 'messages');
@@ -270,6 +274,9 @@ export function createHttpApi(): DogparkAdminApi {
         }),
         'reads',
       );
+    },
+    async getRead(id: string) {
+      return (await request('GET', `/reads/${encodeURIComponent(id)}`)) as ReadLogEntry;
     },
     async listEscalations(filter?: EscalationFilter) {
       const raw = await request('GET', '/escalations', {

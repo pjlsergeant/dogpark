@@ -170,6 +170,10 @@ export interface ReadLogEntry {
   readonly itemCount: number;
   readonly kind: 'stream' | 'conversation' | 'space' | 'attachment';
   readonly id: string;
+  /** What a conversation read read, resolved so the reader can be opened as of it. */
+  readonly conversation?: Conversation | undefined;
+  /** Likewise for a space read. */
+  readonly space?: Space | undefined;
 }
 
 // ---------------------------------------------------------------------------

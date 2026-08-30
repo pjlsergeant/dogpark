@@ -49,6 +49,7 @@ export function ReadLogRows({ entries }: { entries: readonly ReadLogEntry[] }): 
           <th>Read with</th>
           <th className="numeric">Items</th>
           <th>Cursor returned</th>
+          <th />
         </tr>
       </thead>
       <tbody>
@@ -81,6 +82,23 @@ export function ReadLogRows({ entries }: { entries: readonly ReadLogEntry[] }): 
                 <span className="muted">none</span>
               ) : (
                 <Id value={entry.cursor} />
+              )}
+            </td>
+            <td>
+              {/* The thread, space or reader as it read on this row (ADR-0004). */}
+              {entry.kind !== 'attachment' && (
+                <a
+                  className="btn btn-quiet"
+                  href={href.read(
+                    entry.conversation?.space ?? entry.space?.id,
+                    entry.conversation?.id,
+                    undefined,
+                    entry.id,
+                  )}
+                  title="Open the reader with names and titles as they stood at this read"
+                >
+                  As read
+                </a>
               )}
             </td>
           </tr>

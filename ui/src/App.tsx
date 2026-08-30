@@ -200,6 +200,7 @@ function Screen(): ReactNode {
           space={route.space}
           conversation={route.conversation}
           message={route.message}
+          asOf={route.asOf}
         />
       );
     case 'reads':

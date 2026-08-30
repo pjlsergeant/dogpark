@@ -33,11 +33,13 @@ export async function olderPage(
   api: ThreadReader,
   conversation: ConversationId,
   current: Loaded,
+  asOf?: string,
 ): Promise<Loaded> {
   if (current.nextCursor === null || !current.hasMore) return current;
   const page = await api.readConversation(conversation, {
     order: 'newest',
     after: current.nextCursor,
+    asOf,
   });
   return {
     messages: [...[...page.messages].reverse(), ...current.messages],
@@ -57,9 +59,10 @@ export async function loadThread(
   api: ThreadReader,
   conversation: ConversationId,
   target: MessageId | undefined,
+  asOf?: string,
   maxPages: number = MAX_PAGES_FOR_TARGET,
 ): Promise<Loaded> {
-  const first = await api.readConversation(conversation, { order: 'newest' });
+  const first = await api.readConversation(conversation, { order: 'newest', asOf });
   const newest: Loaded = {
     messages: [...first.messages].reverse(),
     nextCursor: first.nextCursor,
@@ -75,7 +78,7 @@ export async function loadThread(
     loaded.nextCursor !== null &&
     loaded.pages < maxPages
   ) {
-    loaded = await olderPage(api, conversation, loaded);
+    loaded = await olderPage(api, conversation, loaded, asOf);
   }
   return holdsTarget() ? loaded : newest;
 }

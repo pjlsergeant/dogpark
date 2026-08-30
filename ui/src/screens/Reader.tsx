@@ -21,6 +21,7 @@ import { toApiError, useAsync } from '../app/useAsync.js';
 import { href, navigate } from '../app/router.js';
 import { dayHeading, sameDay } from '../app/format.js';
 import { Empty, Failure, Loading, Time } from '../components/bits.js';
+import { absoluteTime } from '../app/format.js';
 import { MessageView } from '../components/MessageView.js';
 import { Composer } from '../components/Composer.js';
 import { NameDialog } from '../components/NameDialog.js';
@@ -33,10 +34,12 @@ export function ReaderScreen({
   space,
   conversation,
   message,
+  asOf,
 }: {
   space?: SpaceId | undefined;
   conversation?: ConversationId | undefined;
   message?: MessageId | undefined;
+  asOf?: string | undefined;
 }): ReactNode {
   const api = useApi();
   const spaces = useAsync(() => api.listSpaces(), [api]);
@@ -57,7 +60,7 @@ export function ReaderScreen({
           <ul className="cards">
             {spaces.state.data.map((each) => (
               <li key={each.id} className="card">
-                <a className="card-title" href={href.read(each.id)}>
+                <a className="card-title" href={href.read(each.id, undefined, undefined, asOf)}>
                   {each.name}
                 </a>
               </li>
@@ -74,6 +77,7 @@ export function ReaderScreen({
       space={space}
       conversation={conversation}
       message={message}
+      asOf={asOf}
       filter={filter}
       onFilter={setFilter}
       spaceNames={(spaces.state.data ?? []).map((s) => [s.id, s.name] as const)}
@@ -85,6 +89,7 @@ function SpaceReader({
   space,
   conversation,
   message,
+  asOf,
   filter,
   onFilter,
   spaceNames,
@@ -92,6 +97,7 @@ function SpaceReader({
   space: SpaceId;
   conversation?: ConversationId | undefined;
   message?: MessageId | undefined;
+  asOf?: string | undefined;
   filter: string;
   onFilter: (value: string) => void;
   spaceNames: readonly (readonly [SpaceId, string])[];
@@ -114,7 +120,9 @@ function SpaceReader({
           <select
             id="reader-space"
             value={space}
-            onChange={(event) => navigate(href.read(event.target.value as SpaceId))}
+            onChange={(event) =>
+              navigate(href.read(event.target.value as SpaceId, undefined, undefined, asOf))
+            }
           >
             {spaceNames.map(([id, name]) => (
               <option key={id} value={id}>
@@ -136,12 +144,14 @@ function SpaceReader({
           aria-label="Filter threads"
         />
 
-        <a
-          className={`thread new-thread${conversation === undefined ? ' current' : ''}`}
-          href={href.read(space)}
-        >
-          + New thread
-        </a>
+        {asOf === undefined && (
+          <a
+            className={`thread new-thread${conversation === undefined ? ' current' : ''}`}
+            href={href.read(space)}
+          >
+            + New thread
+          </a>
+        )}
 
         {conversations.state.status === 'loading' && conversations.state.data === null && (
           <Loading what="threads" />
@@ -154,7 +164,7 @@ function SpaceReader({
             <li key={thread.id}>
               <a
                 className={`thread${thread.id === conversation ? ' current' : ''}`}
-                href={href.read(space, thread.id)}
+                href={href.read(space, thread.id, undefined, asOf)}
               >
                 <span className="thread-title">{thread.title}</span>
                 <span className="thread-meta">
@@ -175,7 +185,12 @@ function SpaceReader({
       </aside>
 
       <main className="reader-main">
-        {conversation === undefined ? (
+        {conversation === undefined && asOf !== undefined ? (
+          <div className="reader-empty">
+            <h2>As it was read</h2>
+            <p className="muted">Pick a thread to see it as the agent saw it at that read.</p>
+          </div>
+        ) : conversation === undefined ? (
           <div className="reader-empty">
             <h2>Start a thread</h2>
             <p className="muted">
@@ -196,6 +211,7 @@ function SpaceReader({
             space={space}
             conversation={conversation}
             highlight={message}
+            asOf={asOf}
             summary={threads.find((t) => t.id === conversation) ?? null}
             onPosted={() => conversations.reload()}
           />
@@ -213,17 +229,28 @@ function Thread({
   space,
   conversation,
   highlight,
+  asOf,
   summary,
   onPosted,
 }: {
   space: SpaceId;
   conversation: ConversationId;
   highlight?: MessageId | undefined;
+  /**
+   * A read-log row id. The thread is then shown as it read at that row —
+   * labels as of then, a banner saying so, and nothing to post with: the
+   * past is not somewhere to say things.
+   */
+  asOf?: string | undefined;
   /** The thread list's row for this thread, once the list has loaded. */
   summary: ConversationSummary | null;
   onPosted: () => void;
 }): ReactNode {
   const api = useApi();
+  const asOfRead = useAsync(
+    () => (asOf === undefined ? Promise.resolve(null) : api.getRead(asOf)),
+    [api, asOf],
+  );
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
@@ -254,7 +281,7 @@ function Thread({
     setBusy(true);
     setError(null);
     try {
-      const thread = await loadThread(api, conversation, seek.current);
+      const thread = await loadThread(api, conversation, seek.current, asOf);
       if (mine !== generation.current) return;
       setLoaded(thread);
       setArrivals((n) => n + 1);
@@ -266,14 +293,14 @@ function Thread({
         setBusy(false);
       }
     }
-  }, [api, conversation]);
+  }, [api, conversation, asOf]);
 
   const loadOlder = useCallback(async () => {
     if (loaded === null || loaded.nextCursor === null) return;
     const mine = generation.current;
     setBusy(true);
     try {
-      const older = await olderPage(api, conversation, loaded);
+      const older = await olderPage(api, conversation, loaded, asOf);
       if (mine !== generation.current) return;
       // Merged against what is held now, not the snapshot the page was asked
       // for: a poll may have appended to the end meanwhile, and those stay.
@@ -295,7 +322,7 @@ function Thread({
     } finally {
       if (mine === generation.current) setBusy(false);
     }
-  }, [api, conversation, loaded]);
+  }, [api, conversation, loaded, asOf]);
 
   /**
    * What has arrived since the last look, added to the end.
@@ -333,12 +360,14 @@ function Thread({
   }, [load, highlight]);
 
   useEffect(() => {
+    // A thread as of a past read does not move.
+    if (asOf !== undefined) return undefined;
     const timer = globalThis.setInterval(() => {
       if (document.visibilityState !== 'visible' || reloading.current) return;
       void pollNewest();
     }, POLL_MS);
     return () => globalThis.clearInterval(timer);
-  }, [pollNewest]);
+  }, [pollNewest, asOf]);
 
   const messages = loaded?.messages ?? [];
   const count = messages.length;
@@ -388,14 +417,31 @@ function Thread({
           )}
         </div>
         <div className="row">
-          <button type="button" className="btn btn-quiet" onClick={() => setRenaming(true)}>
-            Rename
-          </button>
+          {asOf === undefined && (
+            <button type="button" className="btn btn-quiet" onClick={() => setRenaming(true)}>
+              Rename
+            </button>
+          )}
           <button type="button" className="btn btn-quiet" onClick={() => void load()}>
             Refresh
           </button>
         </div>
       </header>
+
+      {asOf !== undefined && (
+        <p className="as-of" role="status">
+          {asOfRead.state.data === null || asOfRead.state.data === undefined ? (
+            'As it was read — loading which read…'
+          ) : (
+            <>
+              As <strong>{asOfRead.state.data.agent.displayName}</strong> saw it at{' '}
+              <time dateTime={asOfRead.state.data.at}>{absoluteTime(asOfRead.state.data.at)}</time>:
+              names and titles as they stood then.{' '}
+              <a href={href.read(space, conversation)}>Back to now</a>
+            </>
+          )}
+        </p>
+      )}
 
       {renaming && (
         <NameDialog
@@ -440,14 +486,16 @@ function Thread({
         <div ref={bottom} />
       </div>
 
-      <Composer
-        space={space}
-        conversation={conversation}
-        onPosted={() => {
-          void load();
-          onPosted();
-        }}
-      />
+      {asOf === undefined && (
+        <Composer
+          space={space}
+          conversation={conversation}
+          onPosted={() => {
+            void load();
+            onPosted();
+          }}
+        />
+      )}
     </>
   );
 }

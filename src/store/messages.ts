@@ -38,6 +38,7 @@ import type {
   Store,
 } from './records.js';
 import { createRenderer } from './render.js';
+import type { RenderCache } from './render.js';
 import type { ConversationRow, MessageRow, SearchBounds } from './statements.js';
 import {
   assertNoReservedSequence,
@@ -77,6 +78,7 @@ export function messageStore(
   | 'searchMessages'
   | 'getAttachment'
   | 'renderAsOfRead'
+  | 'readConversationAsOf'
 > {
   const { db, st, now, nextSeq, toConversation, requireAgentRow, isCurrentMember } = ctx;
   const { newRenderCache, mentionName, toMessage, toEvent } = createRenderer(ctx);
@@ -358,16 +360,30 @@ export function messageStore(
    * row that did not, and the cursor is the last row handed over — the oldest
    * one when reading backwards, which is where the next page continues from.
    */
-  function pageMessages(rows: readonly MessageRow[], plan: QueryPlan): MessagePage {
+  function pageMessages(
+    rows: readonly MessageRow[],
+    plan: QueryPlan,
+    cache: RenderCache = newRenderCache(),
+  ): MessagePage {
     const hasMore = rows.length > plan.limit;
     const page = rows.slice(0, plan.limit);
-    const cache = newRenderCache();
     const lastSeq = page.at(-1)?.seq ?? plan.after;
     return {
       messages: page.map((row) => toMessage(row, cache)),
       nextCursor: encodeQueryCursor(lastSeq),
       hasMore,
     };
+  }
+
+  function conversationRows(conversation: ConversationId, plan: QueryPlan): MessageRow[] {
+    const statement = plan.order === 'oldest' ? st.conversationPage : st.conversationPageBackwards;
+    return statement.all({
+      conversation,
+      after: plan.after,
+      since: plan.since,
+      until: plan.until,
+      limit: plan.limit + 1,
+    });
   }
 
   const readConversationTx = db.transaction(
@@ -384,16 +400,7 @@ export function messageStore(
       requireReadAccess(reader, row.space_id as SpaceId, 'conversation');
 
       const plan = planQuery(range, limit);
-      const statement =
-        plan.order === 'oldest' ? st.conversationPage : st.conversationPageBackwards;
-      const rows = statement.all({
-        conversation,
-        after: plan.after,
-        since: plan.since,
-        until: plan.until,
-        limit: plan.limit + 1,
-      });
-      const page = pageMessages(rows, plan);
+      const page = pageMessages(conversationRows(conversation, plan), plan);
       if (reader.kind === 'agent') {
         recordRead(
           ctx,
@@ -533,6 +540,19 @@ export function messageStore(
       const position = st.readLabelSeq.get({ id: read });
       if (row === undefined || position === undefined) return undefined;
       return toMessage(row, newRenderCache(position.label_seq));
+    },
+
+    readConversationAsOf(read, conversation, range, limit) {
+      const position = st.readLabelSeq.get({ id: read });
+      if (position === undefined || st.getConversation.get({ id: conversation }) === undefined) {
+        return undefined;
+      }
+      const plan = planQuery(range, limit);
+      return pageMessages(
+        conversationRows(conversation, plan),
+        plan,
+        newRenderCache(position.label_seq),
+      );
     },
   };
 }

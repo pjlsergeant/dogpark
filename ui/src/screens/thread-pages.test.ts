@@ -82,7 +82,7 @@ describe('assembling a thread from newest-first pages', () => {
 
   it('walks no further than the budget, and shows the newest page if that was not enough', async () => {
     const api = fakeThread(100, 3);
-    const loaded = await loadThread(api, conversation, 'm1' as MessageId, 4);
+    const loaded = await loadThread(api, conversation, 'm1' as MessageId, undefined, 4);
     expect(api.calls).toBe(4);
     expect(loaded.pages).toBe(1);
     expect(ids(loaded)).toEqual(['m98', 'm99', 'm100']);

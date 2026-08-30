@@ -283,6 +283,30 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
         };
       });
 
+      guarded.get('/reads/:id', async (request) => {
+        const { id } = request.params as { id: string };
+        const entry = ctx.store.getRead(id);
+        if (entry === undefined) throw notFound('read');
+        return readLogRow(ctx.store, new Map<string, Agent>(), entry);
+      });
+
+      /**
+       * A conversation as it read at a read-log row: the reader's "as agent X
+       * saw it" mode. Paged like the live read; nothing is logged.
+       */
+      guarded.get('/reads/:id/conversations/:conversationId/messages', async (request) => {
+        const { id, conversationId } = request.params as { id: string; conversationId: string };
+        const query = parse(RangeQuery, request.query, 'query');
+        const page = ctx.store.readConversationAsOf(
+          id,
+          asConversationId(conversationId),
+          rangeFromQuery(query),
+          ctx.pageLimit(query.limit),
+        );
+        if (page === undefined) throw notFound('read or conversation');
+        return page;
+      });
+
       /**
        * One message with the labels in force when a read-log row was written
        * (`Store.renderAsOfRead`). A label snapshot only: whether the message

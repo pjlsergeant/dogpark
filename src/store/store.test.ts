@@ -1156,6 +1156,30 @@ describe('the wording of a read is reproducible after renames', () => {
     expect(h.store.renderAsOfRead(posted.id, 'nope')).toBeUndefined();
   });
 
+  it('renders a whole page as it read at the time', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const posted = post(h, agent, space, 'daily', 'first');
+    h.store.readConversation(reader(agent), posted.conversation);
+    const read = newestRead(h, agent);
+    h.store.renameConversation(posted.conversation, 'weekly');
+    h.store.renameAgent(agent, 'alicia');
+
+    const then = h.store.readConversationAsOf(read, posted.conversation);
+    expect(then?.messages.map((m) => [m.conversationTitle, m.sender.displayName])).toEqual([
+      ['daily', 'alice'],
+    ]);
+    expect(
+      h.store.readConversation({ kind: 'human' }, posted.conversation).messages[0],
+    ).toMatchObject({ conversationTitle: 'weekly' });
+    // Not a read: the log is unchanged.
+    expect(h.store.readReadLog({ agent }).entries).toHaveLength(1);
+    expect(h.store.readConversationAsOf('nope', posted.conversation)).toBeUndefined();
+    expect(h.store.readConversationAsOf(read, 'nope' as ConversationId)).toBeUndefined();
+    expect(h.store.getRead(read)?.kind).toBe('conversation');
+    expect(h.store.getRead('nope')).toBeUndefined();
+  });
+
   it('journals nothing for a rename to the same label', () => {
     const h = harness();
     const { agent, space } = scene(h);

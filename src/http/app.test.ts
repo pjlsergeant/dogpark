@@ -1088,6 +1088,37 @@ describe('the HTTP surface', () => {
         headers: { cookie: session.cookie },
       });
       expect(unknown.statusCode).toBe(404);
+
+      // The whole thread as of that read, and the row itself with its
+      // conversation resolved so the reader can be linked to.
+      const asOf = await h.app.inject({
+        method: 'GET',
+        url: `/api/admin/reads/${row?.id ?? ''}/conversations/${conversation}/messages`,
+        headers: { cookie: session.cookie },
+      });
+      expect(asOf.statusCode).toBe(200);
+      expect(
+        (asOf.json() as { messages: { conversationTitle: string }[] }).messages[0]
+          ?.conversationTitle,
+      ).toBe(handed?.conversationTitle);
+      const one = await h.app.inject({
+        method: 'GET',
+        url: `/api/admin/reads/${row?.id ?? ''}`,
+        headers: { cookie: session.cookie },
+      });
+      expect(one.json()).toMatchObject({
+        kind: 'conversation',
+        conversation: { id: conversation, space, title: 'renamed since' },
+      });
+      expect(
+        (
+          await h.app.inject({
+            method: 'GET',
+            url: `/api/admin/reads/nope/conversations/${conversation}/messages`,
+            headers: { cookie: session.cookie },
+          })
+        ).statusCode,
+      ).toBe(404);
     });
   });
 

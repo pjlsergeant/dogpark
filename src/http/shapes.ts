@@ -8,7 +8,7 @@ import type {
   SearchHit,
   Store,
 } from '../store/index.js';
-import type { Agent, AgentId, SpaceId } from '../types.js';
+import type { Agent, AgentId, ConversationId, SpaceId } from '../types.js';
 
 function lookupAgent(store: Store, cache: Map<string, Agent>, id: AgentId): Agent {
   const cached = cache.get(id);
@@ -97,7 +97,21 @@ export function conversationRow(summary: ConversationSummary): unknown {
   };
 }
 
+/**
+ * A read-log row, with what it read resolved far enough to link into the
+ * reader: the conversation (and so its space) for a conversation read, the
+ * space for a space read. Both as current labels.
+ */
 export function readLogRow(store: Store, cache: Map<string, Agent>, entry: ReadLogEntry): unknown {
+  const params = entry.params as { conversation?: unknown; space?: unknown } | null;
+  const conversation =
+    entry.kind === 'conversation' && typeof params?.conversation === 'string'
+      ? store.getConversation(params.conversation as ConversationId)
+      : undefined;
+  const space =
+    entry.kind === 'space' && typeof params?.space === 'string'
+      ? store.getSpace(params.space as SpaceId)
+      : undefined;
   return {
     id: entry.id,
     agent: lookupAgent(store, cache, entry.agent),
@@ -106,6 +120,8 @@ export function readLogRow(store: Store, cache: Map<string, Agent>, entry: ReadL
     parameters: entry.params,
     cursor: entry.cursor,
     itemCount: entry.itemCount,
+    ...(conversation === undefined ? {} : { conversation }),
+    ...(space === undefined ? {} : { space }),
   };
 }
 

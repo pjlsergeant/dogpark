@@ -31,6 +31,11 @@ export interface ConversationQuery {
   readonly after?: string | undefined;
   /** `newest` pages back from the end, each page newest-first. */
   readonly order?: 'oldest' | 'newest' | undefined;
+  /**
+   * A read-log row id: render the thread as it read then, with the labels in
+   * force at that read (ADR-0004). Nothing is logged.
+   */
+  readonly asOf?: string | undefined;
 }
 
 export interface DogparkAdminApi {
@@ -69,6 +74,7 @@ export interface DogparkAdminApi {
 
   // Forensics -------------------------------------------------------------
   listReads(filter?: ReadLogFilter): Promise<Page<ReadLogEntry>>;
+  getRead(id: string): Promise<ReadLogEntry>;
   listEscalations(filter?: EscalationFilter): Promise<EscalationPage>;
   search(query: SearchQuery): Promise<Page<SearchResult>>;
 

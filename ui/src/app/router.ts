@@ -18,6 +18,8 @@ export type Route =
       readonly space?: SpaceId | undefined;
       readonly conversation?: ConversationId | undefined;
       readonly message?: MessageId | undefined;
+      /** A read-log row id: the reader shows the thread as it read then. */
+      readonly asOf?: string | undefined;
     }
   | { readonly name: 'reads'; readonly agent?: AgentId | undefined }
   | { readonly name: 'escalations' }
@@ -64,6 +66,7 @@ export function parseRoute(hash: string): Route {
         conversation:
           second === undefined ? undefined : (decodeURIComponent(second) as ConversationId),
         message: query.get('m') === null ? undefined : (query.get('m') as MessageId),
+        asOf: query.get('asOf') ?? undefined,
       };
     case 'reads': {
       const agent = query.get('agent');
@@ -92,12 +95,22 @@ export const href = {
   space: (id: SpaceId): string => `#/space/${encodeURIComponent(id)}`,
   agents: (id?: AgentId): string =>
     id === undefined ? '#/agents' : `#/agents/${encodeURIComponent(id)}`,
-  read: (space?: SpaceId, conversation?: ConversationId, message?: MessageId): string => {
-    if (space === undefined) return '#/read';
-    const base = `#/read/${encodeURIComponent(space)}`;
-    if (conversation === undefined) return base;
-    const withThread = `${base}/${encodeURIComponent(conversation)}`;
-    return message === undefined ? withThread : `${withThread}?m=${encodeURIComponent(message)}`;
+  read: (
+    space?: SpaceId,
+    conversation?: ConversationId,
+    message?: MessageId,
+    asOf?: string,
+  ): string => {
+    let path = '#/read';
+    if (space !== undefined) path += `/${encodeURIComponent(space)}`;
+    if (space !== undefined && conversation !== undefined) {
+      path += `/${encodeURIComponent(conversation)}`;
+    }
+    const params = new URLSearchParams();
+    if (message !== undefined) params.set('m', message);
+    if (asOf !== undefined) params.set('asOf', asOf);
+    const query = params.toString();
+    return query === '' ? path : `${path}?${query}`;
   },
   reads: (agent?: AgentId): string =>
     agent === undefined ? '#/reads' : `#/reads?agent=${encodeURIComponent(agent)}`,

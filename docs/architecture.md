@@ -209,7 +209,9 @@ claimed.
 What it establishes is what an agent asked for and had seen when it acted —
 not what it understood, and not what it did next. Labels are journaled on
 rename and each read records its position in that journal, so the wording a
-read rendered is reproducible (ADR-0004), not only which rows it covered.
+read rendered is reproducible (ADR-0004), not only which rows it covered: the
+reader opens any thread as it read on a given row, names and titles as they
+stood then.
 
 ## Implementation choices
 
@@ -257,11 +259,8 @@ not exposed. **It is not a chat client** (ADR-0007).
 
 * Retention. Everything is stored for now.
 * Whether FTS5 is enough, once there is history to judge it against.
-* Escalations cannot be acknowledged or retried, so the inbox only grows; and
-  `/escalations` and `/search` return one capped page with no cursor.
+* Escalations cannot be acknowledged or retried, so the inbox only grows.
 * The admin API lists a space's members but not an agent's spaces; only the
   agent sees those, through `identity()`.
 * There is no unread state, so the reader polls rather than knowing what is
   new.
-* A read's wording is reproducible (`GET /reads/:id/messages/:messageId`) but
-  the UI does not yet show it.

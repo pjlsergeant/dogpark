@@ -29,7 +29,7 @@ export function recordRead(
 
 export function readLogStore(
   ctx: StoreContext,
-): Pick<Store, 'readReadLog' | 'lastReadCursor' | 'recordAttachmentRead'> {
+): Pick<Store, 'readReadLog' | 'getRead' | 'lastReadCursor' | 'recordAttachmentRead'> {
   const { st, requireAgentRow } = ctx;
 
   function toReadLogEntry(row: ReadLogRow): ReadLogEntry {
@@ -73,6 +73,11 @@ export function readLogStore(
             : encodeReadLogCursor({ readAt: last.read_at, rowId: last.row_id }),
         hasMore,
       };
+    },
+
+    getRead(read) {
+      const row = st.readLogById.get({ id: read });
+      return row === undefined ? undefined : toReadLogEntry(row);
     },
 
     lastReadCursor(agent) {

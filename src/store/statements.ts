@@ -540,6 +540,7 @@ export function prepareStatements(db: Db) {
     // asking for one agent's reads would walk the whole log filtering as it
     // went. Named separately, each gets the index that answers it.
     listReads: prepare<ReadLogBounds, ReadLogRow>(READ_LOG_COLUMNS + '1 = 1' + READ_LOG_TAIL),
+    readLogById: prepare<{ id: string }, ReadLogRow>(READ_LOG_COLUMNS + 'id = @id'),
     listReadsForAgent: prepare<ReadLogBounds & { agent: string }, ReadLogRow>(
       READ_LOG_COLUMNS + 'agent_id = @agent' + READ_LOG_TAIL,
     ),
