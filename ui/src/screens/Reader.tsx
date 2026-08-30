@@ -7,11 +7,11 @@
  * hover, rendered markdown, attachments as downloads. Nothing agent-authored
  * is ever rendered as markup.
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import type { ConversationId, MessageId, SpaceId } from '../api/index.js';
+import type { ApiError, ConversationId, Message, MessageId, SpaceId } from '../api/index.js';
 import { useApi } from '../app/api-context.js';
-import { useAsync } from '../app/useAsync.js';
+import { toApiError, useAsync } from '../app/useAsync.js';
 import { href, navigate } from '../app/router.js';
 import { dayHeading, sameDay } from '../app/format.js';
 import { Empty, Failure, Loading, Time } from '../components/bits.js';
@@ -149,12 +149,14 @@ function SpaceReader({
               >
                 <span className="thread-title">{thread.title}</span>
                 <span className="thread-meta">
-                  {thread.lastMessageAt === null ? (
-                    'empty'
+                  {thread.lastMessageAt === null || thread.lastMessageAt === undefined ? (
+                    ''
                   ) : (
                     <>
                       <Time iso={thread.lastMessageAt} />
-                      {thread.lastSenderName !== null && ` - ${thread.lastSenderName}`}
+                      {thread.lastSenderName !== null &&
+                        thread.lastSenderName !== undefined &&
+                        ` - ${thread.lastSenderName}`}
                     </>
                   )}
                 </span>
@@ -198,6 +200,44 @@ function SpaceReader({
   );
 }
 
+/**
+ * One thread.
+ *
+ * Paging is the awkward part, and the shape of the awkwardness is the API's:
+ * `GET /conversations/:id/messages` takes `since`, `until` and `after`, and
+ * `after` walks *forwards* from the start of the range. There is no "the last
+ * N messages", so a reader that always started at the beginning would make
+ * the human page through a year to reach today.
+ *
+ * So the reader opens on a time window and widens on request, which `since`
+ * expresses exactly. A window with nothing in it widens itself once, because
+ * that is what anyone would do next.
+ */
+type Window = '14d' | '90d' | 'all';
+
+const WINDOWS: readonly {
+  readonly id: Window;
+  readonly label: string;
+  readonly days: number | null;
+}[] = [
+  { id: '14d', label: 'Last 14 days', days: 14 },
+  { id: '90d', label: 'Last 90 days', days: 90 },
+  { id: 'all', label: 'Everything', days: null },
+];
+
+function sinceFor(window: Window): string | undefined {
+  const days = WINDOWS.find((w) => w.id === window)?.days ?? null;
+  return days === null ? undefined : new Date(Date.now() - days * 86_400_000).toISOString();
+}
+
+interface Loaded {
+  readonly messages: readonly Message[];
+  readonly nextCursor: string | null;
+  readonly hasMore: boolean;
+  /** How many pages have been pulled, so polling knows whether it can reset. */
+  readonly pages: number;
+}
+
 function Thread({
   space,
   conversation,
@@ -212,19 +252,86 @@ function Thread({
   onPosted: () => void;
 }): ReactNode {
   const api = useApi();
-  const page = useAsync(() => api.readConversation(conversation), [api, conversation]);
-  const reload = page.reload;
+  const [window_, setWindow] = useState<Window>('14d');
+  const [loaded, setLoaded] = useState<Loaded | null>(null);
+  const [busy, setBusy] = useState(true);
+  const [error, setError] = useState<ApiError | null>(null);
+  const [widened, setWidened] = useState(false);
   const bottom = useRef<HTMLDivElement>(null);
-  const messages = page.state.data?.messages ?? [];
-  const count = messages.length;
 
-  // Poll while the tab is in front. Agents post while nobody is looking.
+  const load = useCallback(
+    async (choice: Window) => {
+      setBusy(true);
+      setError(null);
+      try {
+        const since = sinceFor(choice);
+        const page = await api.readConversation(conversation, since === undefined ? {} : { since });
+        setLoaded({
+          messages: page.messages,
+          nextCursor: page.nextCursor,
+          hasMore: page.hasMore,
+          pages: 1,
+        });
+      } catch (cause) {
+        setError(toApiError(cause));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [api, conversation],
+  );
+
+  const loadMore = useCallback(async () => {
+    if (loaded === null || loaded.nextCursor === null) return;
+    setBusy(true);
+    try {
+      const page = await api.readConversation(conversation, { after: loaded.nextCursor });
+      setLoaded((current) =>
+        current === null
+          ? current
+          : {
+              messages: [...current.messages, ...page.messages],
+              nextCursor: page.nextCursor,
+              hasMore: page.hasMore,
+              pages: current.pages + 1,
+            },
+      );
+    } catch (cause) {
+      setError(toApiError(cause));
+    } finally {
+      setBusy(false);
+    }
+  }, [api, conversation, loaded]);
+
   useEffect(() => {
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === 'visible') reload();
+    void load(window_);
+  }, [load, window_]);
+
+  // An empty window is almost always the wrong window. Widen once, say so.
+  useEffect(() => {
+    if (widened || window_ !== '14d') return;
+    if (loaded !== null && loaded.messages.length === 0 && !loaded.hasMore) {
+      setWidened(true);
+      setWindow('all');
+    }
+  }, [loaded, widened, window_]);
+
+  // Poll while the tab is in front, but only when the view is one page and
+  // caught up: re-reading would otherwise throw away pages already pulled.
+  useEffect(() => {
+    const timer = globalThis.setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
+      setLoaded((current) => {
+        if (current !== null && current.pages === 1 && !current.hasMore) void load(window_);
+        return current;
+      });
     }, POLL_MS);
-    return () => window.clearInterval(timer);
-  }, [reload]);
+    return () => globalThis.clearInterval(timer);
+  }, [load, window_]);
+
+  const messages = loaded?.messages ?? [];
+  const count = messages.length;
+  const onFirstPage = loaded?.pages === 1;
 
   useEffect(() => {
     if (count === 0) return;
@@ -235,8 +342,8 @@ function Thread({
         return;
       }
     }
-    bottom.current?.scrollIntoView({ block: 'end' });
-  }, [count, highlight]);
+    if (onFirstPage) bottom.current?.scrollIntoView({ block: 'end' });
+  }, [count, highlight, onFirstPage]);
 
   const heading = title ?? messages[0]?.conversationTitle ?? 'Conversation';
 
@@ -244,20 +351,40 @@ function Thread({
     <>
       <header className="thread-head">
         <h1>{heading}</h1>
-        <button type="button" className="btn btn-quiet" onClick={page.reload}>
-          Refresh
-        </button>
+        <div className="row">
+          <label className="visually-hidden" htmlFor="thread-window">
+            How far back
+          </label>
+          <select
+            id="thread-window"
+            value={window_}
+            onChange={(event) => {
+              setWidened(true);
+              setWindow(event.target.value as Window);
+            }}
+          >
+            {WINDOWS.map((each) => (
+              <option key={each.id} value={each.id}>
+                {each.label}
+              </option>
+            ))}
+          </select>
+          <button type="button" className="btn btn-quiet" onClick={() => void load(window_)}>
+            Refresh
+          </button>
+        </div>
       </header>
 
       <div className="thread-body">
-        {page.state.status === 'loading' && page.state.data === null && <Loading what="messages" />}
-        {page.state.error !== null && <Failure error={page.state.error} onRetry={page.reload} />}
-        {page.state.data !== null && count === 0 && <Empty>Nothing here yet. Say something.</Empty>}
-        {page.state.data?.hasMore === true && (
-          <p className="muted small">
-            Showing the most recent page. Older messages are still in this thread.
-          </p>
+        {busy && loaded === null && <Loading what="messages" />}
+        {error !== null && <Failure error={error} onRetry={() => void load(window_)} />}
+        {loaded !== null && count === 0 && (
+          <Empty>Nothing in this window. Widen it, or say something.</Empty>
         )}
+        {widened && window_ === 'all' && count > 0 && (
+          <p className="muted small">Nothing in the last 14 days, so this is the whole thread.</p>
+        )}
+
         {messages.map((each, index) => {
           const previous = messages[index - 1];
           const newDay = previous === undefined || !sameDay(previous.sentAt, each.sentAt);
@@ -268,6 +395,17 @@ function Thread({
             </div>
           );
         })}
+
+        {loaded?.hasMore === true && (
+          <div className="load-more">
+            <button type="button" className="btn" onClick={() => void loadMore()} disabled={busy}>
+              {busy ? 'Loading...' : 'Load newer messages'}
+            </button>
+            <span className="muted small">
+              This conversation pages forwards from the start of the window.
+            </span>
+          </div>
+        )}
         <div ref={bottom} />
       </div>
 
@@ -275,7 +413,7 @@ function Thread({
         space={space}
         conversation={conversation}
         onPosted={() => {
-          page.reload();
+          void load(window_);
           onPosted();
         }}
       />

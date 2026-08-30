@@ -12,7 +12,6 @@ import type { ConversationQuery, DogparkAdminApi } from '../api.js';
 import type {
   AdminAgent,
   AgentId,
-  ApiKeyId,
   Conversation,
   ConversationId,
   Escalation,
@@ -52,7 +51,7 @@ function randomSecret(): string {
 
 export function createMockApi(): DogparkAdminApi {
   const spaces: Space[] = [...fixtures.spaces];
-  const agents: AdminAgent[] = fixtures.agents.map((a) => ({ ...a, keys: [...a.keys] }));
+  const agents: AdminAgent[] = fixtures.agents.map((a) => ({ ...a, keys: [...(a.keys ?? [])] }));
   const conversations: Conversation[] = [...fixtures.conversations];
   const messages: Message[] = [...fixtures.messages];
   const memberships = [...fixtures.memberships];
@@ -85,9 +84,13 @@ export function createMockApi(): DogparkAdminApi {
   function issue(agent: AdminAgent, label: string | null): IssuedKey {
     const id = fixtures.keyId(nextId('key'));
     const updated = replace(agent, {
-      keys: [...agent.keys, { id, label, createdAt: now(), revokedAt: null }],
+      keys: [...(agent.keys ?? []), { id, label, createdAt: now(), revokedAt: null }],
     });
-    return { agent: updated, keyId: id, key: `dgp_${agent.id}_${randomSecret()}` };
+    return {
+      agent: { id: updated.id, displayName: updated.displayName },
+      keyId: id,
+      key: `dgp_${agent.id}_${randomSecret()}`,
+    };
   }
 
   function page<T>(items: readonly T[]): Page<T> {
@@ -141,9 +144,7 @@ export function createMockApi(): DogparkAdminApi {
       if (existing === undefined) {
         throw new ApiError({ code: 'not_found', message: 'No such space.', status: 404 });
       }
-      const renamed = { ...existing, name };
-      spaces.splice(index, 1, renamed);
-      return renamed;
+      spaces.splice(index, 1, { ...existing, name });
     },
     async listMembers(id) {
       await latency();
@@ -152,20 +153,22 @@ export function createMockApi(): DogparkAdminApi {
       if (space === undefined) {
         throw new ApiError({ code: 'not_found', message: 'No such space.', status: 404 });
       }
-      const intervals = memberships
-        .filter((m) => m.space === id)
-        .map((m) => {
-          const agent = agents.find((a) => a.id === m.agent);
-          return {
-            agent: { id: m.agent, displayName: agent?.displayName ?? m.agent },
-            grantedAt: m.grantedAt,
-            revokedAt: m.revokedAt,
-          };
-        });
+      const named = (id_: AgentId): { id: AgentId; displayName: string } => ({
+        id: id_,
+        displayName: agents.find((a) => a.id === id_)?.displayName ?? id_,
+      });
+      const mine = memberships.filter((m) => m.space === space.id);
       return {
-        space,
-        current: intervals.filter((i) => i.revokedAt === null).map((i) => i.agent),
-        intervals,
+        current: mine
+          .filter((m) => m.revokedAt === null)
+          .map((m) => ({ agent: named(m.agent), grantedAt: m.grantedAt })),
+        history: mine
+          .filter((m) => m.revokedAt !== null)
+          .map((m) => ({
+            agent: named(m.agent),
+            grantedAt: m.grantedAt,
+            revokedAt: m.revokedAt as Timestamp,
+          })),
       } satisfies SpaceMembers;
     },
     async addMember(space, agent) {
@@ -208,7 +211,8 @@ export function createMockApi(): DogparkAdminApi {
         archived: false,
         createdAt: now(),
         lastSeenAt: null,
-        failedAuthAttempts: 0,
+        failedAttemptsClaimingId: 0,
+        hasEverAuthenticated: false,
         keys: [],
       };
       agents.push(agent);
@@ -217,7 +221,7 @@ export function createMockApi(): DogparkAdminApi {
     async renameAgent(id, name) {
       await latency();
       requireSession();
-      return replace(agentOr404(id), { displayName: name });
+      replace(agentOr404(id), { displayName: name });
     },
     async issueKey(id, label) {
       await latency();
@@ -229,16 +233,18 @@ export function createMockApi(): DogparkAdminApi {
       requireSession();
       const found = agentOr404(agent);
       replace(found, {
-        keys: found.keys.map((k) => (k.id === (key as ApiKeyId) ? { ...k, revokedAt: now() } : k)),
+        keys: (found.keys ?? []).map((k) => (k.id === key ? { ...k, revokedAt: now() } : k)),
       });
     },
     async archiveAgent(id) {
       await latency();
       requireSession();
       const agent = agentOr404(id);
-      return replace(agent, {
+      replace(agent, {
         archived: true,
-        keys: agent.keys.map((k) => (k.revokedAt === null ? { ...k, revokedAt: now() } : k)),
+        keys: (agent.keys ?? []).map((k) =>
+          k.revokedAt === null || k.revokedAt === undefined ? { ...k, revokedAt: now() } : k,
+        ),
       });
     },
     async unarchiveAgent(id) {
@@ -329,12 +335,12 @@ export function createMockApi(): DogparkAdminApi {
       requireSession();
       const filtered =
         filter?.agent === undefined ? reads : reads.filter((r) => r.agent.id === filter.agent);
-      return page([...filtered].sort((a, b) => b.readAt.localeCompare(a.readAt)));
+      return page([...filtered].sort((a, b) => b.at.localeCompare(a.at)));
     },
     async listEscalations() {
       await latency();
       requireSession();
-      return page([...escalations].sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
+      return page([...escalations].sort((a, b) => b.raisedAt.localeCompare(a.raisedAt)));
     },
     async search(query: SearchQuery) {
       await latency();
@@ -348,13 +354,16 @@ export function createMockApi(): DogparkAdminApi {
         .map((message) => {
           const at = message.body.toLowerCase().indexOf(needle);
           const from = Math.max(0, at - 60);
+          const space = spaces.find((s) => s.id === message.space);
+          const thread = conversations.find((c) => c.id === message.conversation);
           return {
             message,
-            spaceName: spaces.find((s) => s.id === message.space)?.name ?? String(message.space),
+            conversation: thread as Conversation,
+            space: space ?? { id: message.space, name: String(message.space) },
             snippet:
-              (from > 0 ? '…' : '') +
+              (from > 0 ? '...' : '') +
               message.body.slice(from, at + needle.length + 60).replace(/\s+/g, ' ') +
-              '…',
+              '...',
           };
         });
       return page(results);

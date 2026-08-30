@@ -195,12 +195,24 @@ export function createHttpApi(): DogparkAdminApi {
       return (await request('POST', '/spaces', { json: { name } })) as Space;
     },
     async renameSpace(id, name) {
-      return (await request('PATCH', `/spaces/${encodeURIComponent(id)}`, {
-        json: { name },
-      })) as Space;
+      await request('PATCH', `/spaces/${encodeURIComponent(id)}`, { json: { name } });
     },
     async listMembers(id) {
-      return (await request('GET', `/spaces/${encodeURIComponent(id)}/members`)) as SpaceMembers;
+      const raw = (await request('GET', `/spaces/${encodeURIComponent(id)}/members`)) as Record<
+        string,
+        unknown
+      > | null;
+      // `{ current, history }` is the pinned shape. A membership entry that
+      // arrives as a bare agent rather than `{ agent, grantedAt }` is still
+      // rendered, without its dates.
+      const entries = (value: unknown): Record<string, unknown>[] =>
+        Array.isArray(value) ? (value as Record<string, unknown>[]) : [];
+      const asMembership = (entry: Record<string, unknown>): Record<string, unknown> =>
+        'agent' in entry ? entry : { agent: entry, grantedAt: null, revokedAt: null };
+      return {
+        current: entries(raw?.['current']).map(asMembership),
+        history: entries(raw?.['history'] ?? raw?.['intervals']).map(asMembership),
+      } as unknown as SpaceMembers;
     },
     async addMember(space, agent) {
       await request(
@@ -227,9 +239,7 @@ export function createHttpApi(): DogparkAdminApi {
       return (await request('POST', '/agents', { json: { name } })) as IssuedKey;
     },
     async renameAgent(id, name) {
-      return (await request('PATCH', `/agents/${encodeURIComponent(id)}`, {
-        json: { name },
-      })) as AdminAgent;
+      await request('PATCH', `/agents/${encodeURIComponent(id)}`, { json: { name } });
     },
     async issueKey(id, label) {
       return (await request('POST', `/agents/${encodeURIComponent(id)}/keys`, {
@@ -243,7 +253,7 @@ export function createHttpApi(): DogparkAdminApi {
       );
     },
     async archiveAgent(id) {
-      return (await request('POST', `/agents/${encodeURIComponent(id)}/archive`)) as AdminAgent;
+      await request('POST', `/agents/${encodeURIComponent(id)}/archive`);
     },
     async unarchiveAgent(id) {
       return (await request('POST', `/agents/${encodeURIComponent(id)}/unarchive`)) as IssuedKey;

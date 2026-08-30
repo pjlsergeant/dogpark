@@ -7,7 +7,7 @@
  * saying "something is wrong" and nobody hearing it.
  */
 import type { ReactNode } from 'react';
-import type { Escalation, NotificationState } from '../api/index.js';
+import type { Escalation, NotificationState, NotificationStatus } from '../api/index.js';
 import { useApi } from '../app/api-context.js';
 import { useAsync } from '../app/useAsync.js';
 import { href } from '../app/router.js';
@@ -27,21 +27,30 @@ const EXPLANATION: Record<NotificationState, string> = {
   failed: 'Delivery gave up after retrying. Nobody was told out of band.',
 };
 
-function Row({ escalation }: { escalation: Escalation }): ReactNode {
+/** `notification` may be the object the store holds, or just its state. */
+function statusOf(escalation: Escalation): NotificationStatus {
+  return typeof escalation.notification === 'string'
+    ? { state: escalation.notification }
+    : escalation.notification;
+}
+
+function Row({ escalation, spaceName }: { escalation: Escalation; spaceName: string }): ReactNode {
+  const status = statusOf(escalation);
+  const attempts = status.attempts ?? 0;
   return (
-    <li className={`escalation escalation-${escalation.notificationState}`}>
+    <li className={`escalation escalation-${status.state}`}>
       <div className="escalation-head">
         <div>
           <strong>{escalation.agent.displayName}</strong> <span className="muted">flagged</span>{' '}
           <a href={href.read(escalation.conversation.space, escalation.conversation.id)}>
             {escalation.conversation.title}
           </a>{' '}
-          <span className="muted">in {escalation.spaceName}</span>
+          <span className="muted">in {spaceName}</span>
         </div>
         <div className="row">
-          <Pill tone={TONE[escalation.notificationState]}>{escalation.notificationState}</Pill>
-          <span className="muted" title={absoluteTime(escalation.createdAt)}>
-            <Time iso={escalation.createdAt} />
+          <Pill tone={TONE[status.state]}>{status.state}</Pill>
+          <span className="muted" title={absoluteTime(escalation.raisedAt)}>
+            <Time iso={escalation.raisedAt} />
           </span>
         </div>
       </div>
@@ -52,26 +61,26 @@ function Row({ escalation }: { escalation: Escalation }): ReactNode {
       </blockquote>
 
       <div className="escalation-notify muted small">
-        {EXPLANATION[escalation.notificationState]}{' '}
-        {escalation.attempts > 0 && (
+        {EXPLANATION[status.state]}{' '}
+        {attempts > 0 && (
           <>
-            {escalation.attempts} attempt{escalation.attempts === 1 ? '' : 's'}
-            {escalation.lastAttemptAt !== null && (
+            {attempts} attempt{attempts === 1 ? '' : 's'}
+            {status.lastAttemptAt !== null && status.lastAttemptAt !== undefined && (
               <>
-                , last <Time iso={escalation.lastAttemptAt} />
+                , last <Time iso={status.lastAttemptAt} />
               </>
             )}
-            {escalation.nextAttemptAt !== null && (
+            {status.nextAttemptAt !== null && status.nextAttemptAt !== undefined && (
               <>
-                , next <Time iso={escalation.nextAttemptAt} />
+                , next <Time iso={status.nextAttemptAt} />
               </>
             )}
             .
           </>
         )}
-        {escalation.lastError !== null && (
+        {status.lastError !== null && status.lastError !== undefined && (
           <div className="escalation-error">
-            <code>{escalation.lastError}</code>
+            <code>{status.lastError}</code>
           </div>
         )}
       </div>
@@ -82,8 +91,11 @@ function Row({ escalation }: { escalation: Escalation }): ReactNode {
 export function EscalationsScreen(): ReactNode {
   const api = useApi();
   const escalations = useAsync(() => api.listEscalations(), [api]);
+  const spaces = useAsync(() => api.listSpaces(), [api]);
   const items = escalations.state.data?.items ?? [];
-  const unhandled = items.filter((e) => e.notificationState !== 'sent').length;
+  const unhandled = items.filter((e) => statusOf(e).state !== 'sent').length;
+  const nameOf = (id: string): string =>
+    (spaces.state.data ?? []).find((s) => s.id === id)?.name ?? 'a space';
 
   return (
     <section className="screen">
@@ -115,7 +127,11 @@ export function EscalationsScreen(): ReactNode {
 
       <ul className="escalations">
         {items.map((escalation) => (
-          <Row key={escalation.id} escalation={escalation} />
+          <Row
+            key={escalation.id}
+            escalation={escalation}
+            spaceName={nameOf(escalation.conversation.space)}
+          />
         ))}
       </ul>
     </section>

@@ -17,7 +17,9 @@ import { absoluteTime } from '../app/format.js';
 import { Empty, Failure, Loading, Time } from '../components/bits.js';
 
 function excerpt(result: SearchResult): string {
-  if (result.snippet !== null && result.snippet !== '') return result.snippet;
+  if (result.snippet !== null && result.snippet !== undefined && result.snippet !== '') {
+    return result.snippet;
+  }
   const body = result.message.body.replace(/\s+/g, ' ').trim();
   return body.length > 240 ? `${body.slice(0, 240)}...` : body;
 }
@@ -107,9 +109,11 @@ export function SearchScreen({ q, space }: { q: string; space?: SpaceId | undefi
               className="result-link"
               href={href.read(result.message.space, result.message.conversation, result.message.id)}
             >
-              <span className="result-title">{result.message.conversationTitle}</span>
+              <span className="result-title">
+                {result.conversation.title || result.message.conversationTitle}
+              </span>
               <span className="result-meta">
-                {result.spaceName} - {result.message.sender.displayName} -{' '}
+                {result.space.name} - {result.message.sender.displayName} -{' '}
                 <span title={absoluteTime(result.message.sentAt)}>
                   <Time iso={result.message.sentAt} />
                 </span>

@@ -196,6 +196,13 @@ export interface Range {
   /** Exclusive. */
   readonly until?: Timestamp | undefined;
   readonly after?: QueryCursor | undefined;
+  /**
+   * Oldest first by default. `newest` pages backwards from the end, which is
+   * what anyone wanting recent context actually needs — an agent backfilling a
+   * long thread wants its last fifty messages, not to walk forward from a
+   * conversation's first day to reach today.
+   */
+  readonly order?: 'oldest' | 'newest' | undefined;
 }
 
 export interface Space {

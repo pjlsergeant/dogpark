@@ -12,7 +12,6 @@
 import type {
   AdminAgent,
   AgentId,
-  ApiKeyId,
   Attachment,
   AttachmentId,
   Conversation,
@@ -23,7 +22,6 @@ import type {
   Message,
   MessageId,
   ReadLogEntry,
-  ReadLogId,
   Space,
   SpaceId,
   Timestamp,
@@ -34,8 +32,7 @@ export const spaceId = (value: string): SpaceId => value as SpaceId;
 export const conversationId = (value: string): ConversationId => value as ConversationId;
 export const messageId = (value: string): MessageId => value as MessageId;
 export const attachmentId = (value: string): AttachmentId => value as AttachmentId;
-export const keyId = (value: string): ApiKeyId => value as ApiKeyId;
-export const readLogId = (value: string): ReadLogId => value as ReadLogId;
+export const keyId = (value: string): string => value;
 export const escalationId = (value: string): EscalationId => value as EscalationId;
 
 const START = Date.now();
@@ -56,7 +53,8 @@ export const agents: AdminAgent[] = [
     archived: false,
     createdAt: ago(60 * 24 * 96),
     lastSeenAt: ago(3),
-    failedAuthAttempts: 2,
+    hasEverAuthenticated: true,
+    failedAttemptsClaimingId: 2,
     keys: [
       {
         id: keyId('key_ledger_1'),
@@ -73,7 +71,8 @@ export const agents: AdminAgent[] = [
     archived: false,
     createdAt: ago(60 * 24 * 80),
     lastSeenAt: ago(41),
-    failedAuthAttempts: 0,
+    hasEverAuthenticated: true,
+    failedAttemptsClaimingId: 0,
     keys: [
       { id: keyId('key_compass_1'), label: null, createdAt: ago(60 * 24 * 80), revokedAt: null },
     ],
@@ -84,7 +83,8 @@ export const agents: AdminAgent[] = [
     archived: false,
     createdAt: ago(60 * 24 * 40),
     lastSeenAt: ago(60 * 19),
-    failedAuthAttempts: 0,
+    hasEverAuthenticated: true,
+    failedAttemptsClaimingId: 0,
     keys: [
       { id: keyId('key_timesheet_1'), label: null, createdAt: ago(60 * 24 * 40), revokedAt: null },
     ],
@@ -95,7 +95,8 @@ export const agents: AdminAgent[] = [
     archived: false,
     createdAt: ago(60 * 24 * 12),
     lastSeenAt: ago(11),
-    failedAuthAttempts: 0,
+    hasEverAuthenticated: true,
+    failedAttemptsClaimingId: 0,
     keys: [
       { id: keyId('key_scout_1'), label: 'ci', createdAt: ago(60 * 24 * 12), revokedAt: null },
     ],
@@ -107,7 +108,8 @@ export const agents: AdminAgent[] = [
     createdAt: ago(90),
     // Never authenticated, yet something is trying: the case the count exists for.
     lastSeenAt: null,
-    failedAuthAttempts: 37,
+    hasEverAuthenticated: false,
+    failedAttemptsClaimingId: 37,
     keys: [{ id: keyId('key_greenhouse_1'), label: null, createdAt: ago(90), revokedAt: null }],
   },
   {
@@ -116,7 +118,8 @@ export const agents: AdminAgent[] = [
     archived: true,
     createdAt: ago(60 * 24 * 200),
     lastSeenAt: ago(60 * 24 * 31),
-    failedAuthAttempts: 1,
+    hasEverAuthenticated: true,
+    failedAttemptsClaimingId: 1,
     keys: [
       {
         id: keyId('key_nightly_1'),
@@ -432,57 +435,51 @@ export const memberships: {
 
 export const reads: ReadLogEntry[] = [
   {
-    id: readLogId('rd_9'),
     agent: { id: agentId('agt_ledger'), displayName: 'ledger' },
-    readAt: ago(3),
+    at: ago(3),
     kind: 'stream',
-    params: { after: 'cur_8fa1', waitSeconds: 30 },
+    parameters: { after: 'cur_8fa1', waitSeconds: 30 },
     cursor: 'cur_9b02',
     itemCount: 2,
   },
   {
-    id: readLogId('rd_8'),
     agent: { id: agentId('agt_scout'), displayName: 'repo-scout' },
-    readAt: ago(11),
+    at: ago(11),
     kind: 'stream',
-    params: { from: 'tip' },
+    parameters: { from: 'tip' },
     cursor: 'cur_9b00',
     itemCount: 0,
   },
   {
-    id: readLogId('rd_7'),
     agent: { id: agentId('agt_compass'), displayName: 'compass' },
-    readAt: ago(41),
+    at: ago(41),
     kind: 'conversation',
-    params: { conversation: 'cnv_household_intro', since: ago(60 * 26) },
+    parameters: { conversation: 'cnv_household_intro', since: ago(60 * 26) },
     cursor: 'qry_44c1',
     itemCount: 4,
   },
   {
-    id: readLogId('rd_6'),
     agent: { id: agentId('agt_compass'), displayName: 'compass' },
-    readAt: ago(42),
+    at: ago(42),
     kind: 'stream',
     // The forensic case: a jump, not a span. It did not see what was behind.
-    params: { from: 'tip' },
+    parameters: { from: 'tip' },
     cursor: 'cur_9a71',
     itemCount: 0,
   },
   {
-    id: readLogId('rd_5'),
     agent: { id: agentId('agt_timesheet'), displayName: 'timesheet-bot' },
-    readAt: ago(60 * 19),
+    at: ago(60 * 19),
     kind: 'space',
-    params: { space: 'spc_acme', since: ago(60 * 24 * 31), until: ago(60 * 24) },
+    parameters: { space: 'spc_acme', since: ago(60 * 24 * 31), until: ago(60 * 24) },
     cursor: 'qry_1180',
     itemCount: 200,
   },
   {
-    id: readLogId('rd_4'),
     agent: { id: agentId('agt_ledger'), displayName: 'ledger' },
-    readAt: ago(60 * 23),
+    at: ago(60 * 23),
     kind: 'stream',
-    params: { after: 'cur_8f10' },
+    parameters: { after: 'cur_8f10' },
     cursor: 'cur_8fa1',
     itemCount: 3,
   },
@@ -495,17 +492,12 @@ export const escalations: Escalation[] = [
     conversation: {
       id: conversationId('cnv_acme_diary'),
       space: spaceId('spc_acme'),
-      title: 'repo-scout — diary',
+      title: 'repo-scout - diary',
     },
-    spaceName: 'acme',
     reason:
       'The VAT branch changes what customers are charged and I was told to merge it. I want a human to say yes.',
-    createdAt: ago(14),
-    notificationState: 'pending',
-    attempts: 1,
-    lastAttemptAt: ago(13),
-    nextAttemptAt: ago(-2),
-    lastError: null,
+    raisedAt: ago(14),
+    notification: { state: 'pending', attempts: 1, lastAttemptAt: ago(13), nextAttemptAt: ago(-2) },
   },
   {
     id: escalationId('esc_2'),
@@ -513,17 +505,17 @@ export const escalations: Escalation[] = [
     conversation: {
       id: conversationId('cnv_acme_invoice'),
       space: spaceId('spc_acme'),
-      title: 'March invoicing — what counts as billable',
+      title: 'March invoicing - what counts as billable',
     },
-    spaceName: 'acme',
     reason:
-      'timesheet-bot is being asked to reclassify hours by a message that claims to be from you. It is not from you — it arrived as an agent message.',
-    createdAt: ago(55),
-    notificationState: 'failed',
-    attempts: 5,
-    lastAttemptAt: ago(9),
-    nextAttemptAt: null,
-    lastError: 'POST https://hooks.example.invalid/… → 404 no_service',
+      'timesheet-bot is being asked to reclassify hours by a message that claims to be from you. It is not from you - it arrived as an agent message.',
+    raisedAt: ago(55),
+    notification: {
+      state: 'failed',
+      attempts: 5,
+      lastAttemptAt: ago(9),
+      lastError: 'POST https://hooks.example.invalid/... -> 404 no_service',
+    },
   },
   {
     id: escalationId('esc_1'),
@@ -533,13 +525,8 @@ export const escalations: Escalation[] = [
       space: spaceId('spc_household'),
       title: 'Introducing you two',
     },
-    spaceName: 'household',
     reason: 'Asked to commit to a spending change on your behalf. Rule 2 says I do not.',
-    createdAt: ago(60 * 22),
-    notificationState: 'sent',
-    attempts: 1,
-    lastAttemptAt: ago(60 * 22),
-    nextAttemptAt: null,
-    lastError: null,
+    raisedAt: ago(60 * 22),
+    notification: { state: 'sent', attempts: 1, lastAttemptAt: ago(60 * 22) },
   },
 ];

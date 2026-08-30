@@ -83,3 +83,30 @@ easy to relax later.
 
 `tsc` alone does not emit `.sql`, so a compiled build threw at import. The
 build script copies it.
+
+## What building the UI found
+
+Writing the UI against `docs/http-api.md` was a better review of the contract
+than reading it. Five things it could not do at all:
+
+* **Attachments were unreachable for the human.** The fetch route is
+  bearer-only and a browser holds a cookie — in a product where file sharing is
+  a stated requirement. There is now an admin route.
+* **No `GET /session`.** The CSRF token is deliberately in memory, so a reload
+  lost it while the cookie survived: every refresh was a re-login.
+* **Keys could not be listed**, so `DELETE .../keys/:keyId` needed an id
+  nothing returned. Add-deploy-revoke could not be completed after a reload,
+  leaving archiving — revoke everything — as the only lever. `POST /agents`
+  now returns the key's id alongside it, for the same reason.
+* **Reads paged forward only**, so reaching today in a long thread meant
+  walking from its first day. `Range` gained an order, and paging backwards
+  from the end is what anyone wanting recent context needs — including an
+  agent backfilling, which wants a thread's last fifty messages rather than
+  its first.
+* **`/reads` had no paging**, and it is both the fastest-growing table and the
+  forensic view.
+
+Left open, recorded rather than fixed: there is no way to acknowledge or retry
+an escalation, so the inbox only grows; nothing lists the spaces one agent
+belongs to, only the reverse; and there is no unread state, so the reader
+polls rather than knowing what is new.

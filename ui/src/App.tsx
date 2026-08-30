@@ -80,7 +80,7 @@ export function App(): ReactNode {
       if (!live) return;
       if (resumed !== null) {
         setSession({
-          displayName: resumed.displayName ?? 'you',
+          displayName: resumed.displayName ?? null,
           expiresAt: resumed.expiresAt ?? null,
         });
       }
@@ -262,7 +262,9 @@ function Sidebar({
         <button type="button" className="btn btn-quiet" onClick={onHelp}>
           Keys <kbd>?</kbd>
         </button>
-        <div className="muted small">Signed in as {session.displayName}</div>
+        <div className="muted small">
+          {session.displayName === null ? 'Signed in' : `Signed in as ${session.displayName}`}
+        </div>
         <button type="button" className="btn btn-quiet" onClick={logout}>
           Sign out
         </button>

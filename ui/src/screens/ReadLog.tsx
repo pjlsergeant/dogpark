@@ -17,7 +17,7 @@ import { Empty, Failure, Id, Loading, Pill, Time } from '../components/bits.js';
 
 /** `from: tip` discards the backlog: the agent did not see what was behind it. */
 function isSeekToTip(entry: ReadLogEntry): boolean {
-  return entry.params['from'] === 'tip';
+  return entry.parameters['from'] === 'tip';
 }
 
 function Params({ params }: { params: Readonly<Record<string, unknown>> }): ReactNode {
@@ -108,16 +108,18 @@ export function ReadLogScreen({ agent }: { agent?: AgentId | undefined }): React
             </tr>
           </thead>
           <tbody>
-            {entries.map((entry) => (
-              <tr key={entry.id}>
-                <td title={absoluteTime(entry.readAt)}>
-                  <Time iso={entry.readAt} />
+            {entries.map((entry, index) => (
+              <tr key={entry.id ?? index}>
+                <td title={absoluteTime(entry.at)}>
+                  <Time iso={entry.at} />
                 </td>
                 <td>
                   <a href={href.agents(entry.agent.id)}>{entry.agent.displayName}</a>
                 </td>
                 <td>
-                  <Pill tone={entry.kind === 'stream' ? 'info' : 'muted'}>{entry.kind}</Pill>
+                  {entry.kind !== undefined && (
+                    <Pill tone={entry.kind === 'stream' ? 'info' : 'muted'}>{entry.kind}</Pill>
+                  )}
                   {isSeekToTip(entry) && (
                     <span
                       className="jump"
@@ -128,7 +130,7 @@ export function ReadLogScreen({ agent }: { agent?: AgentId | undefined }): React
                   )}
                 </td>
                 <td>
-                  <Params params={entry.params} />
+                  <Params params={entry.parameters} />
                 </td>
                 <td className="numeric">{entry.itemCount}</td>
                 <td>

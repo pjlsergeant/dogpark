@@ -2,10 +2,11 @@
  * The admin API as this UI understands it.
  *
  * Domain types come from `src/types.ts` and are imported, never redefined.
- * What is declared here is the *admin* surface, which `docs/http-api.md`
- * names but does not give bodies for: every type below annotated
- * `@contract-gap` is an assumption the UI had to make. They are collected in
- * one file so the server can be reconciled against them in one reading.
+ * What is declared here is the *admin* surface. The response shapes pinned in
+ * `docs/http-api.md` ("Admin response shapes") are followed exactly; anything
+ * marked `@contract-gap` is a field or a whole endpoint the UI needed and the
+ * contract does not describe, and every such field is optional so a server
+ * built strictly to the contract still renders.
  */
 import type {
   Agent,
@@ -40,10 +41,7 @@ export type {
   Timestamp,
 };
 
-/** An id for one API key. Keys are revocable individually. */
-export type ApiKeyId = string & { readonly __brand: 'ApiKeyId' };
 export type EscalationId = string & { readonly __brand: 'EscalationId' };
-export type ReadLogId = string & { readonly __brand: 'ReadLogId' };
 
 /**
  * A `DogparkError` that reached the client, with the transport status it
@@ -73,17 +71,19 @@ export class ApiError extends Error {
 // Session
 // ---------------------------------------------------------------------------
 
-/**
- * `POST /api/admin/session` — "password in, cookie + CSRF token out".
- *
- * @contract-gap The field names are not written down. `displayName` is the
- * human's configured `DOGPARK_DISPLAY_NAME`, which the UI needs to attribute
- * its own messages before it has posted one; `expiresAt` lets the UI warn
- * before a fixed-lifetime session dies rather than failing a post.
- */
+/** `POST /session -> { csrfToken }`. */
 export interface SessionCredentials {
   readonly csrfToken: string;
+  /**
+   * @contract-gap The human has a configured display name and no user record.
+   * Nothing hands it to the UI, so the shell cannot say who is signed in. It
+   * does not guess.
+   */
   readonly displayName?: string | undefined;
+  /**
+   * @contract-gap Sessions have a fixed lifetime. Without an expiry the UI
+   * cannot warn before one ends; it finds out by a write failing.
+   */
   readonly expiresAt?: Timestamp | undefined;
 }
 
@@ -92,48 +92,49 @@ export interface SessionCredentials {
 // ---------------------------------------------------------------------------
 
 /**
- * `GET /api/admin/agents` — "with last-seen, and failed attempts claiming
- * each id".
- *
- * @contract-gap `Agent` in the protocol is `{ id, displayName }`; the admin
- * list needs the rest, all of which the schema already holds. Whether the
- * list includes archived agents is unspecified, so the UI asks for them
- * explicitly and tolerates a server that ignores the parameter.
+ * `GET /agents -> [{ id, displayName, archived, lastSeenAt,
+ * failedAttemptsClaimingId, hasEverAuthenticated }]`.
  */
 export interface AdminAgent extends Agent {
   readonly archived: boolean;
-  readonly createdAt: Timestamp;
   /** Null until the agent has authenticated successfully at least once. */
   readonly lastSeenAt: Timestamp | null;
   /**
-   * Attempts claiming this id — not attempts *by* this agent. Anyone who
+   * Attempts claiming this id -- not attempts *by* this agent. Anyone who
    * knows an id can send a bad key bearing it.
    */
-  readonly failedAuthAttempts: number;
+  readonly failedAttemptsClaimingId: number;
+  /** Whether the count above is still diagnostic, or just noise. */
+  readonly hasEverAuthenticated: boolean;
+  /** @contract-gap Not in the pinned shape; shown when a server sends it. */
+  readonly createdAt?: Timestamp | undefined;
   /**
    * @contract-gap Nothing enumerates an agent's keys, yet
    * `DELETE /agents/:id/keys/:keyId` needs a `keyId` the human can only have
-   * got from such a list. Assumed to ride along with the agent.
+   * got from such a list. Where this is absent the UI can only offer to
+   * revoke keys it watched being issued in this session.
    */
-  readonly keys: readonly ApiKeySummary[];
+  readonly keys?: readonly ApiKeySummary[] | undefined;
 }
 
 export interface ApiKeySummary {
-  readonly id: ApiKeyId;
-  readonly label: string | null;
-  readonly createdAt: Timestamp;
-  readonly revokedAt: Timestamp | null;
+  readonly id: string;
+  readonly label?: string | null | undefined;
+  readonly createdAt?: Timestamp | undefined;
+  readonly revokedAt?: Timestamp | null | undefined;
 }
 
 /**
- * The one moment a key exists in plaintext. Returned by `POST /agents`,
- * `POST /agents/:id/keys` and `POST /agents/:id/unarchive`.
+ * The one moment a key exists in plaintext:
+ * `POST /agents -> { agent, key }`, `POST /agents/:id/keys -> { keyId, key }`.
  */
 export interface IssuedKey {
-  readonly agent: AdminAgent;
-  readonly keyId: ApiKeyId;
   /** `dgp_<agent-id>_<secret>`. Never retrievable again. */
   readonly key: string;
+  /** Present on `POST /agents/:id/keys`. */
+  readonly keyId?: string | undefined;
+  /** Present on `POST /agents`. */
+  readonly agent?: Agent | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -141,36 +142,39 @@ export interface IssuedKey {
 // ---------------------------------------------------------------------------
 
 /**
- * `GET /api/admin/spaces/:id/members` — "current members, and past
- * intervals".
+ * `GET /spaces/:id/members -> { current: [{ agent, grantedAt }],
+ * history: [{ agent, grantedAt, revokedAt }] }`.
  *
- * @contract-gap Membership is append-only intervals (ADR-0011), so the
- * honest shape is the intervals plus a derived current set. `current` is
- * exactly the intervals with `revokedAt === null`, sent separately so the UI
- * does not have to trust itself to derive it.
+ * @contract-gap The response does not carry the space, so a screen showing
+ * one space's members takes its name from `GET /spaces`.
  */
 export interface SpaceMembers {
-  readonly space: Space;
-  readonly current: readonly Agent[];
-  readonly intervals: readonly MembershipInterval[];
+  readonly current: readonly CurrentMembership[];
+  readonly history: readonly PastMembership[];
 }
 
-export interface MembershipInterval {
+export interface CurrentMembership {
   readonly agent: Agent;
   readonly grantedAt: Timestamp;
-  readonly revokedAt: Timestamp | null;
+}
+
+export interface PastMembership {
+  readonly agent: Agent;
+  readonly grantedAt: Timestamp;
+  readonly revokedAt: Timestamp;
 }
 
 /**
- * @contract-gap `GET /spaces/:id/conversations` is "the human's thread list",
- * which is useless without something to sort and scan by. `Conversation`
- * alone has no activity, so the counts below are assumed.
+ * `GET /spaces/:id/conversations` -- "the human's thread list".
+ *
+ * @contract-gap No shape is pinned. A thread list needs something to sort and
+ * scan by, and `Conversation` alone has none, so these are read when present
+ * and left out of the display when not.
  */
 export interface ConversationSummary extends Conversation {
-  readonly messageCount: number;
-  readonly lastMessageAt: Timestamp | null;
-  /** Display name of whoever posted last, for the thread list. */
-  readonly lastSenderName: string | null;
+  readonly messageCount?: number | undefined;
+  readonly lastMessageAt?: Timestamp | null | undefined;
+  readonly lastSenderName?: string | null | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -178,13 +182,13 @@ export interface ConversationSummary extends Conversation {
 // ---------------------------------------------------------------------------
 
 /**
- * `POST /api/admin/messages`.
+ * `POST /messages -> PostResult`.
  *
- * @contract-gap Assumed to be `PostRequest` minus the agent-shaped parts:
- * the same `PostTarget`, the same idempotency key (which the UI mints per
- * composer submission so a double-click cannot double-post), and files as
- * multipart in the same `request`-part-then-files form as the agent route.
- * The contract only describes multipart for `POST /api/agent/messages`.
+ * @contract-gap The request body is not pinned. Assumed to be `PostRequest`
+ * minus the agent-shaped parts: the same `PostTarget`, the same idempotency
+ * key, and files as multipart in the same `request`-part-then-files form as
+ * the agent route -- which the contract describes only for
+ * `POST /api/agent/messages`.
  */
 export interface HumanPostRequest {
   readonly target:
@@ -203,22 +207,18 @@ export interface HumanPostResult {
 // The read log
 // ---------------------------------------------------------------------------
 
-/**
- * One row per read call (ADR-0005): which agent, when, with which parameters,
- * and how many items came back.
- *
- * @contract-gap Field names and the shape of `params` are unspecified. The
- * UI treats `params` as opaque JSON and renders it structurally, so a server
- * that records something richer than `ReadFrom` still displays.
- */
+/** `GET /reads -> [{ agent, at, parameters, cursor, itemCount }]`. */
 export interface ReadLogEntry {
-  readonly id: ReadLogId;
   readonly agent: Agent;
-  readonly readAt: Timestamp;
-  readonly kind: 'stream' | 'conversation' | 'space';
-  readonly params: Readonly<Record<string, unknown>>;
+  readonly at: Timestamp;
+  /** Opaque JSON, rendered structurally so a richer record still displays. */
+  readonly parameters: Readonly<Record<string, unknown>>;
   readonly cursor: string;
   readonly itemCount: number;
+  /** @contract-gap The store records a kind; the response shape drops it. */
+  readonly kind?: 'stream' | 'conversation' | 'space' | undefined;
+  /** @contract-gap No row id, so the list is keyed positionally. */
+  readonly id?: string | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -228,22 +228,29 @@ export interface ReadLogEntry {
 export type NotificationState = 'pending' | 'sent' | 'failed';
 
 /**
- * @contract-gap The conversation is carried by id in `EscalateRequest`; the
- * inbox is unreadable without its title and space, so those are assumed to
- * be resolved server-side. Retry state comes straight from the schema.
+ * @contract-gap `notification` is named but not described. Everything past
+ * `state` is retry detail the store already holds, and is displayed when the
+ * server sends it. A bare string is accepted too.
+ */
+export interface NotificationStatus {
+  readonly state: NotificationState;
+  readonly attempts?: number | undefined;
+  readonly lastAttemptAt?: Timestamp | null | undefined;
+  readonly nextAttemptAt?: Timestamp | null | undefined;
+  readonly lastError?: string | null | undefined;
+}
+
+/**
+ * `GET /escalations -> [{ id, agent, conversation, reason, raisedAt,
+ * notification }]`.
  */
 export interface Escalation {
   readonly id: EscalationId;
   readonly agent: Agent;
   readonly conversation: Conversation;
-  readonly spaceName: string;
   readonly reason: string;
-  readonly createdAt: Timestamp;
-  readonly notificationState: NotificationState;
-  readonly attempts: number;
-  readonly lastAttemptAt: Timestamp | null;
-  readonly nextAttemptAt: Timestamp | null;
-  readonly lastError: string | null;
+  readonly raisedAt: Timestamp;
+  readonly notification: NotificationStatus | NotificationState;
 }
 
 // ---------------------------------------------------------------------------
@@ -251,16 +258,17 @@ export interface Escalation {
 // ---------------------------------------------------------------------------
 
 /**
- * @contract-gap `GET /search` says only `q`. A result has to link into the
- * reader, so it carries its whole message; `snippet` is FTS5's `snippet()`
- * output if the server offers one, and the UI falls back to the body if not.
- * Snippets are agent-authored text and are rendered as plain text, never as
- * markup.
+ * `GET /search?q= -> [{ message, conversation, space }]`.
+ *
+ * @contract-gap No snippet, so the excerpt is cut from the body client-side,
+ * and no highlight. Snippets and bodies alike are agent-authored and are
+ * rendered as plain text.
  */
 export interface SearchResult {
   readonly message: Message;
-  readonly spaceName: string;
-  readonly snippet: string | null;
+  readonly conversation: Conversation;
+  readonly space: Space;
+  readonly snippet?: string | null | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -268,10 +276,10 @@ export interface SearchResult {
 // ---------------------------------------------------------------------------
 
 /**
- * @contract-gap The protocol pages messages with `{ nextCursor, hasMore }`
- * (`MessagePage`). Nothing says how `/reads`, `/escalations` or `/search`
- * page, so the UI assumes the same envelope with the items under `items`,
- * and its client normalises a bare array into one.
+ * @contract-gap `/reads`, `/escalations` and `/search` are pinned as bare
+ * arrays: no cursor, no limit, no filter beyond `q` and the read log's agent.
+ * The client accepts a `{ items, nextCursor, hasMore }` envelope as well, so
+ * paging can be added without touching a screen.
  */
 export interface Page<T> {
   readonly items: readonly T[];
@@ -293,6 +301,7 @@ export interface ReadLogFilter {
 
 export interface SearchQuery {
   readonly q: string;
+  /** @contract-gap Only `q` is documented; a space filter is sent hopefully. */
   readonly space?: SpaceId | undefined;
   readonly after?: string | undefined;
 }

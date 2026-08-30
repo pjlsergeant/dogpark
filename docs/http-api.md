@@ -57,6 +57,21 @@ required because the SPA shares an origin with the agent API.
 | GET | `/escalations` | with notification state |
 | GET | `/search` | `q`; FTS5 over stored bodies |
 
+## Gaps the UI found, now part of the contract
+
+Building the UI against this document surfaced five things it could not do.
+
+| Route | Why it must exist |
+| --- | --- |
+| `GET /api/admin/session` | The CSRF token lives in memory by design, so a page reload loses it while the cookie survives. Without this, every refresh is a re-login. Returns `{ csrfToken, displayName, expiresAt }`. |
+| `GET /api/admin/attachments/:id` | The agent route is bearer-only and a browser has a cookie, so attachments were unreachable for the human — in a product where file sharing is a named requirement. |
+| `GET /api/admin/agents/:id/keys` | `DELETE .../keys/:keyId` needs an id nothing returned. Without it, add-deploy-revoke cannot be completed after a reload, and archiving is the only remaining lever. |
+| `order=newest` on message reads | Paging was forward-only, so reaching today in a long thread meant walking from its first day. |
+| `limit` and a cursor on `/reads` | The read log is the one table guaranteed to grow without bound, and it is the forensic view. |
+
+`POST /agents` returns `{ agent, keyId, key }` and `POST /agents/:id/unarchive`
+returns `{ keyId, key }` — a key that cannot be named cannot be revoked.
+
 ## Admin response shapes
 
 Written down because the smoke test and the implementation must agree, and
@@ -69,12 +84,17 @@ GET  /spaces       -> [{ id, name }]
 GET  /spaces/:id/members
                    -> { current: [{ agent, grantedAt }],
                         history: [{ agent, grantedAt, revokedAt }] }
-POST /agents       -> { agent: { id, displayName }, key }        // key once
+POST /agents       -> { agent: { id, displayName }, keyId, key }  // key once
 POST /agents/:id/keys
                    -> { keyId, key }                             // key once
 GET  /agents       -> [{ id, displayName, archived, lastSeenAt,
                          failedAttemptsClaimingId, hasEverAuthenticated }]
-GET  /reads        -> [{ agent, at, parameters, cursor, itemCount }]
+GET  /reads?agent&since&until&limit&after
+                   -> { reads: [{ id, agent, kind, at, parameters, cursor,
+                                  itemCount }], nextCursor, hasMore }
+GET  /session      -> { csrfToken, displayName, expiresAt }
+GET  /agents/:id/keys
+                   -> [{ keyId, label, createdAt, revokedAt }]
 GET  /escalations  -> [{ id, agent, conversation, reason, raisedAt,
                          notification }]
 GET  /search?q=    -> [{ message, conversation, space }]

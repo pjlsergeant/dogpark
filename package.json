@@ -14,14 +14,15 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json && cp src/store/*.sql dist/store/",
+    "start": "node dist/server.js",
+    "dev": "npm run build && node dist/server.js",
     "build:ui": "vite build --config ui/vite.config.ts",
     "dev:ui": "vite --config ui/vite.config.ts --mode mock",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "format": "prettier --write .",
-    "format:check": "prettier --check .",
-    "start": "node dist/server.js"
+    "format:check": "prettier --check ."
   },
   "devDependencies": {
     "@types/better-sqlite3": "^9.6.0",

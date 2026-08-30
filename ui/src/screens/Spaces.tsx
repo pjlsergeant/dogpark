@@ -105,13 +105,15 @@ export function SpaceScreen({ space }: { space: SpaceId }): ReactNode {
   const notify = useNotify();
   const members = useAsync(() => api.listMembers(space), [api, space]);
   const agents = useAsync(() => api.listAgents(), [api]);
+  // The members response does not carry the space, so its name comes from here.
+  const spaces = useAsync(() => api.listSpaces(), [api]);
   const conversations = useAsync(() => api.listConversations(space), [api, space]);
   const [renaming, setRenaming] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [adding, setAdding] = useState<AgentId | ''>('');
 
   const currentIds = useMemo(
-    () => new Set((members.state.data?.current ?? []).map((agent) => agent.id)),
+    () => new Set((members.state.data?.current ?? []).map((entry) => entry.agent.id)),
     [members.state.data],
   );
 
@@ -155,7 +157,8 @@ export function SpaceScreen({ space }: { space: SpaceId }): ReactNode {
   );
 
   const detail = members.state.data;
-  const past = (detail?.intervals ?? []).filter((interval) => interval.revokedAt !== null);
+  const past = detail?.history ?? [];
+  const named = (spaces.state.data ?? []).find((each) => each.id === space) ?? null;
 
   return (
     <section className="screen">
@@ -164,8 +167,8 @@ export function SpaceScreen({ space }: { space: SpaceId }): ReactNode {
           <p className="crumb">
             <a href={href.spaces()}>Spaces</a>
           </p>
-          <h1>{detail?.space.name ?? 'Space'}</h1>
-          {detail !== null && <Id value={detail.space.id} />}
+          <h1>{named?.name ?? 'Space'}</h1>
+          <Id value={space} />
         </div>
         <div className="row">
           <a className="btn" href={href.read(space)}>
@@ -175,7 +178,7 @@ export function SpaceScreen({ space }: { space: SpaceId }): ReactNode {
             type="button"
             className="btn"
             onClick={() => setRenaming(true)}
-            disabled={detail === null}
+            disabled={named === null}
           >
             Rename
           </button>
@@ -195,28 +198,21 @@ export function SpaceScreen({ space }: { space: SpaceId }): ReactNode {
           )}
           {detail !== null && detail.current.length > 0 && (
             <ul className="rows">
-              {detail.current.map((member) => {
-                const full = (agents.state.data ?? []).find((a) => a.id === member.id);
+              {detail.current.map((entry) => {
+                const full = (agents.state.data ?? []).find((a) => a.id === entry.agent.id);
                 return (
-                  <li key={member.id} className="row-item">
+                  <li key={entry.agent.id} className="row-item">
                     <div>
-                      <a href={href.agents(member.id)}>{member.displayName}</a>
+                      <a href={href.agents(entry.agent.id)}>{entry.agent.displayName}</a>
                       {full?.archived === true && <Pill tone="muted">archived</Pill>}
                       <div className="muted small">
-                        member since{' '}
-                        <Time
-                          iso={
-                            detail.intervals.find(
-                              (i) => i.agent.id === member.id && i.revokedAt === null,
-                            )?.grantedAt ?? null
-                          }
-                        />
+                        member since <Time iso={entry.grantedAt} />
                       </div>
                     </div>
                     <button
                       type="button"
                       className="btn btn-quiet btn-danger"
-                      onClick={() => void remove(member.id, member.displayName)}
+                      onClick={() => void remove(entry.agent.id, entry.agent.displayName)}
                     >
                       Remove
                     </button>
@@ -299,15 +295,22 @@ export function SpaceScreen({ space }: { space: SpaceId }): ReactNode {
                 <div>
                   <a href={href.read(space, conversation.id)}>{conversation.title}</a>
                   <div className="muted small">
-                    {conversation.messageCount} message{conversation.messageCount === 1 ? '' : 's'}
-                    {conversation.lastMessageAt !== null && (
+                    {conversation.messageCount !== undefined && (
                       <>
-                        {' · '}
-                        <Time iso={conversation.lastMessageAt} />
-                        {conversation.lastSenderName !== null &&
-                          ` · ${conversation.lastSenderName}`}
+                        {conversation.messageCount} message
+                        {conversation.messageCount === 1 ? '' : 's'}
                       </>
                     )}
+                    {conversation.lastMessageAt !== null &&
+                      conversation.lastMessageAt !== undefined && (
+                        <>
+                          {conversation.messageCount === undefined ? '' : ' · '}
+                          <Time iso={conversation.lastMessageAt} />
+                          {conversation.lastSenderName !== null &&
+                            conversation.lastSenderName !== undefined &&
+                            ` · ${conversation.lastSenderName}`}
+                        </>
+                      )}
                   </div>
                 </div>
               </li>
@@ -316,17 +319,17 @@ export function SpaceScreen({ space }: { space: SpaceId }): ReactNode {
         </div>
       </div>
 
-      {renaming && detail !== null && (
+      {renaming && named !== null && (
         <NameDialog
-          title={`Rename “${detail.space.name}”`}
+          title={`Rename “${named.name}”`}
           label="Name"
-          initial={detail.space.name}
+          initial={named.name}
           submitLabel="Rename"
           onClose={() => setRenaming(false)}
           onSubmit={async (name) => {
             await api.renameSpace(space, name);
             notify('ok', 'Renamed.');
-            members.reload();
+            spaces.reload();
           }}
         />
       )}

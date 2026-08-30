@@ -5,13 +5,13 @@
  *
  * A key is shown exactly once, so the reveal is a modal that will not go away
  * by accident and carries the `DOGPARK_URL` / `DOGPARK_KEY` snippet beside
- * it — moving a secret from a browser into a config file by hand is the step
+ * it -- moving a secret from a browser into a config file by hand is the step
  * most likely to go wrong.
  *
  * The failure count is *attempts claiming this id*, not the agent failing:
  * anyone who knows an id can send a bad key bearing it. It is shown loudly
- * only while the agent has never authenticated successfully, which is the
- * window where it diagnoses anything.
+ * only while `hasEverAuthenticated` is false, which is the window where it
+ * diagnoses anything.
  */
 import { useCallback, useState } from 'react';
 import type { ReactNode } from 'react';
@@ -19,12 +19,11 @@ import type { AdminAgent, AgentId, ApiKeySummary, IssuedKey } from '../api/index
 import { useApi } from '../app/api-context.js';
 import { useAsync } from '../app/useAsync.js';
 import { href, navigate } from '../app/router.js';
-import { absoluteTime } from '../app/format.js';
 import {
   Copyable,
   Empty,
-  Facts,
   Fact,
+  Facts,
   Failure,
   Id,
   Loading,
@@ -35,18 +34,44 @@ import { Dialog } from '../components/Dialog.js';
 import { NameDialog } from '../components/NameDialog.js';
 import { useNotify } from '../components/Toasts.js';
 
-function neverAuthenticated(agent: AdminAgent): boolean {
-  return agent.lastSeenAt === null;
+interface Revealed {
+  readonly issued: IssuedKey;
+  readonly agentName: string;
 }
 
-function activeKeys(agent: AdminAgent): readonly ApiKeySummary[] {
-  return agent.keys.filter((key) => key.revokedAt === null);
+/** Keys the human watched being issued in this tab. See `keysOf`. */
+type SessionKeys = Readonly<Record<string, readonly ApiKeySummary[]>>;
+
+/**
+ * `GET /agents` does not carry an agent's keys, and there is no route that
+ * lists them, so the only key ids the UI can ever know are the ones it saw
+ * issued. If a server sends `keys` anyway, that wins.
+ */
+function keysOf(
+  agent: AdminAgent,
+  session: SessionKeys,
+): {
+  readonly keys: readonly ApiKeySummary[];
+  readonly partial: boolean;
+} {
+  if (agent.keys !== undefined) return { keys: agent.keys, partial: false };
+  return { keys: session[agent.id] ?? [], partial: true };
+}
+
+function activeCount(keys: readonly ApiKeySummary[]): number {
+  return keys.filter((key) => key.revokedAt === null || key.revokedAt === undefined).length;
 }
 
 /** The once-only reveal. Deliberately hard to dismiss without reading. */
-function KeyRevealed({ issued, onClose }: { issued: IssuedKey; onClose: () => void }): ReactNode {
+function KeyRevealed({
+  revealed,
+  onClose,
+}: {
+  revealed: Revealed;
+  onClose: () => void;
+}): ReactNode {
   const [acknowledged, setAcknowledged] = useState(false);
-  const snippet = `DOGPARK_URL=${window.location.origin}\nDOGPARK_KEY=${issued.key}`;
+  const snippet = `DOGPARK_URL=${window.location.origin}\nDOGPARK_KEY=${revealed.issued.key}`;
 
   const attemptClose = useCallback(() => {
     if (acknowledged || window.confirm('Close without saving the key? It cannot be shown again.')) {
@@ -55,7 +80,7 @@ function KeyRevealed({ issued, onClose }: { issued: IssuedKey; onClose: () => vo
   }, [acknowledged, onClose]);
 
   return (
-    <Dialog title={`Key for ${issued.agent.displayName}`} onClose={attemptClose} wide>
+    <Dialog title={`Key for ${revealed.agentName}`} onClose={attemptClose} wide>
       <div className="key-reveal">
         <p className="key-warning">
           <strong>This is the only time this key is shown.</strong> Dogpark stores a hash of it and
@@ -63,15 +88,17 @@ function KeyRevealed({ issued, onClose }: { issued: IssuedKey; onClose: () => vo
         </p>
 
         <h3>The key</h3>
-        <Copyable value={issued.key} label="the key" multiline />
+        <Copyable value={revealed.issued.key} label="the key" multiline />
 
         <h3>For the agent&rsquo;s environment</h3>
         <Copyable value={snippet} label="the environment snippet" multiline />
 
-        <p className="muted small">
-          Key id <Id value={issued.keyId} />, revocable on its own, so rotation is
-          add&#8209;deploy&#8209;revoke.
-        </p>
+        {revealed.issued.keyId !== undefined && (
+          <p className="muted small">
+            Key id <Id value={revealed.issued.keyId} />, revocable on its own, so rotation is
+            add&#8209;deploy&#8209;revoke.
+          </p>
+        )}
 
         <label className="check">
           <input
@@ -104,13 +131,25 @@ export function AgentsScreen({ selected }: { selected?: AgentId | undefined }): 
   const [creating, setCreating] = useState(false);
   const [renaming, setRenaming] = useState<AdminAgent | null>(null);
   const [issuing, setIssuing] = useState<AdminAgent | null>(null);
-  const [issued, setIssued] = useState<IssuedKey | null>(null);
+  const [revealed, setRevealed] = useState<Revealed | null>(null);
+  const [sessionKeys, setSessionKeys] = useState<SessionKeys>({});
   const [showArchived, setShowArchived] = useState(false);
 
   const all = agents.state.data ?? [];
   const visible = showArchived ? all : all.filter((agent) => !agent.archived);
   const archivedCount = all.filter((agent) => agent.archived).length;
   const detail = selected === undefined ? null : (all.find((a) => a.id === selected) ?? null);
+
+  const remember = useCallback((agent: AgentId, issued: IssuedKey, label: string | null) => {
+    if (issued.keyId === undefined) return;
+    setSessionKeys((current) => ({
+      ...current,
+      [agent]: [
+        ...(current[agent] ?? []),
+        { id: issued.keyId as string, label, createdAt: undefined, revokedAt: null },
+      ],
+    }));
+  }, []);
 
   const act = useCallback(
     async (what: string, run: () => Promise<unknown>) => {
@@ -162,8 +201,9 @@ export function AgentsScreen({ selected }: { selected?: AgentId | undefined }): 
 
       <ul className="rows agent-rows">
         {visible.map((agent) => {
-          const unproven = neverAuthenticated(agent) && agent.failedAuthAttempts > 0;
+          const unproven = !agent.hasEverAuthenticated && agent.failedAttemptsClaimingId > 0;
           const isOpen = detail?.id === agent.id;
+          const { keys, partial } = keysOf(agent, sessionKeys);
           return (
             <li
               key={agent.id}
@@ -179,9 +219,6 @@ export function AgentsScreen({ selected }: { selected?: AgentId | undefined }): 
                     {agent.displayName}
                   </a>
                   {agent.archived && <Pill tone="muted">archived</Pill>}
-                  {activeKeys(agent).length === 0 && !agent.archived && (
-                    <Pill tone="warn">no active key</Pill>
-                  )}
                   <div className="muted small">
                     {agent.lastSeenAt === null ? (
                       'never authenticated'
@@ -190,9 +227,12 @@ export function AgentsScreen({ selected }: { selected?: AgentId | undefined }): 
                         last seen <Time iso={agent.lastSeenAt} />
                       </>
                     )}
-                    {' · '}
-                    {activeKeys(agent).length} active key
-                    {activeKeys(agent).length === 1 ? '' : 's'}
+                    {!partial && (
+                      <>
+                        {' - '}
+                        {activeCount(keys)} active key{activeCount(keys) === 1 ? '' : 's'}
+                      </>
+                    )}
                   </div>
                 </div>
                 <div className="row">
@@ -211,11 +251,11 @@ export function AgentsScreen({ selected }: { selected?: AgentId | undefined }): 
               {unproven && (
                 <p className="unproven" role="note">
                   <strong>
-                    {agent.failedAuthAttempts} failed attempt
-                    {agent.failedAuthAttempts === 1 ? '' : 's'} claiming this id
+                    {agent.failedAttemptsClaimingId} failed attempt
+                    {agent.failedAttemptsClaimingId === 1 ? '' : 's'} claiming this id
                   </strong>{' '}
                   and this agent has never authenticated successfully. That is most likely a wrong
-                  or stale key in its configuration — though anyone who knows the id can produce
+                  or stale key in its configuration -- though anyone who knows the id can produce
                   these, so it is not proof the agent itself tried.
                 </p>
               )}
@@ -226,9 +266,11 @@ export function AgentsScreen({ selected }: { selected?: AgentId | undefined }): 
                     <Fact name="Id">
                       <Id value={agent.id} />
                     </Fact>
-                    <Fact name="Created">
-                      <Time iso={agent.createdAt} />
-                    </Fact>
+                    {agent.createdAt !== undefined && (
+                      <Fact name="Created">
+                        <Time iso={agent.createdAt} />
+                      </Fact>
+                    )}
                     <Fact name="Last seen">
                       {agent.lastSeenAt === null ? (
                         <span className="muted">never</span>
@@ -237,17 +279,31 @@ export function AgentsScreen({ selected }: { selected?: AgentId | undefined }): 
                       )}
                     </Fact>
                     <Fact name="Attempts claiming this id">
-                      {agent.failedAuthAttempts}
+                      {agent.failedAttemptsClaimingId}
                       <span className="muted small">
                         {' '}
-                        — rejected authentications bearing this id, from anywhere.
+                        -- rejected authentications bearing this id, from anywhere.
+                        {agent.hasEverAuthenticated
+                          ? ' This agent has authenticated successfully at least once.'
+                          : ''}
                       </span>
                     </Fact>
                   </Facts>
 
                   <h3>Keys</h3>
-                  {agent.keys.length === 0 ? (
-                    <Empty>No keys have ever been issued for this agent.</Empty>
+                  {partial && (
+                    <p className="muted small">
+                      The admin API does not list an agent&rsquo;s keys, so this shows only the keys
+                      issued from this browser session. Older keys are still in force and can be
+                      revoked wholesale by archiving.
+                    </p>
+                  )}
+                  {keys.length === 0 ? (
+                    <Empty>
+                      {partial
+                        ? 'No keys have been issued from this session.'
+                        : 'No keys have ever been issued for this agent.'}
+                    </Empty>
                   ) : (
                     <table className="table">
                       <thead>
@@ -260,47 +316,51 @@ export function AgentsScreen({ selected }: { selected?: AgentId | undefined }): 
                         </tr>
                       </thead>
                       <tbody>
-                        {agent.keys.map((key) => (
-                          <tr key={key.id} className={key.revokedAt === null ? '' : 'muted'}>
-                            <td>
-                              <Id value={key.id} />
-                            </td>
-                            <td>{key.label ?? <span className="muted">—</span>}</td>
-                            <td title={absoluteTime(key.createdAt)}>
-                              <Time iso={key.createdAt} />
-                            </td>
-                            <td>
-                              {key.revokedAt === null ? (
-                                <Pill tone="ok">active</Pill>
-                              ) : (
-                                <>
-                                  <Pill tone="muted">revoked</Pill> <Time iso={key.revokedAt} />
-                                </>
-                              )}
-                            </td>
-                            <td>
-                              {key.revokedAt === null && (
-                                <button
-                                  type="button"
-                                  className="btn btn-quiet btn-danger"
-                                  onClick={() => {
-                                    if (
-                                      window.confirm(
-                                        'Revoke this key? Anything still using it stops authenticating immediately.',
-                                      )
-                                    ) {
-                                      void act('Key revoked.', () =>
-                                        api.revokeKey(agent.id, key.id),
-                                      );
-                                    }
-                                  }}
-                                >
-                                  Revoke
-                                </button>
-                              )}
-                            </td>
-                          </tr>
-                        ))}
+                        {keys.map((key) => {
+                          const revoked = key.revokedAt !== null && key.revokedAt !== undefined;
+                          return (
+                            <tr key={key.id} className={revoked ? 'muted' : ''}>
+                              <td>
+                                <Id value={key.id} />
+                              </td>
+                              <td>{key.label ?? <span className="muted">-</span>}</td>
+                              <td>
+                                <Time iso={key.createdAt ?? null} />
+                              </td>
+                              <td>
+                                {revoked ? (
+                                  <>
+                                    <Pill tone="muted">revoked</Pill>{' '}
+                                    <Time iso={key.revokedAt ?? null} />
+                                  </>
+                                ) : (
+                                  <Pill tone="ok">active</Pill>
+                                )}
+                              </td>
+                              <td>
+                                {!revoked && (
+                                  <button
+                                    type="button"
+                                    className="btn btn-quiet btn-danger"
+                                    onClick={() => {
+                                      if (
+                                        window.confirm(
+                                          'Revoke this key? Anything still using it stops authenticating immediately.',
+                                        )
+                                      ) {
+                                        void act('Key revoked.', () =>
+                                          api.revokeKey(agent.id, key.id),
+                                        );
+                                      }
+                                    }}
+                                  >
+                                    Revoke
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   )}
@@ -324,8 +384,9 @@ export function AgentsScreen({ selected }: { selected?: AgentId | undefined }): 
                         onClick={() => {
                           void (async () => {
                             try {
-                              const result = await api.unarchiveAgent(agent.id);
-                              setIssued(result);
+                              const issued = await api.unarchiveAgent(agent.id);
+                              remember(agent.id, issued, 'unarchived');
+                              setRevealed({ issued, agentName: agent.displayName });
                               agents.reload();
                             } catch (cause) {
                               notify('bad', cause instanceof Error ? cause.message : String(cause));
@@ -370,17 +431,19 @@ export function AgentsScreen({ selected }: { selected?: AgentId | undefined }): 
           hint="Names are unique and are how @mentions resolve. The key is shown once, on the next screen."
           onClose={() => setCreating(false)}
           onSubmit={async (name) => {
-            const result = await api.createAgent(name);
-            setIssued(result);
+            const issued = await api.createAgent(name);
+            const id = issued.agent?.id;
+            if (id !== undefined) remember(id, issued, 'initial');
+            setRevealed({ issued, agentName: issued.agent?.displayName ?? name });
             agents.reload();
-            navigate(href.agents(result.agent.id));
+            if (id !== undefined) navigate(href.agents(id));
           }}
         />
       )}
 
       {renaming !== null && (
         <NameDialog
-          title={`Rename “${renaming.displayName}”`}
+          title={`Rename "${renaming.displayName}"`}
           label="Name"
           initial={renaming.displayName}
           submitLabel="Rename"
@@ -396,21 +459,22 @@ export function AgentsScreen({ selected }: { selected?: AgentId | undefined }): 
 
       {issuing !== null && (
         <NameDialog
-          title={`Issue a key for “${issuing.displayName}”`}
+          title={`Issue a key for "${issuing.displayName}"`}
           label="Label (optional, e.g. where it will live)"
           submitLabel="Issue"
           allowEmpty
           hint="Existing keys keep working. Revoke the old one once the new one is deployed."
           onClose={() => setIssuing(null)}
           onSubmit={async (label) => {
-            const result = await api.issueKey(issuing.id, label === '' ? undefined : label);
-            setIssued(result);
+            const issued = await api.issueKey(issuing.id, label === '' ? undefined : label);
+            remember(issuing.id, issued, label === '' ? null : label);
+            setRevealed({ issued, agentName: issuing.displayName });
             agents.reload();
           }}
         />
       )}
 
-      {issued !== null && <KeyRevealed issued={issued} onClose={() => setIssued(null)} />}
+      {revealed !== null && <KeyRevealed revealed={revealed} onClose={() => setRevealed(null)} />}
     </section>
   );
 }

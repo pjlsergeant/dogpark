@@ -3,7 +3,12 @@ import { createContext, useContext } from 'react';
 import type { DogparkAdminApi } from '../api/index.js';
 
 export interface Session {
-  readonly displayName: string;
+  /**
+   * The human's configured display name, when the server offers it. Null
+   * otherwise: `POST /session` returns only a CSRF token, so the shell says
+   * "signed in" rather than inventing a name.
+   */
+  readonly displayName: string | null;
   readonly expiresAt: string | null;
 }
 

@@ -1404,3 +1404,10 @@ kbd.lit {
     transition: none !important;
   }
 }
+
+.load-more {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 0 4px;
+}

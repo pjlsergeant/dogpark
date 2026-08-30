@@ -49,7 +49,8 @@ export interface DogparkAdminApi {
   // Spaces ----------------------------------------------------------------
   listSpaces(): Promise<readonly Space[]>;
   createSpace(name: string): Promise<Space>;
-  renameSpace(id: SpaceId, name: string): Promise<Space>;
+  /** The contract pins no body for a rename; nothing is read back. */
+  renameSpace(id: SpaceId, name: string): Promise<void>;
   listMembers(id: SpaceId): Promise<SpaceMembers>;
   addMember(space: SpaceId, agent: AgentId): Promise<void>;
   removeMember(space: SpaceId, agent: AgentId): Promise<void>;
@@ -57,10 +58,10 @@ export interface DogparkAdminApi {
   // Agents ----------------------------------------------------------------
   listAgents(): Promise<readonly AdminAgent[]>;
   createAgent(name: string): Promise<IssuedKey>;
-  renameAgent(id: AgentId, name: string): Promise<AdminAgent>;
+  renameAgent(id: AgentId, name: string): Promise<void>;
   issueKey(id: AgentId, label?: string | undefined): Promise<IssuedKey>;
   revokeKey(agent: AgentId, keyId: string): Promise<void>;
-  archiveAgent(id: AgentId): Promise<AdminAgent>;
+  archiveAgent(id: AgentId): Promise<void>;
   unarchiveAgent(id: AgentId): Promise<IssuedKey>;
 
   // Reading ---------------------------------------------------------------

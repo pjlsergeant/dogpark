@@ -1,0 +1,167 @@
+import { existsSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import type { Config } from './config.js';
+import { loadConfig } from './config.js';
+import { buildApp } from './http/app.js';
+import { hashPassword } from './http/password.js';
+import type { EscalationQueue, PendingEscalation } from './notify/webhook.js';
+import { Notifier } from './notify/webhook.js';
+import type { Store } from './store/index.js';
+import { migrate, openStore } from './store/index.js';
+import type { Timestamp } from './types.js';
+
+/**
+ * The entry point: configuration, storage, HTTP, notification, and a shutdown
+ * that ends them in that order reversed.
+ */
+
+interface Binding {
+  readonly host: string;
+  readonly secureCookies: boolean;
+}
+
+/**
+ * Dogpark speaks plain HTTP. `DOGPARK_TRUST_PROXY` is the declaration that
+ * something in front of it terminates TLS, and it has no default: the
+ * ambiguous state is refused at configuration time (`src/config.ts`).
+ *
+ * What follows from the declaration is where to listen. Declared: a proxy is
+ * in front, so bind every interface and let it reach us. Not declared: nothing
+ * is in front, so binding the network would put bearer tokens on the wire in
+ * the clear. Loopback only, which is the one place plaintext is honest.
+ */
+export function resolveBinding(config: Config): Binding {
+  return config.trustProxy
+    ? { host: '0.0.0.0', secureCookies: true }
+    : { host: '127.0.0.1', secureCookies: false };
+}
+
+/**
+ * The notifier wants four verbs over pending escalations; the store keeps them
+ * as rows with their own retry state. This is the whole of the adapter.
+ */
+export function escalationQueue(store: Store): EscalationQueue {
+  return {
+    claimDue(now, limit) {
+      const due = store.listEscalations({
+        state: 'pending',
+        dueAt: new Date(now).toISOString() as Timestamp,
+        limit,
+      });
+      return due.map((record): PendingEscalation => {
+        const conversation = store.getConversation(record.conversation);
+        const space = conversation === undefined ? undefined : store.getSpace(conversation.space);
+        return {
+          id: record.id,
+          agentName: store.getAgent(record.agent)?.displayName ?? record.agent,
+          spaceName: space?.name ?? 'an unknown space',
+          conversationTitle: conversation?.title ?? 'an unknown conversation',
+          reason: record.reason,
+          raisedAt: record.createdAt,
+          attempts: record.attempts,
+        };
+      });
+    },
+    markSent(id) {
+      store.markEscalationNotification(id, 'sent');
+    },
+    markFailed(id, _attempts, nextAttemptAt) {
+      // Still pending: a failure that is going to be retried is not a failed
+      // notification, and the store counts the attempt itself.
+      store.markEscalationNotification(id, 'pending', {
+        nextAttemptAt: new Date(nextAttemptAt).toISOString() as Timestamp,
+      });
+    },
+    markGivenUp(id) {
+      store.markEscalationNotification(id, 'failed', {
+        error: 'gave up after repeated delivery failures',
+      });
+    },
+  };
+}
+
+/** `dist/ui` beside the compiled server, or beneath the working directory. */
+function findUiRoot(): string | undefined {
+  const candidates = [
+    fileURLToPath(new URL('./ui', import.meta.url)),
+    resolve(process.cwd(), 'dist/ui'),
+  ];
+  return candidates.find((path) => existsSync(path));
+}
+
+async function main(): Promise<void> {
+  const [command, ...rest] = process.argv.slice(2);
+  if (command === 'hash-password') {
+    const password = rest[0];
+    if (password === undefined) {
+      process.stderr.write('usage: node dist/server.js hash-password <password>\n');
+      process.exitCode = 2;
+      return;
+    }
+    process.stdout.write(`${hashPassword(password)}\n`);
+    return;
+  }
+
+  const config = loadConfig();
+  const binding = resolveBinding(config);
+
+  const store = openStore({
+    file: join(config.DOGPARK_DATA_DIR, 'dogpark.sqlite'),
+    humanDisplayName: config.DOGPARK_DISPLAY_NAME,
+  });
+  // `openStore` migrates on the way in; this reports the version it reached
+  // and applies nothing.
+  const schema = migrate(store.database);
+
+  const app = await buildApp({
+    store,
+    config,
+    ...(findUiRoot() === undefined ? {} : { uiRoot: findUiRoot() }),
+    logger: true,
+  });
+  app.log.info(
+    { schemaVersion: schema.to, trustProxy: config.trustProxy, host: binding.host },
+    'dogpark starting',
+  );
+  if (!config.trustProxy) {
+    app.log.warn(
+      'DOGPARK_TRUST_PROXY=no: listening on loopback only and issuing non-Secure ' +
+        'session cookies. Set it to yes when a TLS-terminating proxy is in front.',
+    );
+  }
+
+  const notifier = new Notifier(escalationQueue(store), {
+    ...(config.DOGPARK_WEBHOOK_URL === undefined ? {} : { webhookUrl: config.DOGPARK_WEBHOOK_URL }),
+  });
+  notifier.start();
+
+  let closing = false;
+  const shutdown = (signal: string): void => {
+    // A second signal while the first is in flight is impatience, not a new
+    // instruction.
+    if (closing) return;
+    closing = true;
+    app.log.info({ signal }, 'shutting down');
+    notifier.stop();
+    void app
+      .close()
+      .catch((error: unknown) => {
+        app.log.error({ err: error }, 'the server did not close cleanly');
+      })
+      .finally(() => {
+        // Last: in-flight requests hold statements against this database.
+        store.close();
+        process.exit(0);
+      });
+  };
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+
+  await app.listen({ host: binding.host, port: config.DOGPARK_PORT });
+}
+
+main().catch((error: unknown) => {
+  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+  process.exitCode = 1;
+});

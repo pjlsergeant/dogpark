@@ -31,7 +31,7 @@ export function Login({
       const credentials = await api.login(password);
       setPassword('');
       onSignedIn({
-        displayName: credentials.displayName ?? 'you',
+        displayName: credentials.displayName ?? null,
         expiresAt: credentials.expiresAt ?? null,
       });
     } catch (cause) {
