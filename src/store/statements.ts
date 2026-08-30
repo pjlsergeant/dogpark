@@ -203,8 +203,8 @@ export function prepareStatements(db: Db) {
       'SELECT label FROM label_history WHERE kind = @kind AND subject_id = @subject ' +
         'AND seq > @labelSeq ORDER BY seq ASC LIMIT 1',
     ),
-    readLabelSeq: prepare<{ id: string }, { label_seq: number }>(
-      'SELECT label_seq FROM read_log WHERE id = @id',
+    readLabelSeq: prepare<{ id: string }, { label_seq: number; read_at: string }>(
+      'SELECT label_seq, read_at FROM read_log WHERE id = @id',
     ),
     setArchived: prepare<{ id: string; archived: number }, unknown>(
       'UPDATE agent SET archived = @archived WHERE id = @id',

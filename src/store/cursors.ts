@@ -98,59 +98,89 @@ export function decodeReadLogCursor(cursor: ReadLogCursor): ReadLogPosition {
   return { readAt: at, rowId };
 }
 
+export type ListOrder = 'oldest' | 'newest';
+
 /**
  * A position in the escalation list: `created_at` is not unique either, and
- * the id — random, never reused — breaks the tie in both directions.
+ * the id — random, never reused — breaks the tie in both directions. The
+ * cursor names the order it was taken in, because the same boundary means
+ * "everything older" in one direction and "everything newer" in the other,
+ * and a caller that switches order mid-walk should be told, not turned round.
  */
 export type EscalationCursor = string & { readonly __brand: 'EscalationCursor' };
 
 const ESCALATION_TAG = 'dge1';
 
 export interface EscalationPosition {
+  readonly order: ListOrder;
   readonly createdAt: string;
   readonly id: string;
 }
 
 export function encodeEscalationCursor(position: EscalationPosition): EscalationCursor {
-  return encodeKeyed(ESCALATION_TAG, position.id, position.createdAt) as EscalationCursor;
+  return Buffer.from(
+    `${ESCALATION_TAG}:${position.order}:${position.id}:${position.createdAt}`,
+    'utf8',
+  ).toString('base64url') as EscalationCursor;
 }
 
 export function decodeEscalationCursor(cursor: EscalationCursor): EscalationPosition {
-  const { key, at } = decodeKeyed(ESCALATION_TAG, 'escalation', cursor);
-  return { createdAt: at, id: key };
+  const text = Buffer.from(cursor, 'base64url').toString('utf8');
+  const [found, order, id, ...rest] = text.split(':');
+  const createdAt = rest.join(':');
+  if (
+    found !== ESCALATION_TAG ||
+    (order !== 'oldest' && order !== 'newest') ||
+    id === undefined ||
+    id === '' ||
+    createdAt === ''
+  ) {
+    throw invalid('not a valid escalation cursor');
+  }
+  return { order, createdAt, id };
 }
 
+export type SearchOrder = 'relevance' | 'newest';
+
 /**
- * A position in one search's results. Relevance order is `(rank, seq)`; the
- * rank travels as the shortest decimal that reads back to the same double,
- * so the equality half of the keyset test binds the value FTS5 computed.
- * Newest order uses the seq alone and carries a rank of 0.
+ * A position in one search's results, in the order it names. Relevance order
+ * is `(rank, seq)`, and the rank travels as the shortest decimal that reads
+ * back to the same double, so the equality half of the keyset test binds the
+ * value FTS5 computed. Newest order is the seq alone. A cursor from one order
+ * is refused by the other: a newest cursor carries no rank, and a relevance
+ * cursor's seq is not a position in time order.
  */
 export type SearchCursor = string & { readonly __brand: 'SearchCursor' };
 
 const SEARCH_TAG = 'dgf1';
 
-export interface SearchPosition {
-  readonly seq: number;
-  readonly rank: number;
-}
+export type SearchPosition =
+  | { readonly order: 'relevance'; readonly seq: number; readonly rank: number }
+  | { readonly order: 'newest'; readonly seq: number };
 
 export function encodeSearchCursor(position: SearchPosition): SearchCursor {
-  return Buffer.from(`${SEARCH_TAG}:${position.seq}:${position.rank}`, 'utf8').toString(
-    'base64url',
-  ) as SearchCursor;
+  const text =
+    position.order === 'relevance'
+      ? `${SEARCH_TAG}:relevance:${position.seq}:${position.rank}`
+      : `${SEARCH_TAG}:newest:${position.seq}`;
+  return Buffer.from(text, 'utf8').toString('base64url') as SearchCursor;
 }
+
+const DECIMAL = /^-?\d+(\.\d+)?(e[-+]?\d+)?$/;
 
 export function decodeSearchCursor(cursor: SearchCursor): SearchPosition {
   const text = Buffer.from(cursor, 'base64url').toString('utf8');
-  const [found, digits, rankText, ...rest] = text.split(':');
-  if (found !== SEARCH_TAG || rest.length > 0 || digits === undefined || !/^\d+$/.test(digits)) {
+  const [found, order, digits, rankText, ...rest] = text.split(':');
+  const bad = (): never => {
     throw invalid('not a valid search cursor');
+  };
+  if (found !== SEARCH_TAG || rest.length > 0 || digits === undefined || !/^\d+$/.test(digits)) {
+    return bad();
   }
   const seq = Number(digits);
+  if (!Number.isSafeInteger(seq)) return bad();
+  if (order === 'newest') return rankText === undefined ? { order, seq } : bad();
+  if (order !== 'relevance' || rankText === undefined || !DECIMAL.test(rankText)) return bad();
   const rank = Number(rankText);
-  if (!Number.isSafeInteger(seq) || rankText === undefined || !Number.isFinite(rank)) {
-    throw invalid('not a valid search cursor');
-  }
-  return { seq, rank };
+  return Number.isFinite(rank) ? { order, seq, rank } : bad();
 }

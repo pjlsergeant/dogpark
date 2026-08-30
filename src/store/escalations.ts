@@ -121,6 +121,9 @@ export function escalationStore(
         throw invalid("order must be 'oldest' or 'newest'");
       }
       const after = filter?.after === undefined ? undefined : decodeEscalationCursor(filter.after);
+      if (after !== undefined && after.order !== order) {
+        throw invalid(`the cursor is from a ${after.order}-first listing; ask for that order`);
+      }
       const bounds: EscalationBounds = {
         state: filter?.state ?? null,
         dueAt: filter?.dueAt === undefined ? null : normalizeTimestamp('dueAt', filter.dueAt),
@@ -139,7 +142,7 @@ export function escalationStore(
         nextCursor:
           last === undefined
             ? (filter?.after ?? null)
-            : encodeEscalationCursor({ createdAt: last.created_at, id: last.id }),
+            : encodeEscalationCursor({ order, createdAt: last.created_at, id: last.id }),
         hasMore,
       };
     },

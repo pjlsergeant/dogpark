@@ -14,6 +14,7 @@ import type {
   SpaceId,
   StreamItem,
   StreamPage,
+  Timestamp,
 } from '../types.js';
 import type { ConversationResolver } from './conversations.js';
 import type { StoreContext } from './context.js';
@@ -386,6 +387,33 @@ export function messageStore(
     });
   }
 
+  const readAsOfTx = db.transaction(
+    (
+      read: string,
+      conversation: ConversationId,
+      range: Range | undefined,
+      limit: number | undefined,
+    ): MessagePage | undefined => {
+      const position = st.readLabelSeq.get({ id: read });
+      if (position === undefined || st.getConversation.get({ id: conversation }) === undefined) {
+        return undefined;
+      }
+      // Nothing sent after the read: old labels on a message the agent could
+      // not have seen would be a fiction. `until` is exclusive and the clock
+      // is millisecond, so the ceiling is the millisecond after the read.
+      const ceiling = new Date(Date.parse(position.read_at) + 1).toISOString() as Timestamp;
+      const asked =
+        range?.until === undefined ? undefined : normalizeTimestamp('until', range.until);
+      const until = asked === undefined || asked > ceiling ? ceiling : asked;
+      const plan = planQuery({ ...range, until }, limit);
+      return pageMessages(
+        conversationRows(conversation, plan),
+        plan,
+        newRenderCache(position.label_seq),
+      );
+    },
+  );
+
   const readConversationTx = db.transaction(
     (
       reader: Reader,
@@ -478,11 +506,14 @@ export function messageStore(
         throw invalid("order must be 'relevance' or 'newest'");
       }
       const after = opts?.after === undefined ? undefined : decodeSearchCursor(opts.after);
+      if (after !== undefined && after.order !== order) {
+        throw invalid(`the cursor is from a ${after.order}-ordered search; ask for that order`);
+      }
       const bounds: SearchBounds = {
         query,
         space: opts?.space ?? null,
         afterSeq: after?.seq ?? null,
-        afterRank: after?.rank ?? 0,
+        afterRank: after?.order === 'relevance' ? after.rank : 0,
         limit: limit + 1,
       };
       let rows;
@@ -517,7 +548,11 @@ export function messageStore(
         nextCursor:
           last === undefined
             ? (opts?.after ?? null)
-            : encodeSearchCursor({ seq: last.seq, rank: order === 'relevance' ? last.rank : 0 }),
+            : encodeSearchCursor(
+                order === 'relevance'
+                  ? { order, seq: last.seq, rank: last.rank }
+                  : { order, seq: last.seq },
+              ),
         hasMore,
       };
     },
@@ -543,16 +578,7 @@ export function messageStore(
     },
 
     readConversationAsOf(read, conversation, range, limit) {
-      const position = st.readLabelSeq.get({ id: read });
-      if (position === undefined || st.getConversation.get({ id: conversation }) === undefined) {
-        return undefined;
-      }
-      const plan = planQuery(range, limit);
-      return pageMessages(
-        conversationRows(conversation, plan),
-        plan,
-        newRenderCache(position.label_seq),
-      );
+      return readAsOfTx(read, conversation, range, limit);
     },
   };
 }

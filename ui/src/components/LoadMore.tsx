@@ -13,8 +13,8 @@ export function LoadMore<T, P extends Page<T>>({
   if (!pages.hasMore) return null;
   return (
     <div className="row load-more">
-      <button type="button" className="btn" disabled={pages.loadingMore} onClick={pages.loadMore}>
-        {pages.loadingMore ? 'Loading…' : label}
+      <button type="button" className="btn" disabled={pages.busy} onClick={pages.loadMore}>
+        {pages.busy ? 'Loading…' : label}
       </button>
       {pages.moreFailed && <span className="muted small">That did not load. Try again.</span>}
     </div>

@@ -1174,6 +1174,15 @@ describe('the wording of a read is reproducible after renames', () => {
     ).toMatchObject({ conversationTitle: 'weekly' });
     // Not a read: the log is unchanged.
     expect(h.store.readReadLog({ agent }).entries).toHaveLength(1);
+
+    // Ends at the read: a message sent afterwards was not on that page and
+    // is not shown with old labels as if it were.
+    h.advance(1);
+    post(h, agent, space, 'weekly', 'later');
+    expect(h.store.readConversationAsOf(read, posted.conversation)?.messages).toHaveLength(1);
+    expect(h.store.readConversation({ kind: 'human' }, posted.conversation).messages).toHaveLength(
+      2,
+    );
     expect(h.store.readConversationAsOf('nope', posted.conversation)).toBeUndefined();
     expect(h.store.readConversationAsOf(read, 'nope' as ConversationId)).toBeUndefined();
     expect(h.store.getRead(read)?.kind).toBe('conversation');
@@ -1383,6 +1392,13 @@ describe('escalations', () => {
     expect(h.store.countUndeliveredEscalations()).toBe(3);
     h.store.markEscalationNotification(ids[1] ?? '', 'sent');
     expect(h.store.countUndeliveredEscalations()).toBe(2);
+
+    // A cursor names its order; the other order refuses it rather than
+    // walking the other way from the same boundary.
+    expectStoreError(
+      () => h.store.listEscalations({ order: 'oldest', after: newest.nextCursor ?? undefined }),
+      'invalid_request',
+    );
   });
 
   it('refuses a cursor it cannot read', () => {
@@ -1873,6 +1889,21 @@ describe('search pages', () => {
     expect(rest.hasMore).toBe(false);
     expectStoreError(
       () => h.store.searchMessages('alpha', { after: 'nope' as unknown as SearchCursor }),
+      'invalid_request',
+    );
+    // A newest cursor carries no rank, so relevance order refuses it — rather
+    // than comparing against rank 0, which no match ever exceeds.
+    expectStoreError(
+      () => h.store.searchMessages('alpha', { after: first.nextCursor ?? undefined }),
+      'invalid_request',
+    );
+    const relevance = h.store.searchMessages('alpha', { limit: 1 });
+    expectStoreError(
+      () =>
+        h.store.searchMessages('alpha', {
+          order: 'newest',
+          after: relevance.nextCursor ?? undefined,
+        }),
       'invalid_request',
     );
   });

@@ -19,9 +19,8 @@ import type {
 import { useApi } from '../app/api-context.js';
 import { toApiError, useAsync } from '../app/useAsync.js';
 import { href, navigate } from '../app/router.js';
-import { dayHeading, sameDay } from '../app/format.js';
+import { absoluteTime, dayHeading, sameDay } from '../app/format.js';
 import { Empty, Failure, Loading, Time } from '../components/bits.js';
-import { absoluteTime } from '../app/format.js';
 import { MessageView } from '../components/MessageView.js';
 import { Composer } from '../components/Composer.js';
 import { NameDialog } from '../components/NameDialog.js';
@@ -398,14 +397,20 @@ function Thread({
     if (onFirstPage) bottom.current?.scrollIntoView({ block: 'end' });
   }, [arrivals, newestId, onFirstPage]);
 
-  const heading = summary?.title ?? messages[0]?.conversationTitle ?? 'Conversation';
+  // As of a read, the rendered messages carry the title as it stood then;
+  // the thread list is today's, so it is only a fallback while nothing has
+  // loaded.
+  const heading =
+    (asOf === undefined
+      ? (summary?.title ?? messages[0]?.conversationTitle)
+      : (messages[0]?.conversationTitle ?? summary?.title)) ?? 'Conversation';
 
   return (
     <>
       <header className="thread-head">
         <div>
           <h1>{heading}</h1>
-          {summary !== null && (
+          {summary !== null && asOf === undefined && (
             <p className="muted small">
               opened by{' '}
               {summary.openedBy.kind === 'agent' ? (
@@ -430,14 +435,19 @@ function Thread({
 
       {asOf !== undefined && (
         <p className="as-of" role="status">
-          {asOfRead.state.data === null || asOfRead.state.data === undefined ? (
+          {asOfRead.state.error !== null ? (
+            <>
+              No such read ({asOfRead.state.error.message}).{' '}
+              <a href={href.read(space, conversation)}>Back to now</a>
+            </>
+          ) : asOfRead.state.data === null || asOfRead.state.data === undefined ? (
             'As it was read — loading which read…'
           ) : (
             <>
-              As <strong>{asOfRead.state.data.agent.displayName}</strong> saw it at{' '}
+              As <strong>{asOfRead.state.data.agent.displayName}</strong> could have seen it at{' '}
               <time dateTime={asOfRead.state.data.at}>{absoluteTime(asOfRead.state.data.at)}</time>:
-              names and titles as they stood then.{' '}
-              <a href={href.read(space, conversation)}>Back to now</a>
+              messages up to that moment, names and titles as they stood then. The thread list
+              beside it is today's. <a href={href.read(space, conversation)}>Back to now</a>
             </>
           )}
         </p>

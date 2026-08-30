@@ -137,9 +137,10 @@ export interface EscalationOutcome {
 }
 
 /**
- * Which escalations to return. `oldest` is the notifier's walk; `newest` is
- * the inbox. `after` is the position of the last row already seen and
- * continues in the direction of travel.
+ * Which escalations to return. `oldest` (the default here; the notifier's
+ * walk) or `newest` (the inbox's, and the HTTP default). `after` is the
+ * position of the last row already seen and continues in the direction it
+ * was taken in; one from the other order is refused.
  */
 export interface EscalationFilter {
   readonly state?: NotificationState | undefined;
@@ -244,8 +245,9 @@ export interface SearchHit {
 }
 
 /**
- * `relevance` is bm25 with the newer message first among equals; `newest` is
- * the sequence. A cursor is a position in that order and continues it.
+ * `relevance` (the default) is bm25 with the newer message first among
+ * equals; `newest` is the sequence. A cursor is a position in the order it
+ * was taken in, and the other order refuses it.
  */
 export interface SearchOptions {
   readonly space?: SpaceId | undefined;
@@ -386,8 +388,9 @@ export interface Store {
   /**
    * A page of a conversation as it read at a given read-log row — the same
    * query as `readConversation` for the human, rendered with the labels in
-   * force then. Not a read: nothing is logged. Undefined if the read or the
-   * conversation is unknown.
+   * force then, and bounded at the read's own moment: nothing sent after it
+   * is included, since the agent could not have seen it. Not a read: nothing
+   * is logged. Undefined if the read or the conversation is unknown.
    */
   readConversationAsOf(
     read: string,

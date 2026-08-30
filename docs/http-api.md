@@ -97,11 +97,14 @@ GET  /agents       -> [{ id, displayName, archived, createdAt, lastSeenAt,
                          keys: [{ keyId, label, createdAt, revokedAt }] }]
 GET  /reads?agent&since&until&limit&after
                    -> { reads: [{ id, agent, kind, at, parameters, cursor,
-                                  itemCount }], nextCursor, hasMore }
-GET  /reads/:id    -> one read row, plus `conversation` { id, space, title } for a
-                      conversation read or `space` { id, name } for a space read
+                                  itemCount, conversation?, space? }],
+                        nextCursor, hasMore }
+                      // conversation { id, space, title } on a conversation
+                      // read, space { id, name } on a space read
+GET  /reads/:id    -> one read row, shaped as above
 GET  /reads/:id/conversations/:conversationId/messages?since&until&after&order&limit
-                   -> MessagePage, rendered as of that read
+                   -> MessagePage, rendered as of that read and ending at it:
+                      nothing sent after the read is included
 GET  /reads/:id/messages/:messageId
                    -> Message
 GET  /agents/:id/keys
@@ -138,7 +141,9 @@ whatever page is showing, so the inbox badge cannot be fooled by paging.
 equals, and its cursor carries the rank; because bm25 weighs a term against
 the whole corpus, a message posted between two pages can shift ranks and make
 the boundary skip or repeat one hit. `order=newest` pages on the immutable
-sequence and has no such seam — the one to script against.
+sequence and has no such seam — the one to script against. Every cursor names
+the order it was taken in; handing it to the other order is `invalid_request`,
+not a page from a boundary that means something else there.
 
 ## Serving the UI
 

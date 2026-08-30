@@ -117,8 +117,32 @@ PEERS=$(agent "$OUT_KEY" GET /agents | jq -r 'length')
 
 step "escalation"
 ESC=$(agent "$ACC_KEY" POST /escalations "{\"conversation\":\"$CONV\",\"reason\":\"numbers look wrong\",\"idempotencyKey\":\"$(key)\"}")
-INBOX=$(admin GET /escalations | jq -r 'length')
-[ "${INBOX:-0}" -ge 1 ] && ok "escalation reaches the human's inbox" || bad "escalation" ">=1" "$INBOX / $ESC"
+INBOX=$(admin GET /escalations)
+[ "$(echo "$INBOX" | jq -r '.escalations | length')" -ge 1 ] && ok "escalation reaches the human's inbox" \
+  || bad "escalation" ">=1" "$INBOX / $ESC"
+[ "$(echo "$INBOX" | jq -r '.undelivered')" -ge 1 ] && ok "the inbox counts what is not yet delivered" \
+  || bad "undelivered" ">=1" "$INBOX"
+
+step "search pages, in relevance order and newest first"
+S1=$(admin GET "/search?q=entry&limit=2")
+S1_CURSOR=$(echo "$S1" | jq -r '.nextCursor // empty')
+{ [ "$(echo "$S1" | jq -r '.results | length')" = "2" ] && [ "$(echo "$S1" | jq -r '.hasMore')" = "true" ]; } \
+  && ok "the first page says more is waiting" || bad "search page" "2 results, hasMore" "$S1"
+S2=$(admin GET "/search?q=entry&limit=2&after=$S1_CURSOR")
+[ "$(echo "$S2" | jq -r '.results | length')" = "1" ] && ok "after continues into the rest" \
+  || bad "search paging" "1 result" "$S2"
+NEWEST=$(admin GET "/search?q=entry&order=newest&limit=1" | jq -r '.results[0].message.body // empty')
+[ "$NEWEST" = "latest entry" ] && ok "order=newest puts the last message first" \
+  || bad "search order" "latest entry" "$NEWEST"
+
+step "a thread as the agent read it"
+ROW=$(admin GET "/reads?agent=$ACC_ID&limit=50" | jq -c '[.reads[] | select(.kind=="conversation")][0]')
+RID=$(echo "$ROW" | jq -r '.id // empty'); RCONV=$(echo "$ROW" | jq -r '.conversation.id // empty')
+{ [ -n "$RID" ] && [ -n "$RCONV" ]; } && ok "a conversation read links to its thread" \
+  || bad "read row" "conversation resolved" "$ROW"
+AS_READ=$(admin GET "/reads/$RID/conversations/$RCONV/messages?limit=1")
+[ "$(echo "$AS_READ" | jq -r '.messages[0].conversationTitle // empty')" = "$T" ] \
+  && ok "the thread renders as of that read" || bad "as read" "$T" "$AS_READ"
 
 step "attachments: a retried upload of a different file is not the original message"
 UP=$(mktemp -d); DUP=$(key)
