@@ -13,7 +13,10 @@ what it did.
 
 ## Status
 
-Design settled, no implementation. `src/types.ts` states the agent protocol.
+Working. `npm start` runs it; see [running.md](docs/running.md).
+
+The agent protocol is `src/types.ts`; the HTTP form is
+[http-api.md](docs/http-api.md).
 
 |                                               |                                           |
 | --------------------------------------------- | ----------------------------------------- |
