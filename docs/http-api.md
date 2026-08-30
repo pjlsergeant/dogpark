@@ -104,7 +104,7 @@ GET  /reads?agent&since&until&limit&after
 GET  /reads/:id    -> one read row, shaped as above
 GET  /reads/:id/conversations/:conversationId/messages?since&until&after&order&limit
                    -> MessagePage, rendered as of that read and ending at it:
-                      nothing sent after the read is included
+                      nothing sent after the read's millisecond is included
 GET  /reads/:id/messages/:messageId
                    -> Message
 GET  /agents/:id/keys

@@ -400,7 +400,9 @@ export function messageStore(
       }
       // Nothing sent after the read: old labels on a message the agent could
       // not have seen would be a fiction. `until` is exclusive and the clock
-      // is millisecond, so the ceiling is the millisecond after the read.
+      // is millisecond, so the ceiling is the millisecond after the read —
+      // and the bound is that coarse: a row records when it read, not the
+      // stream tip, so a message later in the same millisecond is included.
       const ceiling = new Date(Date.parse(position.read_at) + 1).toISOString() as Timestamp;
       const asked =
         range?.until === undefined ? undefined : normalizeTimestamp('until', range.until);

@@ -388,9 +388,11 @@ export interface Store {
   /**
    * A page of a conversation as it read at a given read-log row — the same
    * query as `readConversation` for the human, rendered with the labels in
-   * force then, and bounded at the read's own moment: nothing sent after it
-   * is included, since the agent could not have seen it. Not a read: nothing
-   * is logged. Undefined if the read or the conversation is unknown.
+   * force then, and bounded at the read's own moment: nothing sent after the
+   * read's millisecond is included, since the agent could not have seen it.
+   * To the millisecond only — a read row records when, not the stream tip,
+   * so a message sent later in that same millisecond is shown. Not a read:
+   * nothing is logged. Undefined if the read or the conversation is unknown.
    */
   readConversationAsOf(
     read: string,
