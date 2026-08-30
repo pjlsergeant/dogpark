@@ -21,13 +21,13 @@ const escalation = (over: Partial<PendingEscalation> = {}): PendingEscalation =>
 function fakeQueue(pending: PendingEscalation[]) {
   const calls = {
     sent: [] as string[],
-    failed: [] as [string, number, number][],
+    failed: [] as [string, number][],
     gaveUp: [] as string[],
   };
   const queue: EscalationQueue = {
     claimDue: () => pending,
     markSent: (id) => calls.sent.push(id),
-    markFailed: (id, a, n) => calls.failed.push([id, a, n]),
+    markFailed: (id, n) => calls.failed.push([id, n]),
     markGivenUp: (id) => calls.gaveUp.push(id),
   };
   return { queue, calls };
@@ -47,7 +47,7 @@ describe('Notifier', () => {
     const fetch = vi.fn(async () => new Response('nope', { status: 500 }));
     await new Notifier(queue, { webhookUrl: 'https://hook', fetch, now: () => 1000 }).drain();
     expect(calls.sent).toEqual([]);
-    expect(calls.failed).toEqual([['esc_1', 3, 1000 + backoffMs(3)]]);
+    expect(calls.failed).toEqual([['esc_1', 1000 + backoffMs(3)]]);
   });
 
   it('gives up eventually, leaving the escalation visible rather than retrying forever', async () => {

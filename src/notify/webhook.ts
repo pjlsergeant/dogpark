@@ -22,7 +22,7 @@ export interface PendingEscalation {
 export interface EscalationQueue {
   claimDue(now: number, limit: number): PendingEscalation[];
   markSent(id: string): void;
-  markFailed(id: string, attempts: number, nextAttemptAt: number): void;
+  markFailed(id: string, nextAttemptAt: number): void;
   markGivenUp(id: string): void;
 }
 
@@ -78,9 +78,9 @@ export class Notifier {
   }
 
   /**
-   * Drain what is due. Returns how many were sent, so a caller can loop while
-   * there is work. Without a webhook configured this does nothing at all and
-   * escalations simply accumulate in the UI, which is a legitimate deployment.
+   * Drain what is due, returning how many were sent. Without a webhook
+   * configured this does nothing at all and escalations simply accumulate in
+   * the UI, which is a legitimate deployment.
    */
   async drain(limit = 20): Promise<number> {
     if (!this.#url) return 0;
@@ -116,7 +116,7 @@ export class Notifier {
       } catch {
         const attempts = e.attempts + 1;
         if (attempts >= this.#maxAttempts) this.#queue.markGivenUp(e.id);
-        else this.#queue.markFailed(e.id, attempts, this.#now() + backoffMs(attempts));
+        else this.#queue.markFailed(e.id, this.#now() + backoffMs(attempts));
       }
     }
     return sent;

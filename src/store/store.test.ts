@@ -157,12 +157,38 @@ describe('membership is append-only intervals', () => {
 });
 
 describe('messages are immutable', () => {
-  it('exposes no way to change or remove one', () => {
+  // ADR-0004. Asserted against what a reader gets back, because a test of the
+  // method names would pass just as happily beside a `reviseMessage`.
+  it('reads back what was posted, however the thread is read', () => {
     const h = harness();
-    const mutators = Object.keys(h.store).filter((name) =>
-      /^(update|edit|delete|remove)Message$/.test(name),
-    );
-    expect(mutators).toEqual([]);
+    const { agent, space } = scene(h);
+    const reader = { kind: 'agent', id: agent } as const;
+
+    const posted = h.store.postMessage({
+      sender: { kind: 'agent', id: agent },
+      target: { space, title: 'notes' },
+      body: 'the original wording',
+      idempotencyKey: key('immutable-1'),
+    });
+    h.store.postMessage({
+      sender: { kind: 'agent', id: agent },
+      target: { conversation: posted.conversation.id },
+      body: 'a correction, as a new message',
+      idempotencyKey: key('immutable-2'),
+    });
+
+    const bodies = h.store
+      .readConversation(reader, posted.conversation.id)
+      .messages.map((m) => m.body);
+    expect(bodies).toEqual(['the original wording', 'a correction, as a new message']);
+    expect(h.store.readSpace(reader, space).messages[0]?.body).toBe('the original wording');
+    // The stream carries system events alongside messages; the bodies are what
+    // this is about.
+    const streamed = h.store
+      .readStream(agent, {})
+      .items.filter((item): item is Message => 'body' in item)
+      .map((m) => m.body);
+    expect(streamed).toEqual(['the original wording', 'a correction, as a new message']);
   });
 });
 
@@ -176,12 +202,15 @@ describe('ordering', () => {
     h.store.grantMembership(agent, other);
     post(h, agent, other, 'notes', 'two');
 
+    // One space, so no message shares a sequence with an event (ADR-0009).
+    // Distinctness is the guarantee; the particular numbers are not.
     const seqs = (
       h.store.database
         .prepare('SELECT seq FROM message UNION ALL SELECT seq FROM system_event ORDER BY seq')
         .all() as { seq: number }[]
     ).map((r) => r.seq);
-    expect(seqs).toEqual([1, 2, 3, 4]);
+    expect(seqs).toHaveLength(4);
+    expect(new Set(seqs).size).toBe(4);
   });
 
   it('returns items in sequence order, interleaving events and messages', () => {
@@ -1473,8 +1502,8 @@ describe('attachments carry their space', () => {
     expect(first).toMatch(/^[0-9a-hjkmnp-tv-z]{16}$/);
     expect(newAttachmentId()).not.toBe(first);
 
-    // And what it mints is what `AttachmentInput` wants: no cast at the call
-    // site, which is what sent callers into ./ids.js in the first place.
+    // And what it mints is what `AttachmentInput` wants, with no cast at the
+    // call site.
     const posted = h.store.postMessage({
       sender: { kind: 'agent', id: agent },
       target: { space, title: 'notes' },

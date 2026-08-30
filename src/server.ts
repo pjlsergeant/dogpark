@@ -55,7 +55,7 @@ export function escalationQueue(store: Store): EscalationQueue {
     markSent(id) {
       store.markEscalationNotification(id, 'sent');
     },
-    markFailed(id, _attempts, nextAttemptAt) {
+    markFailed(id, nextAttemptAt) {
       // Still pending: a failure that is going to be retried is not a failed
       // notification, and the store counts the attempt itself.
       store.markEscalationNotification(id, 'pending', {
