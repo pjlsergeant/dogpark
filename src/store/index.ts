@@ -37,7 +37,7 @@ import {
   type ReadLogCursor,
 } from './cursors.js';
 import { invalid, notFound, StoreError } from './errors.js';
-import { newId } from './ids.js';
+import { KEY_PREFIX, newId, splitKey } from './ids.js';
 import { migrate } from './migrate.js';
 import type { MigrateResult } from './migrate.js';
 import {
@@ -387,7 +387,7 @@ interface StreamRow {
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 1000;
 
-const KEY_PREFIX = 'dgp';
+
 
 const READ_LOG_COLUMNS =
   'SELECT rowid AS row_id, id, agent_id, read_at, kind, params_json, cursor, item_count ' +
@@ -1362,7 +1362,15 @@ export function openStore(options: StoreOptions): Store {
         key: input.idempotencyKey,
       });
       if (existing !== undefined) {
-        const outcome = JSON.parse(existing.outcome_json) as PostOutcome;
+        // One namespace serves posts and escalations, and their outcomes
+        // differ in shape. A key last used for the other operation is a
+        // different request under the same key — the answer the hash check
+        // below would give, reached before the outcome is trusted enough to
+        // dereference.
+        const outcome = JSON.parse(existing.outcome_json) as Partial<PostOutcome>;
+        if (typeof outcome.messageId !== 'string') {
+          throw invalid('idempotency key was already used for a different request');
+        }
         const replayed = st.messageById.get({ id: outcome.messageId });
         /* c8 ignore next */
         if (replayed === undefined) throw new Error(`message ${outcome.messageId} vanished`);
@@ -1460,7 +1468,11 @@ export function openStore(options: StoreOptions): Store {
 
     const existing = st.getIdempotency.get({ writer: input.agent, key: input.idempotencyKey });
     if (existing !== undefined) {
-      const outcome = JSON.parse(existing.outcome_json) as EscalationOutcomeRecord;
+      // As in `postTx`: a key last used for a post is a different request.
+      const outcome = JSON.parse(existing.outcome_json) as Partial<EscalationOutcomeRecord>;
+      if (typeof outcome.escalationId !== 'string') {
+        throw invalid('idempotency key was already used for a different request');
+      }
       const row = st.getEscalation.get({ id: outcome.escalationId });
       /* c8 ignore next */
       if (row === undefined) throw new Error('escalation vanished');
@@ -1718,11 +1730,8 @@ export function openStore(options: StoreOptions): Store {
    * agent that was never started are indistinguishable.
    */
   function parseKey(presented: string): { agent: AgentId } | undefined {
-    const parts = presented.split('_');
-    if (parts.length !== 3) return undefined;
-    const [prefix, agent, secret] = parts;
-    if (prefix !== KEY_PREFIX || agent === undefined || !secret) return undefined;
-    return { agent: agent as AgentId };
+    const split = splitKey(presented);
+    return split === undefined ? undefined : { agent: split.agent as AgentId };
   }
 
   const verifyKeyTx = db.transaction(

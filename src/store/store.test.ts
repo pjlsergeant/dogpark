@@ -741,6 +741,51 @@ describe('idempotency', () => {
   });
 });
 
+describe('one idempotency namespace serves posts and escalations', () => {
+  it('rejects a post key replayed as an escalation, as a different request', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const posted = h.store.postMessage({
+      sender: { kind: 'agent', id: agent },
+      target: { space, title: 'notes' },
+      body: 'hello',
+      idempotencyKey: key('shared'),
+    });
+    expectStoreError(
+      () =>
+        h.store.recordEscalation({
+          agent,
+          conversation: posted.conversation.id,
+          reason: 'help',
+          idempotencyKey: key('shared'),
+        }),
+      'invalid_request',
+    );
+  });
+
+  it('rejects an escalation key replayed as a post, as a different request', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const conversation = h.store.resolveOrCreateConversation(space, 'notes').id;
+    h.store.recordEscalation({
+      agent,
+      conversation,
+      reason: 'help',
+      idempotencyKey: key('shared'),
+    });
+    expectStoreError(
+      () =>
+        h.store.postMessage({
+          sender: { kind: 'agent', id: agent },
+          target: { conversation },
+          body: 'hello',
+          idempotencyKey: key('shared'),
+        }),
+      'invalid_request',
+    );
+  });
+});
+
 describe('titles are unique within a space', () => {
   it('resolves an existing conversation or opens one, atomically', () => {
     const h = harness();
