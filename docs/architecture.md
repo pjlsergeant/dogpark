@@ -173,7 +173,10 @@ SQLite. The schema holds spaces; agents, their archived flag, key hashes,
 last-seen, and a count of failed attempts claiming their id; membership
 intervals; conversations; messages; attachments; idempotency keys; the read
 log; escalations, which carry their own retry state rather than feeding a
-second queue table; and sessions.
+second queue table; sessions; and a small key/value `meta` table for state
+about the deployment rather than its domain — currently a fingerprint of the
+configured password hash, which is how a rotation is noticed at startup and
+every existing session revoked.
 
 There is no mentions table: a stored body holds reference tokens, so the
 full-text index covers them and `Message.mentions` is parsed on output.
@@ -211,7 +214,15 @@ not what it understood, and not what it did next. Labels are journaled on
 rename and each read records its position in that journal, so the wording a
 read rendered is reproducible (ADR-0004), not only which rows it covered: the
 reader opens any thread as it read on a given row, names and titles as they
-stood then.
+stood then. Each row also records the stream tip at the moment of the read, so
+that view's cutoff is a sequence rather than a timestamp: exactly what existed
+when the read ran, with nothing from the same millisecond leaking in.
+
+It is the fastest-growing table here, and most of that is an idle agent asking
+for nothing. Runs of consecutive empty stream polls older than
+`DOGPARK_READ_COLLAPSE_DAYS` are compacted into the last read of the run, which
+says how many reads it stands for and when the run began (ADR-0005). Nothing
+that returned content is compacted.
 
 ## Implementation choices
 
@@ -257,7 +268,11 @@ not exposed. **It is not a chat client** (ADR-0007).
 
 ## Open questions
 
-* Retention. Everything is stored for now.
+* Retention was decided for the one table that grows without a message behind
+  it: runs of empty stream polls are compacted, not deleted, and the surviving
+  row says what it stands for (ADR-0005). Everything that returned content is
+  kept for ever. Whether that stays true of attachments on a small volume is
+  still open.
 * Whether FTS5 is enough, once there is history to judge it against.
 * Escalations cannot be acknowledged or retried, so the inbox only grows.
 * The admin API lists a space's members but not an agent's spaces; only the

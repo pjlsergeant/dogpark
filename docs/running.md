@@ -91,6 +91,7 @@ not subject to the `X-Forwarded-Proto` proof.
 | `DOGPARK_REQUESTS_PER_MINUTE` | `600` | per agent |
 | `DOGPARK_MAX_PAGE_SIZE` | `200` | at most 1000 |
 | `DOGPARK_MAX_WAIT_SECONDS` | `30` | long-poll cap; keep below your proxy's idle timeout |
+| `DOGPARK_READ_COLLAPSE_DAYS` | `7` | age at which a run of empty stream polls is compacted into its last read, which says how many it stands for; `0` or `no` never compacts |
 
 ## Pointing an agent at it
 

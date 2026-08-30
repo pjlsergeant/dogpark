@@ -9,7 +9,7 @@ import { WriteSignals } from './http/signal.js';
 import { escalationQueue } from './notify/queue.js';
 import { Notifier } from './notify/webhook.js';
 import { openStore } from './store/index.js';
-import type { AttachmentId } from './types.js';
+import type { AttachmentId, Timestamp } from './types.js';
 
 /** `dist/ui` beside the compiled server, or beneath the working directory. */
 function findUiRoot(): string | undefined {
@@ -68,6 +68,10 @@ async function main(): Promise<void> {
     file: join(config.DOGPARK_DATA_DIR, 'dogpark.sqlite'),
     humanDisplayName: config.DOGPARK_DISPLAY_NAME,
   });
+  // Before the app is built, so no request is served under a password that has
+  // changed while sessions minted under the old one are still valid. The log
+  // has to wait for the app.
+  const revokedSessions = store.syncPasswordFingerprint(config.DOGPARK_PASSWORD_HASH);
   const uiRoot = findUiRoot();
   const guidePath = findGuide();
   const writes = new WriteSignals();
@@ -83,6 +87,12 @@ async function main(): Promise<void> {
     { schemaVersion: store.schema.to, trustProxy: config.behindProxy, host: binding.host },
     'dogpark starting',
   );
+  if (revokedSessions > 0) {
+    app.log.warn(
+      { revoked: revokedSessions },
+      'the admin password changed; existing sessions are revoked',
+    );
+  }
   if (config.behindProxy) {
     // A direct caller is refused, but not before its credentials have crossed
     // the network in the clear (ADR-0016).
@@ -109,6 +119,30 @@ async function main(): Promise<void> {
     app.log.info({ count: swept.length }, 'collected attachment files no message references');
   }
 
+  // An idle agent's long poll writes two empty read-log rows a minute, for
+  // ever. Runs of them are compacted into the last read of each run, which
+  // says how many it stands for; nothing that returned content is touched.
+  const collapseDays = config.DOGPARK_READ_COLLAPSE_DAYS;
+  let collapseTimer: NodeJS.Timeout | undefined;
+  if (collapseDays > 0) {
+    const collapse = (): void => {
+      try {
+        const cutoff = new Date(Date.now() - collapseDays * 86_400_000).toISOString() as Timestamp;
+        const { collapsed, removed } = store.collapseEmptyStreamReads(cutoff);
+        if (removed > 0) {
+          app.log.info({ collapsed, removed }, 'compacted runs of empty stream polls');
+        }
+      } catch (error) {
+        // A sweep that cannot run is not a reason to stop serving, nor to
+        // stop trying an hour later.
+        app.log.error({ err: error }, 'the read-log collapse sweep failed');
+      }
+    };
+    collapse();
+    collapseTimer = setInterval(collapse, 3_600_000);
+    collapseTimer.unref();
+  }
+
   const notifier = new Notifier(
     escalationQueue(store, () => writes.adminOnly()),
     {
@@ -129,6 +163,7 @@ async function main(): Promise<void> {
     closing = true;
     app.log.info({ signal }, 'shutting down');
     notifier.stop();
+    if (collapseTimer !== undefined) clearInterval(collapseTimer);
     void app
       .close()
       .catch((error: unknown) => {

@@ -26,6 +26,30 @@ describe('DOGPARK_DISPLAY_NAME', () => {
   });
 });
 
+describe('DOGPARK_READ_COLLAPSE_DAYS', () => {
+  it('defaults to a week, and takes "no" as never, like the proxy declaration', () => {
+    expect(loadConfig(base).DOGPARK_READ_COLLAPSE_DAYS).toBe(7);
+    expect(
+      loadConfig({ ...base, DOGPARK_READ_COLLAPSE_DAYS: '30' }).DOGPARK_READ_COLLAPSE_DAYS,
+    ).toBe(30);
+    expect(
+      loadConfig({ ...base, DOGPARK_READ_COLLAPSE_DAYS: 'no' }).DOGPARK_READ_COLLAPSE_DAYS,
+    ).toBe(0);
+    expect(
+      loadConfig({ ...base, DOGPARK_READ_COLLAPSE_DAYS: '0' }).DOGPARK_READ_COLLAPSE_DAYS,
+    ).toBe(0);
+  });
+
+  it('refuses a negative or fractional number of days', () => {
+    expect(() => loadConfig({ ...base, DOGPARK_READ_COLLAPSE_DAYS: '-1' })).toThrow(
+      /DOGPARK_READ_COLLAPSE_DAYS/,
+    );
+    expect(() => loadConfig({ ...base, DOGPARK_READ_COLLAPSE_DAYS: 'sometimes' })).toThrow(
+      /DOGPARK_READ_COLLAPSE_DAYS/,
+    );
+  });
+});
+
 describe('DOGPARK_TRUST_PROXY', () => {
   it('accepts addresses and ranges of either family', () => {
     const config = loadConfig({

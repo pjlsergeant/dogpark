@@ -101,6 +101,11 @@ export function conversationRow(summary: ConversationSummary): unknown {
  * A read-log row, with what it read resolved far enough to link into the
  * reader: the conversation (and so its space) for a conversation read, the
  * space for a space read. Both as current labels.
+ *
+ * `collapsedCount` and `firstReadAt` appear only on a row that stands for a
+ * compacted run of empty polls, so an ordinary row still reads as one read.
+ * The stream tip the row recorded is not exposed: like `label_seq`, it is
+ * machinery for reconstruction rather than something the row asserts.
  */
 export function readLogRow(store: Store, cache: Map<string, Agent>, entry: ReadLogEntry): unknown {
   const params = entry.params as { conversation?: unknown; space?: unknown } | null;
@@ -120,6 +125,12 @@ export function readLogRow(store: Store, cache: Map<string, Agent>, entry: ReadL
     parameters: entry.params,
     cursor: entry.cursor,
     itemCount: entry.itemCount,
+    ...(entry.collapsedCount > 1
+      ? {
+          collapsedCount: entry.collapsedCount,
+          ...(entry.firstReadAt === undefined ? {} : { firstReadAt: entry.firstReadAt }),
+        }
+      : {}),
     ...(conversation === undefined ? {} : { conversation }),
     ...(space === undefined ? {} : { space }),
   };

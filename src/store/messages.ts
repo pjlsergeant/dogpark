@@ -316,6 +316,12 @@ export function messageStore(
      * opaque token and the direction stays a property of the request.
      */
     readonly after: number;
+    /**
+     * An inclusive ceiling on the sequence, independent of the direction of
+     * travel. Null for every request an agent or the human can make: only the
+     * as-of view has a stream position to bound by.
+     */
+    readonly ceiling: number | null;
     readonly since: string | null;
     readonly until: string | null;
     readonly limit: number;
@@ -330,7 +336,11 @@ export function messageStore(
    * `newest` read means "everything older than here", which is exactly what
    * turning around at a known point should mean.
    */
-  function planQuery(range: Range | undefined, limit: number | undefined): QueryPlan {
+  function planQuery(
+    range: Range | undefined,
+    limit: number | undefined,
+    ceiling: number | null = null,
+  ): QueryPlan {
     const order = range?.order ?? 'oldest';
     // The HTTP layer validates this against `Range`, but the store is also
     // called directly, and a typo would otherwise silently read backwards.
@@ -339,6 +349,7 @@ export function messageStore(
     }
     return {
       order,
+      ceiling,
       after:
         range?.after !== undefined
           ? decodeQueryCursor(range.after)
@@ -384,6 +395,7 @@ export function messageStore(
     return statement.all({
       conversation,
       after: plan.after,
+      ceiling: plan.ceiling,
       since: plan.since,
       until: plan.until,
       limit: plan.limit + 1,
@@ -402,15 +414,24 @@ export function messageStore(
         return undefined;
       }
       // Nothing sent after the read: old labels on a message the agent could
-      // not have seen would be a fiction. `until` is exclusive and the clock
-      // is millisecond, so the ceiling is the millisecond after the read —
-      // and the bound is that coarse: a row records when it read, not the
-      // stream tip, so a message later in the same millisecond is included.
-      const ceiling = new Date(Date.parse(position.read_at) + 1).toISOString() as Timestamp;
-      const asked =
-        range?.until === undefined ? undefined : normalizeTimestamp('until', range.until);
-      const until = asked === undefined || asked > ceiling ? ceiling : asked;
-      const plan = planQuery({ ...range, until }, limit);
+      // not have seen would be a fiction. The row records the stream tip, so
+      // the bound is exact — a message existed at the read iff its seq is at
+      // or below it — and the caller's own `until` is left alone.
+      //
+      // A row written before tip_seq existed carries 0 and falls back to the
+      // old bound: `until` is exclusive and the clock is millisecond, so the
+      // ceiling is the millisecond after the read, and a message sent later in
+      // that same millisecond is included.
+      let plan;
+      if (position.tip_seq > 0) {
+        plan = planQuery(range, limit, position.tip_seq);
+      } else {
+        const ceiling = new Date(Date.parse(position.read_at) + 1).toISOString() as Timestamp;
+        const asked =
+          range?.until === undefined ? undefined : normalizeTimestamp('until', range.until);
+        const until = asked === undefined || asked > ceiling ? ceiling : asked;
+        plan = planQuery({ ...range, until }, limit);
+      }
       return pageMessages(
         conversationRows(conversation, plan),
         plan,

@@ -81,6 +81,17 @@ const Schema = z.object({
   DOGPARK_MAX_PAGE_SIZE: z.coerce.number().int().positive().max(MAX_PAGE_LIMIT).default(200),
   /** Must sit below the reverse proxy's idle timeout. */
   DOGPARK_MAX_WAIT_SECONDS: z.coerce.number().int().nonnegative().default(30),
+  /**
+   * How old a run of empty stream polls must be before it is compacted into
+   * its last read. `0` — or `no`, like the proxy declaration — never
+   * compacts. A default rather than an opt-in because only empty stream polls
+   * are touched and the compaction is visible in the surviving row, so
+   * nothing is lost by it.
+   */
+  DOGPARK_READ_COLLAPSE_DAYS: z.preprocess(
+    (value) => (typeof value === 'string' && value.trim() === 'no' ? 0 : value),
+    z.coerce.number().int().nonnegative().default(7),
+  ),
 });
 
 export type Config = z.infer<typeof Schema> & {

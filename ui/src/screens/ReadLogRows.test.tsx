@@ -42,4 +42,19 @@ describe('the read log rows', () => {
     expect(rows[1]).not.toContain('class="jump"');
     expect(rows[2]).not.toContain('class="jump"');
   });
+
+  it('shows a collapsed row as a span, saying how many polls it stands for', () => {
+    const collapsed: ReadLogEntry = {
+      ...entry({ from: { after: 'c-41' }, limit: 100 }, 'r5'),
+      collapsedCount: 12,
+      firstReadAt: '2026-08-30T09:00:00.000Z' as ReadLogEntry['at'],
+    };
+    const html = renderToStaticMarkup(<ReadLogRows entries={[collapsed, span]} />);
+    const rows = html.split('<tr>').slice(2);
+    expect(rows[0]).toContain('2026-08-30T09:00:00.000Z');
+    expect(rows[0]).toContain('×12');
+    // An ordinary row still reads as one read, at one moment.
+    expect(rows[1]).not.toContain('×');
+    expect(rows[1]).not.toContain('2026-08-30T09:00:00.000Z');
+  });
 });

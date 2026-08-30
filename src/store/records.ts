@@ -207,6 +207,14 @@ export interface ReadLogEntry {
   readonly params: unknown;
   readonly cursor: string;
   readonly itemCount: number;
+  /**
+   * How many reads this row stands for. 1 for an ordinary row; more when a
+   * sweep compacted a run of empty stream polls into their last read, which
+   * is this one.
+   */
+  readonly collapsedCount: number;
+  /** When that run began. Absent on a row that stands only for itself. */
+  readonly firstReadAt?: Timestamp | undefined;
 }
 
 /**
@@ -399,10 +407,12 @@ export interface Store {
    * A page of a conversation as it read at a given read-log row — the same
    * query as `readConversation` for the human, rendered with the labels in
    * force then, and bounded at the read's own moment: nothing sent after the
-   * read's millisecond is included, since the agent could not have seen it.
-   * To the millisecond only — a read row records when, not the stream tip,
-   * so a message sent later in that same millisecond is shown. Not a read:
-   * nothing is logged. Undefined if the read or the conversation is unknown.
+   * read is included, since the agent could not have seen it. The bound is
+   * the stream tip the row recorded, so it is exact — a row written before
+   * that was recorded (schema versions below 3) falls back to the read's
+   * millisecond, and a message sent later in that same millisecond is shown.
+   * Not a read: nothing is logged. Undefined if the read or the conversation
+   * is unknown.
    */
   readConversationAsOf(
     read: string,
@@ -439,10 +449,34 @@ export interface Store {
    * (ADR-0005). Called by the route once the bytes are about to be served.
    */
   recordAttachmentRead(agent: AgentId, attachment: AttachmentId, message: MessageId): void;
+  /**
+   * Compacts runs of consecutive empty stream polls older than `olderThan`.
+   * An idle agent long-polling writes thousands of rows a day that record
+   * nothing but its patience; a run where each poll resumed exactly where the
+   * last left off collapses into its final row, which keeps its own id,
+   * timestamp, cursor and parameters and gains `collapsedCount` and
+   * `firstReadAt` saying what it stands for. Nothing that returned content,
+   * and no read of any other kind, is ever touched — so this is a summary,
+   * not a retention policy. `collapsed` counts the runs compacted, `removed`
+   * the rows that went.
+   */
+  collapseEmptyStreamReads(olderThan: Timestamp): {
+    readonly collapsed: number;
+    readonly removed: number;
+  };
 
   // Sessions
   createSession(ttlSeconds: number): IssuedSession;
   verifySession(token: string): SessionRecord | undefined;
   deleteSession(token: string): boolean;
   deleteExpiredSessions(): number;
+  /**
+   * Notices a change of the configured password hash, and revokes every
+   * session when it has changed — a rotation is the moment existing cookies
+   * stop being trusted. Returns how many were revoked: 0 when the hash is
+   * unchanged, and 0 the first time it is seen, so an upgrade or a fresh
+   * database does not log the human out. What is stored is a hash *of* the
+   * hash, so the table never holds the verifier itself.
+   */
+  syncPasswordFingerprint(passwordHash: string): number;
 }

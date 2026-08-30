@@ -46,6 +46,11 @@ export const MIGRATIONS: readonly Migration[] = [
     name: 'label-history-and-attachment-reads',
     sql: sqlFile('0002-label-history-and-attachment-reads.sql'),
   },
+  {
+    version: 3,
+    name: 'collapse-tip-and-meta',
+    sql: sqlFile('0003-collapse-tip-and-meta.sql'),
+  },
 ];
 
 const VERSION_TABLE = `

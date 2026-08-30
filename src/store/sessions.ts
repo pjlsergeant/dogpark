@@ -7,10 +7,33 @@ import { sha256 } from './hash.js';
 import { newId } from './ids.js';
 import type { Store } from './records.js';
 
+/** The meta key holding the hash of the configured password hash. */
+const PASSWORD_FINGERPRINT = 'password-fingerprint';
+
 export function sessionStore(
   ctx: StoreContext,
-): Pick<Store, 'createSession' | 'verifySession' | 'deleteSession' | 'deleteExpiredSessions'> {
-  const { st, now } = ctx;
+): Pick<
+  Store,
+  | 'createSession'
+  | 'verifySession'
+  | 'deleteSession'
+  | 'deleteExpiredSessions'
+  | 'syncPasswordFingerprint'
+> {
+  const { db, st, now } = ctx;
+
+  // One transaction: a fingerprint recorded without the revocation would leave
+  // the old cookies valid and nothing left to notice it.
+  const syncFingerprintTx = db.transaction((passwordHash: string): number => {
+    const fingerprint = sha256(passwordHash);
+    const recorded = st.getMeta.get({ key: PASSWORD_FINGERPRINT });
+    if (recorded?.value === fingerprint) return 0;
+    // Nothing recorded is an upgrade or a fresh database, not a rotation:
+    // there is no earlier password to have changed from.
+    const revoked = recorded === undefined ? 0 : st.deleteAllSessions.run().changes;
+    st.setMeta.run({ key: PASSWORD_FINGERPRINT, value: fingerprint });
+    return revoked;
+  });
 
   return {
     createSession(ttlSeconds) {
@@ -46,6 +69,10 @@ export function sessionStore(
 
     deleteExpiredSessions() {
       return st.deleteExpiredSessions.run({ at: now() }).changes;
+    },
+
+    syncPasswordFingerprint(passwordHash) {
+      return syncFingerprintTx(passwordHash);
     },
   };
 }

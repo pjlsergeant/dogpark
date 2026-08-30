@@ -1107,6 +1107,72 @@ describe('the read log', () => {
     h.store.readSpace({ kind: 'human' }, space);
     expect(h.store.readReadLog().entries).toHaveLength(0);
   });
+
+  it('stands for one read until a sweep says otherwise', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    h.store.readSpace({ kind: 'agent', id: agent }, space);
+    const entry = h.store.readReadLog({ agent }).entries[0];
+    expect(entry?.collapsedCount).toBe(1);
+    expect(entry?.firstReadAt).toBeUndefined();
+  });
+});
+
+describe('a read is bounded by the stream tip it recorded', () => {
+  it('excludes a message written in the same millisecond as the read', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    // The clock never moves here: the read and both messages share a
+    // millisecond, so only a sequence bound can separate them.
+    const first = post(h, agent, space, 'daily', 'before the read');
+    h.store.readStream(agent);
+    const read = h.store.readReadLog({ agent }).entries[0];
+    post(h, agent, space, 'daily', 'after the read');
+
+    const page = h.store.readConversationAsOf(read?.id ?? '', first.conversation);
+    expect(page?.messages.map((m) => m.body)).toEqual(['before the read']);
+    expect(h.store.readConversation({ kind: 'human' }, first.conversation).messages).toHaveLength(
+      2,
+    );
+  });
+
+  it('still honours a narrower until of the callers own', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const first = post(h, agent, space, 'daily', 'one');
+    h.advance(60);
+    const between = h.at();
+    post(h, agent, space, 'daily', 'two');
+    h.advance(60);
+    h.store.readStream(agent);
+    const read = h.store.readReadLog({ agent }).entries[0]?.id ?? '';
+
+    expect(
+      h.store.readConversationAsOf(read, first.conversation)?.messages.map((m) => m.body),
+    ).toEqual(['one', 'two']);
+    expect(
+      h.store
+        .readConversationAsOf(read, first.conversation, { until: between })
+        ?.messages.map((m) => m.body),
+    ).toEqual(['one']);
+  });
+
+  it('falls back to the millisecond bound for a row recorded before tip_seq existed', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const first = post(h, agent, space, 'daily', 'before the read');
+    h.store.readStream(agent);
+    const read = h.store.readReadLog({ agent }).entries[0]?.id ?? '';
+    post(h, agent, space, 'daily', 'after the read');
+    // What migration 0003 leaves on every row it back-filled: unknown.
+    h.store.database.prepare('UPDATE read_log SET tip_seq = 0').run();
+
+    // Coarse again, and visibly so: the later message shares the millisecond
+    // and comes back.
+    expect(
+      h.store.readConversationAsOf(read, first.conversation)?.messages.map((m) => m.body),
+    ).toEqual(['before the read', 'after the read']);
+  });
 });
 
 describe('the wording of a read is reproducible after renames', () => {
@@ -1473,6 +1539,31 @@ describe('sessions', () => {
     expect(h.store.deleteSession(second.token)).toBe(true);
     expect(h.store.verifySession(second.token)).toBeUndefined();
   });
+
+  it('revokes every session when the password changes, and none when it has not', () => {
+    const h = harness();
+    // The first sighting is an upgrade or a fresh database, not a rotation.
+    const issued = h.store.createSession(3600);
+    expect(h.store.syncPasswordFingerprint('scrypt$first')).toBe(0);
+    expect(h.store.syncPasswordFingerprint('scrypt$first')).toBe(0);
+    expect(h.store.verifySession(issued.token)?.id).toBe(issued.id);
+
+    const other = h.store.createSession(3600);
+    expect(h.store.syncPasswordFingerprint('scrypt$second')).toBe(2);
+    expect(h.store.verifySession(issued.token)).toBeUndefined();
+    expect(h.store.verifySession(other.token)).toBeUndefined();
+
+    // Settled again at the new hash: the next start revokes nothing.
+    const fresh = h.store.createSession(3600);
+    expect(h.store.syncPasswordFingerprint('scrypt$second')).toBe(0);
+    expect(h.store.verifySession(fresh.token)?.id).toBe(fresh.id);
+
+    // A hash of the hash: the verifier itself is never in the table.
+    const stored = h.store.database
+      .prepare("SELECT value FROM meta WHERE key = 'password-fingerprint'")
+      .get() as { value: string };
+    expect(stored.value).not.toBe('scrypt$second');
+  });
 });
 
 describe('posting', () => {
@@ -1831,6 +1922,192 @@ describe('the read log is paged', () => {
       () => h.store.readReadLog({ after: stream.nextCursor as unknown as ReadLogCursor }),
       'invalid_request',
     );
+  });
+});
+
+describe('runs of empty stream polls are compacted', () => {
+  /** Drains the membership event, so every later poll is genuinely empty. */
+  function settle(h: Harness, agent: AgentId): Cursor {
+    const page = h.store.readStream(agent);
+    h.advance(60);
+    return page.nextCursor;
+  }
+
+  /** `count` polls a minute apart, each resuming where the last left off. */
+  function poll(h: Harness, agent: AgentId, from: Cursor, count: number): Cursor {
+    let cursor = from;
+    for (let i = 0; i < count; i += 1) {
+      cursor = h.store.readStream(agent, { from: { after: cursor } }).nextCursor;
+      h.advance(60);
+    }
+    return cursor;
+  }
+
+  it('collapses an idle run into its last read, which says what it stands for', () => {
+    const h = harness();
+    const { agent } = scene(h);
+    const start = settle(h, agent);
+    const began = h.at();
+    const cursor = poll(h, agent, start, 4);
+    const ended = h.store.readReadLog({ agent }).entries[0]?.readAt;
+
+    expect(h.store.collapseEmptyStreamReads(h.at())).toEqual({ collapsed: 1, removed: 3 });
+
+    const entries = h.store.readReadLog({ agent }).entries;
+    expect(entries).toHaveLength(2);
+    const survivor = entries[0];
+    // The last read of the run, unchanged in everything it recorded itself.
+    expect(survivor?.readAt).toBe(ended);
+    expect(survivor?.cursor).toBe(cursor);
+    expect(survivor?.itemCount).toBe(0);
+    expect(survivor?.collapsedCount).toBe(4);
+    expect(survivor?.firstReadAt).toBe(began);
+    // The read that returned the membership event is not a candidate.
+    expect(entries[1]?.itemCount).toBe(1);
+    expect(entries[1]?.collapsedCount).toBe(1);
+  });
+
+  it('collapses a run whose cursor moved past traffic the agent cannot see', () => {
+    const h = harness();
+    const { agent } = scene(h);
+    const bob = h.store.createAgent('bob').id;
+    const elsewhere = h.store.createSpace('other').id;
+    h.store.grantMembership(bob, elsewhere);
+    let cursor = settle(h, agent);
+
+    // Each poll returns nothing but a cursor past bob's message, so the runs
+    // differ in their parameters. What makes them one run is that each
+    // resumed exactly where the last left off.
+    const cursors = new Set<string>();
+    for (let i = 0; i < 3; i += 1) {
+      post(h, bob, elsewhere, 'theirs', `${i}`);
+      cursor = h.store.readStream(agent, { from: { after: cursor } }).nextCursor;
+      cursors.add(cursor);
+      h.advance(60);
+    }
+    expect(cursors.size).toBe(3);
+
+    expect(h.store.collapseEmptyStreamReads(h.at())).toEqual({ collapsed: 1, removed: 2 });
+    const entries = h.store.readReadLog({ agent }).entries;
+    expect(entries).toHaveLength(2);
+    expect(entries[0]?.collapsedCount).toBe(3);
+    expect(entries[0]?.cursor).toBe(cursor);
+  });
+
+  it('breaks a run at a read that returned something', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    let cursor = settle(h, agent);
+    cursor = poll(h, agent, cursor, 2);
+    post(h, agent, space, 'notes', 'something');
+    const delivered = h.store.readStream(agent, { from: { after: cursor } });
+    expect(delivered.items).toHaveLength(1);
+    h.advance(60);
+    poll(h, agent, delivered.nextCursor, 2);
+
+    // Two runs, on either side of the read that was handed something — which
+    // keeps its own row and stands for itself.
+    expect(h.store.collapseEmptyStreamReads(h.at())).toEqual({ collapsed: 2, removed: 2 });
+    expect(
+      h.store.readReadLog({ agent }).entries.map((e) => [e.itemCount, e.collapsedCount]),
+    ).toEqual([
+      [0, 2],
+      [1, 1],
+      [0, 2],
+      [1, 1],
+    ]);
+  });
+
+  it('treats a row whose parameters will not parse as a break, not a fault', () => {
+    const h = harness();
+    const { agent } = scene(h);
+    poll(h, agent, settle(h, agent), 3);
+    const middle = h.store.readReadLog({ agent }).entries[1]?.id ?? '';
+    h.store.database
+      .prepare("UPDATE read_log SET params_json = 'not json' WHERE id = @id")
+      .run({ id: middle });
+
+    // Neither its predecessor nor its successor can be shown to have resumed
+    // from it, so the run is three runs of one. Counted over the table, since
+    // the forensic view parses what the sweep declined to trust.
+    expect(h.store.collapseEmptyStreamReads(h.at())).toEqual({ collapsed: 0, removed: 0 });
+    const rows = h.store.database.prepare('SELECT COUNT(*) AS n FROM read_log').get() as {
+      n: number;
+    };
+    expect(rows.n).toBe(4);
+  });
+
+  it('merges a later run into the row a previous sweep left', () => {
+    const h = harness();
+    const { agent } = scene(h);
+    let cursor = settle(h, agent);
+    const began = h.at();
+    cursor = poll(h, agent, cursor, 3);
+    expect(h.store.collapseEmptyStreamReads(h.at()).removed).toBe(2);
+
+    cursor = poll(h, agent, cursor, 3);
+    // Converges: a second sweep leaves one row for the stretch, not one per
+    // sweep, because an already-collapsed row is an ordinary candidate.
+    expect(h.store.collapseEmptyStreamReads(h.at())).toEqual({ collapsed: 1, removed: 3 });
+    const entries = h.store.readReadLog({ agent }).entries;
+    expect(entries).toHaveLength(2);
+    expect(entries[0]?.collapsedCount).toBe(6);
+    expect(entries[0]?.firstReadAt).toBe(began);
+  });
+
+  it('leaves rows younger than the cutoff, and every other kind, alone', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    let cursor = settle(h, agent);
+    const cutoff = h.at();
+    cursor = poll(h, agent, cursor, 3);
+    h.store.readSpace({ kind: 'agent', id: agent }, space);
+    h.store.readConversation(
+      { kind: 'agent', id: agent },
+      h.store.resolveOrCreateConversation(space, 'notes').id,
+    );
+
+    expect(h.store.collapseEmptyStreamReads(cutoff)).toEqual({ collapsed: 0, removed: 0 });
+    expect(h.store.readReadLog({ agent }).entries).toHaveLength(6);
+
+    // The queries returned nothing either, and are still their own rows.
+    expect(h.store.collapseEmptyStreamReads(h.at()).removed).toBe(2);
+    const kinds = h.store.readReadLog({ agent }).entries.map((e) => e.kind);
+    expect(kinds).toEqual(['conversation', 'space', 'stream', 'stream']);
+  });
+
+  it('pages cleanly over a collapsed log', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    let cursor = settle(h, agent);
+    cursor = poll(h, agent, cursor, 4);
+    h.store.readSpace({ kind: 'agent', id: agent }, space);
+    h.advance(60);
+    poll(h, agent, cursor, 4);
+    h.store.collapseEmptyStreamReads(h.at());
+
+    // A read of another kind keeps its own row and does not break the run: the
+    // collapsed row's span simply brackets it.
+    const entries = h.store.readReadLog({ agent }).entries;
+    expect(entries.map((e) => [e.kind, e.collapsedCount])).toEqual([
+      ['stream', 8],
+      ['space', 1],
+      ['stream', 1],
+    ]);
+    const all = entries.map((e) => e.id);
+    const seen: string[] = [];
+    let after: ReadLogCursor | null = null;
+    for (let guard = 0; guard < 10; guard += 1) {
+      const page: ReturnType<Store['readReadLog']> = h.store.readReadLog({
+        agent,
+        limit: 2,
+        ...(after === null ? {} : { after }),
+      });
+      seen.push(...page.entries.map((e) => e.id));
+      after = page.nextCursor;
+      if (!page.hasMore) break;
+    }
+    expect(seen).toEqual(all);
   });
 });
 

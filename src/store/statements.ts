@@ -100,6 +100,21 @@ export interface ReadLogRow {
   params_json: string;
   cursor: string;
   item_count: number;
+  /** How many reads this row stands for; 1 unless a sweep compacted a run. */
+  collapsed_count: number;
+  /** When the run this row stands for began. Null when it stands only for itself. */
+  first_read_at: string | null;
+}
+
+/** A candidate for collapse, with what the chain rule needs to walk it. */
+export interface EmptyStreamReadRow {
+  row_id: number;
+  agent_id: string;
+  read_at: string;
+  params_json: string;
+  cursor: string;
+  collapsed_count: number;
+  first_read_at: string | null;
 }
 
 /** Everything the read-log statements bind apart from the agent. */
@@ -160,7 +175,8 @@ const ESCALATION_COLUMNS =
   '   AND (@dueAt IS NULL OR next_attempt_at IS NULL OR next_attempt_at <= @dueAt) ';
 
 const READ_LOG_COLUMNS =
-  'SELECT rowid AS row_id, id, agent_id, read_at, kind, params_json, cursor, item_count ' +
+  'SELECT rowid AS row_id, id, agent_id, read_at, kind, params_json, cursor, item_count, ' +
+  '       collapsed_count, first_read_at ' +
   '  FROM read_log WHERE ';
 
 /**
@@ -209,8 +225,8 @@ export function prepareStatements(db: Db) {
       'SELECT label FROM label_history WHERE kind = @kind AND subject_id = @subject ' +
         'AND seq > @labelSeq ORDER BY seq ASC LIMIT 1',
     ),
-    readLabelSeq: prepare<{ id: string }, { label_seq: number; read_at: string }>(
-      'SELECT label_seq, read_at FROM read_log WHERE id = @id',
+    readLabelSeq: prepare<{ id: string }, { label_seq: number; read_at: string; tip_seq: number }>(
+      'SELECT label_seq, read_at, tip_seq FROM read_log WHERE id = @id',
     ),
     setArchived: prepare<{ id: string; archived: number }, unknown>(
       'UPDATE agent SET archived = @archived WHERE id = @id',
@@ -433,11 +449,14 @@ export function prepareStatements(db: Db) {
     // the direction has to be visible to the query planner, or the index on
     // (conversation_id, seq) stops being an ordering and becomes a sort.
     // `@after` is the exclusive bound in the direction of travel — a floor
-    // going forwards, a ceiling going backwards.
+    // going forwards, a ceiling going backwards. `@ceiling` is the other kind
+    // of ceiling: an inclusive one on the sequence itself, set only by the
+    // as-of view, where the bound is a stream position rather than a request.
     conversationPage: prepare<
       {
         conversation: string;
         after: number;
+        ceiling: number | null;
         since: string | null;
         until: string | null;
         limit: number;
@@ -445,6 +464,7 @@ export function prepareStatements(db: Db) {
       MessageRow
     >(
       'SELECT * FROM message WHERE conversation_id = @conversation AND seq > @after ' +
+        'AND (@ceiling IS NULL OR seq <= @ceiling) ' +
         'AND (@since IS NULL OR sent_at >= @since) AND (@until IS NULL OR sent_at < @until) ' +
         'ORDER BY seq LIMIT @limit',
     ),
@@ -452,6 +472,7 @@ export function prepareStatements(db: Db) {
       {
         conversation: string;
         after: number;
+        ceiling: number | null;
         since: string | null;
         until: string | null;
         limit: number;
@@ -459,6 +480,7 @@ export function prepareStatements(db: Db) {
       MessageRow
     >(
       'SELECT * FROM message WHERE conversation_id = @conversation AND seq < @after ' +
+        'AND (@ceiling IS NULL OR seq <= @ceiling) ' +
         'AND (@since IS NULL OR sent_at >= @since) AND (@until IS NULL OR sent_at < @until) ' +
         'ORDER BY seq DESC LIMIT @limit',
     ),
@@ -542,11 +564,16 @@ export function prepareStatements(db: Db) {
       unknown
     >(
       // `label_seq` is taken inside the read's own transaction, so it is the
-      // history position the rendering actually used.
+      // history position the rendering actually used; `tip_seq` likewise, so
+      // it is the stream position the read served — or could have served, for
+      // a read of one thread or one file. Every kind gets it: the tip is a
+      // global position, and what a read could have seen is everything at or
+      // below it.
       'INSERT INTO read_log (id, agent_id, read_at, kind, params_json, cursor, item_count, ' +
-        '                      label_seq) ' +
+        '                      label_seq, tip_seq) ' +
         'VALUES (@id, @agent, @at, @kind, @params, @cursor, @count, ' +
-        '        (SELECT COALESCE(MAX(seq), 0) FROM label_history))',
+        '        (SELECT COALESCE(MAX(seq), 0) FROM label_history), ' +
+        "        (SELECT next FROM sequence WHERE name = 'stream'))",
     ),
     // Keyset paging, not OFFSET: the log only grows, and a page taken by
     // offset while it grows either repeats rows or skips them — in the one
@@ -562,6 +589,21 @@ export function prepareStatements(db: Db) {
     listReadsForAgent: prepare<ReadLogBounds & { agent: string }, ReadLogRow>(
       READ_LOG_COLUMNS + 'agent_id = @agent' + READ_LOG_TAIL,
     ),
+    // Every empty stream read old enough to compact, in the order the chain
+    // rule walks them: per agent, and within an agent by rowid, which is the
+    // order they were written in. An already-collapsed row is an ordinary
+    // candidate, which is what makes repeated sweeps converge on one row per
+    // idle stretch rather than one per sweep.
+    emptyStreamReads: prepare<{ before: string }, EmptyStreamReadRow>(
+      'SELECT rowid AS row_id, agent_id, read_at, params_json, cursor, collapsed_count, ' +
+        '       first_read_at ' +
+        "  FROM read_log WHERE kind = 'stream' AND item_count = 0 AND read_at < @before " +
+        ' ORDER BY agent_id, rowid',
+    ),
+    collapseRead: prepare<{ row: number; count: number; first: string }, unknown>(
+      'UPDATE read_log SET collapsed_count = @count, first_read_at = @first WHERE rowid = @row',
+    ),
+    deleteReadRow: prepare<{ row: number }, unknown>('DELETE FROM read_log WHERE rowid = @row'),
     lastStreamRead: prepare<{ agent: string }, { cursor: string }>(
       "SELECT cursor FROM read_log WHERE agent_id = @agent AND kind = 'stream' " +
         'ORDER BY read_at DESC, rowid DESC LIMIT 1',
@@ -621,6 +663,13 @@ export function prepareStatements(db: Db) {
     ),
     deleteExpiredSessions: prepare<{ at: string }, unknown>(
       'DELETE FROM session WHERE expires_at <= @at',
+    ),
+    deleteAllSessions: prepare<[], unknown>('DELETE FROM session'),
+
+    getMeta: prepare<{ key: string }, { value: string }>('SELECT value FROM meta WHERE key = @key'),
+    setMeta: prepare<{ key: string; value: string }, unknown>(
+      'INSERT INTO meta (key, value) VALUES (@key, @value) ' +
+        'ON CONFLICT (key) DO UPDATE SET value = excluded.value',
     ),
   };
 }

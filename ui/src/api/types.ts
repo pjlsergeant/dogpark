@@ -178,6 +178,13 @@ export interface ReadLogEntry {
   readonly itemCount: number;
   readonly kind: 'stream' | 'conversation' | 'space' | 'attachment';
   readonly id: string;
+  /**
+   * Present only on a row that stands for a compacted run of empty stream
+   * polls: how many reads it stands for, and when the run began. The row
+   * itself is the last read of the run.
+   */
+  readonly collapsedCount?: number | undefined;
+  readonly firstReadAt?: Timestamp | undefined;
   /** What a conversation read read, resolved so the reader can be opened as of it. */
   readonly conversation?: Conversation | undefined;
   /** Likewise for a space read. */

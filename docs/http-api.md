@@ -69,7 +69,7 @@ required because the SPA shares an origin with the agent API.
 | POST | `/messages` | post as the human |
 | GET | `/reads` | the read log, filterable by agent; limit and cursor, because it is the one table that grows without bound. `kind` is `stream`, `conversation`, `space` or `attachment`; an attachment read has an empty cursor |
 | GET | `/reads/:id` | one row, with the conversation or space it read resolved for linking |
-| GET | `/reads/:id/conversations/:conversationId/messages` | the thread as it read on that row: `readConversation` for the human, labels as of then, ending at the read's millisecond; paged the same way; nothing logged |
+| GET | `/reads/:id/conversations/:conversationId/messages` | the thread as it read on that row: `readConversation` for the human, labels as of then, ending at the stream position the row recorded; paged the same way; nothing logged |
 | GET | `/reads/:id/messages/:messageId` | a message rendered with the labels in force when that row was written (ADR-0004). A label snapshot, not proof the message was on that page: that is the row's kind, parameters and cursor |
 | GET | `/escalations` | the inbox, newest first; `order`, `after`, `limit`; carries `undelivered`, counted over the whole table |
 | GET | `/search` | `q`; FTS5 over stored bodies. `order` is `relevance` (default) or `newest`; `after`, `limit` |
@@ -100,14 +100,24 @@ GET  /agents       -> [{ id, displayName, archived, createdAt, lastSeenAt,
                          keys: [{ keyId, label, createdAt, revokedAt }] }]
 GET  /reads?agent&since&until&limit&after
                    -> { reads: [{ id, agent, kind, at, parameters, cursor,
-                                  itemCount, conversation?, space? }],
+                                  itemCount, collapsedCount?, firstReadAt?,
+                                  conversation?, space? }],
                         nextCursor, hasMore }
                       // conversation { id, space, title } on a conversation
                       // read, space { id, name } on a space read
+                      // collapsedCount and firstReadAt appear only on a row
+                      // standing for a compacted run of empty stream polls
+                      // (ADR-0005): how many reads it stands for, and when
+                      // the run began. The row is the last read of the run,
+                      // so `at` is when it ended
 GET  /reads/:id    -> one read row, shaped as above
 GET  /reads/:id/conversations/:conversationId/messages?since&until&after&order&limit
                    -> MessagePage, rendered as of that read and ending at it:
-                      nothing sent after the read's millisecond is included
+                      nothing past the stream position the row recorded is
+                      included. Exact for rows written at schema version 3 or
+                      later; older rows have no position and end at the read's
+                      millisecond instead, which includes a message sent later
+                      in that same millisecond
 GET  /reads/:id/messages/:messageId
                    -> Message
 GET  /agents/:id/keys

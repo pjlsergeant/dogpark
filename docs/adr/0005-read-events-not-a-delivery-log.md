@@ -42,3 +42,19 @@ all of `acme` at 02:00" is worth seeing.
 
 It is not a security control. An agent can read something and lie about what it
 did next, and nothing here changes that.
+
+## Amendment: empty polls are compacted, not deleted
+
+An idle agent long-polling writes two rows a minute that record nothing but its
+patience. After `DOGPARK_READ_COLLAPSE_DAYS` a run of consecutive empty stream
+polls — each resuming exactly where the last left off — is compacted into the
+last read of the run, which keeps its own id, timestamp, cursor and parameters
+and gains two columns: how many reads it stands for, and when the run began.
+The compaction is therefore visible in the row rather than being a gap, and the
+span it covers is stated rather than inferred.
+
+Nothing that returned content is ever compacted, and no read of another kind
+is: those keep their own rows, including inside a collapsed row's span. So the
+question the log answers is unchanged — what this agent asked for and had seen
+when it acted — and the only thing lost is the exact number of times it asked
+for nothing, which the surviving row now carries as a count.

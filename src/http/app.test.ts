@@ -8,7 +8,7 @@ import type { Config } from '../config.js';
 import { loadConfig } from '../config.js';
 import type { Store } from '../store/index.js';
 import { openStore, RESERVED_SEQUENCE } from '../store/index.js';
-import type { AgentId, AttachmentId, ConversationId, SpaceId } from '../types.js';
+import type { AgentId, AttachmentId, ConversationId, SpaceId, Timestamp } from '../types.js';
 import { buildApp } from './app.js';
 import { contentDisposition, safeContentType, sweepUnreferenced } from './attachments.js';
 import { hashPassword } from './password.js';
@@ -996,6 +996,37 @@ describe('the HTTP surface', () => {
       expect(rows[0]?.kind).toBe('stream');
       expect(rows[0]?.parameters.from).toEqual({ from: 'tip' });
       expect(rows[0]?.cursor).toEqual(expect.any(String));
+    });
+
+    it('says what a collapsed row stands for, and says nothing on an ordinary one', async () => {
+      // Two polls resuming from one another, then aged past the cutoff.
+      const first = await asAgent(alpha.key, { method: 'GET', url: '/api/agent/stream?tip=true' });
+      const cursor = (first.json() as { nextCursor: string }).nextCursor;
+      await asAgent(alpha.key, {
+        method: 'GET',
+        url: `/api/agent/stream?after=${encodeURIComponent(cursor)}`,
+      });
+      const session = await login(h);
+      const rows = async (): Promise<Record<string, unknown>[]> => {
+        const response = await h.app.inject({
+          method: 'GET',
+          url: `/api/admin/reads?agent=${alpha.id}`,
+          headers: { cookie: session.cookie },
+        });
+        return (response.json() as { reads: Record<string, unknown>[] }).reads;
+      };
+
+      for (const row of await rows()) {
+        expect(row).not.toHaveProperty('collapsedCount');
+        expect(row).not.toHaveProperty('firstReadAt');
+      }
+
+      const later = new Date(Date.now() + 60_000).toISOString() as Timestamp;
+      expect(h.store.collapseEmptyStreamReads(later).removed).toBe(1);
+      const collapsed = await rows();
+      expect(collapsed).toHaveLength(1);
+      expect(collapsed[0]?.['collapsedCount']).toBe(2);
+      expect(collapsed[0]?.['firstReadAt']).toEqual(expect.any(String));
     });
 
     it('honours a limit and reports whether more is waiting', async () => {

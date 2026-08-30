@@ -21,6 +21,15 @@ export function isSeekToTip(entry: ReadLogEntry): boolean {
   return typeof from === 'object' && from !== null && (from as { from?: unknown }).from === 'tip';
 }
 
+/**
+ * How many reads a row stands for. More than one only where a sweep compacted
+ * a run of empty polls into its last read (docs/adr/0005), which is the row
+ * shown; the span it covers is `firstReadAt` to `at`.
+ */
+function standsFor(entry: ReadLogEntry): number {
+  return entry.collapsedCount ?? 1;
+}
+
 function Params({ params }: { params: Readonly<Record<string, unknown>> }): ReactNode {
   const entries = Object.entries(params);
   if (entries.length === 0) return <span className="muted">from the beginning</span>;
@@ -56,6 +65,12 @@ export function ReadLogRows({ entries }: { entries: readonly ReadLogEntry[] }): 
         {entries.map((entry) => (
           <tr key={entry.id}>
             <td>
+              {standsFor(entry) > 1 && entry.firstReadAt !== undefined && (
+                <>
+                  <Time iso={entry.firstReadAt} />
+                  {' – '}
+                </>
+              )}
               <Time iso={entry.at} />
             </td>
             <td>
@@ -69,6 +84,14 @@ export function ReadLogRows({ entries }: { entries: readonly ReadLogEntry[] }): 
                   title="Started at the live edge, discarding everything behind it. This read is a jump, not a span."
                 >
                   jump
+                </span>
+              )}
+              {standsFor(entry) > 1 && (
+                <span
+                  className="muted"
+                  title={`Stands for ${standsFor(entry)} empty polls, each resuming where the last left off. This row is the last of them.`}
+                >
+                  {` ×${standsFor(entry)}`}
                 </span>
               )}
             </td>
