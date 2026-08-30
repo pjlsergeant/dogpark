@@ -9,7 +9,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import type { ApiError, ConversationId, Message, MessageId, SpaceId } from '../api/index.js';
+import type { ApiError, ConversationId, MessageId, SpaceId } from '../api/index.js';
 import { useApi } from '../app/api-context.js';
 import { toApiError, useAsync } from '../app/useAsync.js';
 import { href, navigate } from '../app/router.js';
@@ -18,6 +18,8 @@ import { Empty, Failure, Loading, Time } from '../components/bits.js';
 import { MessageView } from '../components/MessageView.js';
 import { Composer } from '../components/Composer.js';
 import { NameDialog } from '../components/NameDialog.js';
+import { loadThread, olderPage } from './thread-pages.js';
+import type { Loaded } from './thread-pages.js';
 
 const POLL_MS = 20_000;
 
@@ -202,21 +204,9 @@ function SpaceReader({
 }
 
 /**
- * One thread, newest page first.
- *
- * `order=newest` pages backwards from the end and returns each page
- * newest-first, so the reader opens on today and walks back on request. Each
- * page is reversed into reading order and older pages go on the front.
+ * One thread, newest page first — or, arriving by a link to one message,
+ * every page back to that message (`thread-pages.ts`).
  */
-interface Loaded {
-  /** Oldest first, as rendered. */
-  readonly messages: readonly Message[];
-  readonly nextCursor: string | null;
-  readonly hasMore: boolean;
-  /** How many pages have been pulled, so polling knows whether it can reset. */
-  readonly pages: number;
-}
-
 function Thread({
   space,
   conversation,
@@ -252,14 +242,9 @@ function Thread({
     setBusy(true);
     setError(null);
     try {
-      const page = await api.readConversation(conversation, { order: 'newest' });
+      const thread = await loadThread(api, conversation, highlight);
       if (mine !== generation.current) return;
-      setLoaded({
-        messages: [...page.messages].reverse(),
-        nextCursor: page.nextCursor,
-        hasMore: page.hasMore,
-        pages: 1,
-      });
+      setLoaded(thread);
     } catch (cause) {
       if (mine === generation.current) setError(toApiError(cause));
     } finally {
@@ -268,25 +253,27 @@ function Thread({
         setBusy(false);
       }
     }
-  }, [api, conversation]);
+  }, [api, conversation, highlight]);
 
   const loadOlder = useCallback(async () => {
     if (loaded === null || loaded.nextCursor === null) return;
     const mine = generation.current;
     setBusy(true);
     try {
-      const page = await api.readConversation(conversation, {
-        order: 'newest',
-        after: loaded.nextCursor,
-      });
+      const older = await olderPage(api, conversation, loaded);
       if (mine !== generation.current) return;
+      // Merged against what is held now, not the snapshot the page was asked
+      // for: a poll may have appended to the end meanwhile, and those stay.
       setLoaded((current) =>
         current === null
           ? current
           : {
-              messages: [...[...page.messages].reverse(), ...current.messages],
-              nextCursor: page.nextCursor,
-              hasMore: page.hasMore,
+              messages: [
+                ...older.messages.slice(0, older.messages.length - loaded.messages.length),
+                ...current.messages,
+              ],
+              nextCursor: older.nextCursor,
+              hasMore: older.hasMore,
               pages: current.pages + 1,
             },
       );
