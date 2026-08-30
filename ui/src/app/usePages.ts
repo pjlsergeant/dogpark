@@ -37,6 +37,8 @@ export function usePages<T, P extends Page<T>>(
   const [moreFailed, setMoreFailed] = useState(false);
   const generation = useRef(0);
   const [nonce, setNonce] = useState(0);
+  /** The loader the last first page was fetched with: a new one is a new filter. */
+  const lastRun = useRef<typeof load | null>(null);
 
   // The caller's closure changes every render; the dependency list is the
   // contract, exactly as with useEffect.
@@ -48,9 +50,15 @@ export function usePages<T, P extends Page<T>>(
     setMoreFailed(false);
     setLoadingMore(false);
     // A Refresh keeps the old rows on screen while the new ones come; a
-    // filter change does not, which is what `nonce` alone versus `run`
-    // changing tells apart below.
-    setFirst((previous) => ({ status: 'loading', data: previous.data, error: null }));
+    // filter change does not, because rows from another filter under the
+    // new controls are a lie.
+    const filterChanged = lastRun.current !== run;
+    lastRun.current = run;
+    setFirst((previous) => ({
+      status: 'loading',
+      data: filterChanged ? null : previous.data,
+      error: null,
+    }));
     run(undefined).then(
       (data) => {
         if (mine === generation.current) setFirst({ status: 'ready', data, error: null });
@@ -66,11 +74,6 @@ export function usePages<T, P extends Page<T>>(
       },
     );
   }, [run, nonce]);
-
-  // A filter change: whatever was showing belongs to the old filter.
-  useEffect(() => {
-    setFirst({ status: 'loading', data: null, error: null });
-  }, [run]);
 
   const data = first.data;
   const nextCursor = tail === null ? (data?.nextCursor ?? null) : tail.nextCursor;
