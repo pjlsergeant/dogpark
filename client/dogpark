@@ -34,6 +34,15 @@ AGENT_ID=$(printf '%s' "$DOGPARK_KEY" | cut -d_ -f2)
 # only separates state between URLs, which needs no cryptography.
 URL_HASH=$(printf '%s' "$DOGPARK_URL" | cksum | cut -d' ' -f1)
 CURSOR_FILE="$STATE_DIR/cursor.$AGENT_ID.$URL_HASH"
+# v0.3 kept one unscoped cursor file; adopting it blindly could hand this
+# agent another agent's (or server's) position. The owner knows; we cannot.
+if [ -f "$STATE_DIR/cursor" ]; then
+  { echo "dogpark: found an unscoped cursor file from an older client: $STATE_DIR/cursor"
+    echo "  if it belongs to THIS agent on THIS server, adopt it:"
+    echo "    mv '$STATE_DIR/cursor' '$CURSOR_FILE'"
+    echo "  if unsure, delete it; the next onboard reloads context."; } >&2
+  exit 2
+fi
 BACKFILL_N=${DOGPARK_BACKFILL:-50}
 mkdir -p "$STATE_DIR"
 for bin in curl jq; do command -v "$bin" >/dev/null || { echo "dogpark: needs '$bin' on PATH" >&2; exit 3; }; done
