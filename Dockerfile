@@ -22,6 +22,7 @@ COPY tsconfig.json tsconfig.build.json ./
 COPY src ./src
 COPY ui ./ui
 COPY docs ./docs
+COPY client ./client
 
 # The server, then the SPA it serves from `dist/ui`. `npm prune` afterwards
 # rather than a second `npm ci --omit=dev` in a fresh stage: it carries through

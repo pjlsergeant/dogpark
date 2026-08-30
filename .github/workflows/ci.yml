@@ -7,6 +7,15 @@ on:
   pull_request:
 
 jobs:
+  # The Dockerfile copies named paths, so a build script that grows a new
+  # input can pass on a checkout and fail in the image. Building the image is
+  # the only test of that.
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t dogpark .
+
   ci:
     runs-on: ubuntu-latest
     steps:
