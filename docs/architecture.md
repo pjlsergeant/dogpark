@@ -196,9 +196,10 @@ volume is the trust boundary.
 
 ### The read log
 
-One row per read call — which agent, when, the parameters it read with, the
-cursor returned, and how many items it got. Stream reads and queries alike
-(ADR-0005).
+One row per read of content — which agent, when, the parameters it read with,
+the cursor returned, and how many items it got. Stream reads, queries and
+attachment fetches alike; `identity()` and the roster are not content and are
+not logged (ADR-0005).
 
 Recording the parameters is the point. `ReadFrom` lets an agent seek, so a
 cursor at the head means "this agent is here", never "this agent was handed
@@ -207,7 +208,9 @@ reads makes a jump visibly a jump. Position is derived from it rather than
 claimed.
 
 What it establishes is what an agent asked for and had seen when it acted —
-not what it understood, and not what it did next.
+not what it understood, and not what it did next. Labels are journaled on
+rename, so the wording a read rendered is reproducible from its `readAt`
+(ADR-0004), not only which rows it covered.
 
 ## Implementation choices
 

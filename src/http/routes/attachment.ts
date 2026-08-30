@@ -36,6 +36,12 @@ export async function sendAttachment(
   // never written. Nothing to serve.
   if (stream === undefined) throw notFound('attachment');
 
+  // A read of content, so a read-log row (ADR-0005) — for an agent; the human
+  // has no agent row and is not logged anywhere else either. Recorded once
+  // the bytes are about to go, and before they have gone: like every other
+  // read, the row says what was handed over, not what arrived.
+  if (reader.kind === 'agent') ctx.store.recordAttachmentRead(reader.id, id, record.message);
+
   return reply
     .header('Content-Type', safeContentType(record.contentType))
     .header('Content-Disposition', contentDisposition(record.filename))

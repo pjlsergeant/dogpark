@@ -376,6 +376,28 @@ describe('the HTTP surface', () => {
       });
       expect(theirs.statusCode).toBe(404);
       expect(theirs.json()).toMatchObject({ code: 'not_found' });
+
+      // The fetch that served bytes is a read and was logged; the refused one
+      // and the human's are not.
+      const session = await login(h);
+      await h.app.inject({
+        method: 'GET',
+        url: `/api/admin/attachments/${id}`,
+        headers: { cookie: session.cookie },
+      });
+      const reads = await h.app.inject({
+        method: 'GET',
+        url: '/api/admin/reads',
+        headers: { cookie: session.cookie },
+      });
+      const rows = (
+        reads.json() as {
+          reads: { agent: { id: string }; kind: string; parameters: Record<string, unknown> }[];
+        }
+      ).reads.filter((r) => r.kind === 'attachment');
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.agent.id).toBe(alpha.id);
+      expect(rows[0]?.parameters).toEqual({ attachment: id, message: expect.any(String) });
     });
 
     it('answers an unrouted path in the same shape', async () => {
@@ -808,6 +830,47 @@ describe('the HTTP surface', () => {
       expect(response.statusCode).toBe(200);
       expect((response.json() as { items: unknown[] }).items).toHaveLength(1);
       expect(Date.now() - started).toBeLessThan(1_500);
+    });
+
+    it('records both reads of a long poll, and the hint is the second', async () => {
+      // Each read commits its row before its response is sent — the first
+      // before the wait, the second before the page goes out. The hint is
+      // therefore at-most-once: a response lost in transit is still logged as
+      // handed over, and resuming from the hint skips it (docs/running.md).
+      const cursor = await seekToTip();
+      const session = await login(h);
+      const countReads = async (): Promise<{ kind: string; cursor: string }[]> => {
+        const reads = await h.app.inject({
+          method: 'GET',
+          url: `/api/admin/reads?agent=${alpha.id}`,
+          headers: { cookie: session.cookie },
+        });
+        return (reads.json() as { reads: { kind: string; cursor: string }[] }).reads;
+      };
+      const before = (await countReads()).length;
+
+      const waiting = asAgent(alpha.key, {
+        method: 'GET',
+        url: `/api/agent/stream?after=${encodeURIComponent(cursor)}&waitSeconds=2`,
+      });
+      setTimeout(() => {
+        void asAgent(alpha.key, {
+          method: 'POST',
+          url: '/api/agent/messages',
+          payload: { target: { conversation }, body: 'late', idempotencyKey: 'lp2' },
+        });
+      }, 50);
+      const response = await waiting;
+      const page = response.json() as { items: unknown[]; nextCursor: string };
+      expect(page.items).toHaveLength(1);
+
+      const after = await countReads();
+      expect(after.length).toBe(before + 2);
+      expect(after[0]?.cursor).toBe(page.nextCursor);
+      expect(after[1]?.cursor).toBe(cursor);
+
+      const identity = await asAgent(alpha.key, { method: 'GET', url: '/api/agent/identity' });
+      expect((identity.json() as { lastReadCursor: string }).lastReadCursor).toBe(page.nextCursor);
     });
 
     it('returns without waiting when waitSeconds is absent', async () => {

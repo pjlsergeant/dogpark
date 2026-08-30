@@ -63,7 +63,7 @@ required because the SPA shares an origin with the agent API.
 | GET | `/conversations/:id/messages` | `order=newest` pages back from the end |
 | GET | `/attachments/:id` | cookie-authenticated, unlike the agent route |
 | POST | `/messages` | post as the human |
-| GET | `/reads` | the read log, filterable by agent; limit and cursor, because it is the one table that grows without bound |
+| GET | `/reads` | the read log, filterable by agent; limit and cursor, because it is the one table that grows without bound. `kind` is `stream`, `conversation`, `space` or `attachment`; an attachment read has an empty cursor |
 | GET | `/escalations` | with notification state |
 | GET | `/search` | `q`; FTS5 over stored bodies |
 

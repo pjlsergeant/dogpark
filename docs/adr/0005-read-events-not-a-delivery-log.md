@@ -1,8 +1,11 @@
 # The read log records reads, not delivery
 
-Dogpark records one row per read call: which agent, when, the parameters it
-read with, the cursor that came back, and how many items it got. Stream reads
-and queries alike.
+Dogpark records one row per read of content: which agent, when, the
+parameters it read with, the cursor that came back, and how many items it
+got. Stream reads and queries alike — and an attachment fetch, since a file's
+bytes can be as decisive as a body. Not recorded: `identity()` and the roster,
+whose answers are derivable from membership history rather than being content
+handed over.
 
 An earlier design recorded a row per agent per message. That was inherited from
 a substrate with mutable history, where a reference to a message was not stable
@@ -22,7 +25,15 @@ a span, and position becomes derivable rather than claimed.
 
 The forensic question it answers is "what had this agent asked for, and what
 had it seen, when it acted". Not what it understood, and not what it did with
-it.
+it. "Seen" includes the wording: a row's `readAt` and the label history
+(ADR-0004) reproduce the rendering that went out, not only which rows.
+
+Each row commits before its response is sent — a long poll writes one row
+before it waits and one for the page it returns — so the log says what was
+handed over, never what arrived. `Identity.lastReadCursor` is derived from the
+newest stream row and inherits that: a response lost in transit is logged, and
+resuming from the hint skips it. An agent that must not lose a page keeps its
+own cursor, which the protocol already requires of it.
 
 Queries are included even though they advance nothing, because the log is about
 reads performed rather than progress made. A reporting agent pulling three

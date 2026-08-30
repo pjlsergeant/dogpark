@@ -216,7 +216,12 @@ export interface ConversationSummary extends Conversation {
   readonly lastSender: Sender | null;
 }
 
-export type ReadKind = 'stream' | 'conversation' | 'space';
+/**
+ * What counts as a read: message content, by stream, by conversation, by
+ * space, or an attachment's bytes. `identity()` and the roster are not
+ * recorded — what they return is derivable from membership history.
+ */
+export type ReadKind = 'stream' | 'conversation' | 'space' | 'attachment';
 
 export interface ReadLogEntry {
   readonly id: string;
@@ -488,6 +493,15 @@ export interface Store {
   ): Conversation;
   getConversation(conversation: ConversationId): Conversation | undefined;
   renameConversation(conversation: ConversationId, title: string): Conversation;
+
+  /**
+   * One message as it rendered at `at`: the sender's name, the conversation's
+   * title and the mentioned names are the labels in force then, from the
+   * label history (migration 0002). This is what makes the read log a
+   * reference rather than a copy: a row's `readAt` plus this reproduces the
+   * wording an agent was handed, whatever has been renamed since.
+   */
+  messageAsOf(message: MessageId, at: Timestamp): Message | undefined;
   /**
    * The thread list: every conversation in a space with its message count,
    * last activity and last sender, ordered by last activity. The admin
@@ -557,6 +571,11 @@ export interface Store {
    */
   readReadLog(filter?: ReadLogFilter): ReadLogPage;
   lastReadCursor(agent: AgentId): Cursor | undefined;
+  /**
+   * An attachment fetch is a read of content and gets its row like any other
+   * (ADR-0005). Called by the route once the bytes are about to be served.
+   */
+  recordAttachmentRead(agent: AgentId, attachment: AttachmentId, message: MessageId): void;
 
   // Sessions
   createSession(ttlSeconds: number): IssuedSession;
@@ -619,6 +638,19 @@ export function openStore(options: StoreOptions): Store {
     ),
     renameAgent: db.prepare<{ id: string; name: string }, unknown>(
       'UPDATE agent SET display_name = @name WHERE id = @id',
+    ),
+    insertLabelHistory: db.prepare<
+      { kind: string; subject: string; label: string; until: string },
+      unknown
+    >(
+      'INSERT INTO label_history (kind, subject_id, label, until) ' +
+        'VALUES (@kind, @subject, @label, @until)',
+    ),
+    // The label in force at @at: the earliest row that outlived it. None
+    // means the current label was already in force.
+    labelAsOf: db.prepare<{ kind: string; subject: string; at: string }, { label: string }>(
+      'SELECT label FROM label_history WHERE kind = @kind AND subject_id = @subject ' +
+        'AND until > @at ORDER BY until ASC, seq ASC LIMIT 1',
     ),
     setArchived: db.prepare<{ id: string; archived: number }, unknown>(
       'UPDATE agent SET archived = @archived WHERE id = @id',
@@ -1122,10 +1154,18 @@ export function openStore(options: StoreOptions): Store {
     titles: Map<string, string>;
     names: Map<string, string>;
     mentionNames: Map<string, string | undefined>;
+    /** Render labels as they were at this instant; absent means now. */
+    asOf: Timestamp | undefined;
   }
 
-  function newRenderCache(): RenderCache {
-    return { titles: new Map(), names: new Map(), mentionNames: new Map() };
+  function newRenderCache(asOf?: Timestamp): RenderCache {
+    return { titles: new Map(), names: new Map(), mentionNames: new Map(), asOf };
+  }
+
+  /** `current` unless a rename since `cache.asOf` says the label was different then. */
+  function labelAsOf(cache: RenderCache, kind: string, subject: string, current: string): string {
+    if (cache.asOf === undefined) return current;
+    return st.labelAsOf.get({ kind, subject, at: cache.asOf })?.label ?? current;
   }
 
   function conversationTitle(cache: RenderCache, id: string): string {
@@ -1134,8 +1174,9 @@ export function openStore(options: StoreOptions): Store {
     const row = st.getConversation.get({ id });
     /* c8 ignore next */
     if (row === undefined) throw new Error(`message references a missing conversation ${id}`);
-    cache.titles.set(id, row.title);
-    return row.title;
+    const title = labelAsOf(cache, 'conversation', id, row.title);
+    cache.titles.set(id, title);
+    return title;
   }
 
   function agentName(cache: RenderCache, id: string): string {
@@ -1144,15 +1185,16 @@ export function openStore(options: StoreOptions): Store {
     const row = st.getAgent.get({ id });
     /* c8 ignore next */
     if (row === undefined) throw new Error(`message references a missing agent ${id}`);
-    cache.names.set(id, row.display_name);
-    return row.display_name;
+    const name = labelAsOf(cache, 'agent', id, row.display_name);
+    cache.names.set(id, name);
+    return name;
   }
 
   function mentionName(cache: RenderCache, space: string, agent: AgentId): string | undefined {
     const key = `${space}:${agent}`;
     if (cache.mentionNames.has(key)) return cache.mentionNames.get(key);
     const row = st.resolveMentionRef.get({ space, agent });
-    const name = row?.display_name;
+    const name = row === undefined ? undefined : labelAsOf(cache, 'agent', agent, row.display_name);
     cache.mentionNames.set(key, name);
     return name;
   }
@@ -1525,6 +1567,53 @@ export function openStore(options: StoreOptions): Store {
     return { escalation: toEscalation(row), created: true };
   });
 
+  /**
+   * A rename journals the label it replaces, in the same transaction, so the
+   * label in force at any past instant stays answerable (migration 0002).
+   * Renaming to the same label is a no-op: nothing changed, so no history.
+   */
+  const renameAgentTx = db.transaction((agent: AgentId, displayName: string): AgentRecord => {
+    const before = requireAgentRow(agent);
+    if (before.display_name !== displayName) {
+      try {
+        st.renameAgent.run({ id: agent, name: displayName });
+      } catch (error) {
+        throw uniqueOr(error, 'an agent with that name already exists');
+      }
+      st.insertLabelHistory.run({
+        kind: 'agent',
+        subject: agent,
+        label: before.display_name,
+        until: now(),
+      });
+    }
+    return toAgentRecord(requireAgentRow(agent));
+  });
+
+  const renameConversationTx = db.transaction(
+    (conversation: ConversationId, title: string): Conversation => {
+      const before = st.getConversation.get({ id: conversation });
+      if (before === undefined) throw notFound('conversation');
+      if (before.title !== title) {
+        try {
+          st.renameConversation.run({ id: conversation, title });
+        } catch (error) {
+          throw uniqueOr(error, 'a conversation with that title already exists in this space');
+        }
+        st.insertLabelHistory.run({
+          kind: 'conversation',
+          subject: conversation,
+          label: before.title,
+          until: now(),
+        });
+      }
+      const renamed = st.getConversation.get({ id: conversation });
+      /* c8 ignore next */
+      if (renamed === undefined) throw new Error('conversation vanished');
+      return toConversation(renamed);
+    },
+  );
+
   const archiveTx = db.transaction((agent: AgentId): AgentRecord => {
     requireAgentRow(agent);
     // Archiving revokes credentials and hides the role. It does not touch
@@ -1803,13 +1892,7 @@ export function openStore(options: StoreOptions): Store {
 
     renameAgent(agent, displayName) {
       assertValidName('displayName', displayName);
-      requireAgentRow(agent);
-      try {
-        st.renameAgent.run({ id: agent, name: displayName });
-      } catch (error) {
-        throw uniqueOr(error, 'an agent with that name already exists');
-      }
-      return toAgentRecord(requireAgentRow(agent));
+      return renameAgentTx(agent, displayName);
     },
 
     archiveAgent(agent) {
@@ -1951,18 +2034,14 @@ export function openStore(options: StoreOptions): Store {
     },
 
     renameConversation(conversation, title) {
-      const row = st.getConversation.get({ id: conversation });
-      if (row === undefined) throw notFound('conversation');
       assertNonEmpty('title', title);
-      try {
-        st.renameConversation.run({ id: conversation, title });
-      } catch (error) {
-        throw uniqueOr(error, 'a conversation with that title already exists in this space');
-      }
-      const renamed = st.getConversation.get({ id: conversation });
-      /* c8 ignore next */
-      if (renamed === undefined) throw new Error('conversation vanished');
-      return toConversation(renamed);
+      return renameConversationTx(conversation, title);
+    },
+
+    messageAsOf(message, at) {
+      const row = st.messageById.get({ id: message });
+      if (row === undefined) return undefined;
+      return toMessage(row, newRenderCache(normalizeTimestamp('at', at)));
     },
 
     listConversationSummaries(space) {
@@ -2102,6 +2181,13 @@ export function openStore(options: StoreOptions): Store {
     lastReadCursor(agent) {
       const row = st.lastStreamRead.get({ agent });
       return row === undefined ? undefined : (row.cursor as Cursor);
+    },
+
+    recordAttachmentRead(agent, attachment, message) {
+      requireAgentRow(agent);
+      // No position comes back from a file, so the cursor is empty rather
+      // than invented; the parameters say which file, and whose message.
+      writeRead(agent, 'attachment', { attachment, message }, '', 1);
     },
 
     createSession(ttlSeconds) {

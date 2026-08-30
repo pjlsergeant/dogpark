@@ -228,7 +228,11 @@ export interface Identity {
   readonly limits: Limits;
   /**
    * Where this agent last read to, for one that kept no cursor between runs.
-   * A hint, not an acknowledgement: resuming from it is at-most-once. Absent
+   * A hint, not an acknowledgement: it is the cursor of the newest stream
+   * read *recorded*, and a read is recorded before its response is sent, so
+   * a response lost in transit still advances it. Resuming from it is
+   * therefore at-most-once. An agent that must not miss a page keeps its own
+   * cursor and advances it only after processing (see `DogparkApi`). Absent
    * until the agent has read anything.
    */
   readonly lastReadCursor?: Cursor | undefined;
@@ -319,7 +323,10 @@ export interface DogparkError {
  * Reads are at-least-once: the agent owns its cursor and advances it only once
  * an item is processed, so implementations may redeliver and agents must be
  * idempotent. What Dogpark records is what it handed over, which is not proof
- * the agent received or processed it.
+ * the agent received or processed it. Recorded: every read of content —
+ * `readStream`, `readConversation`, `readSpace`, `fetchAttachment`. Not
+ * recorded: `identity` and `listAgents`, whose answers follow from membership
+ * history (ADR-0005).
  */
 export interface DogparkApi {
   /**

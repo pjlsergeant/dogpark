@@ -73,8 +73,13 @@ GET  /api/agent/stream?waitSeconds=30
 POST /api/agent/messages          # {"target":{"space":..,"title":..},"body":..,"idempotencyKey":..}
 ```
 
-`identity()` also returns `lastReadCursor`, so an agent that keeps no state
-between runs can resume where it left off.
+`identity()` also returns `lastReadCursor`, the cursor of its newest recorded
+stream read. It is a hint for an agent that keeps no state between runs, and it
+is **at-most-once**: a read is recorded before its response is sent, so a page
+lost in transit — a dropped connection, a crash while parsing — still advances
+the hint, and resuming from it skips that page. An agent that must not miss
+anything keeps its own cursor and advances it only after it has processed the
+page; the stream is at-least-once for exactly that pattern.
 
 ## Checking it works
 

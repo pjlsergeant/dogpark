@@ -9,6 +9,7 @@ import type {
   Cursor,
   IdempotencyKey,
   Message,
+  MessageId,
   QueryCursor,
   SpaceId,
   StreamItem,
@@ -1096,6 +1097,83 @@ describe('the read log', () => {
     post(h, agent, space, 'notes', 'one');
     h.store.readSpace({ kind: 'human' }, space);
     expect(h.store.readReadLog().entries).toHaveLength(0);
+  });
+});
+
+describe('a read is reproducible after renames', () => {
+  it('renders a message as it read at the time, from the label history', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const bob = h.store.createAgent('bob').id;
+    h.store.grantMembership(bob, space);
+    const posted = post(h, agent, space, 'daily', 'ping @bob about the figures');
+
+    h.advance(10);
+    const handed = h.store.readSpace({ kind: 'agent', id: agent }, space).messages[0];
+    const readAt = h.store.readReadLog({ agent }).entries[0]?.readAt;
+    expect(handed?.body).toBe('ping @bob about the figures');
+    expect(readAt).toBe(h.at());
+
+    h.advance(60);
+    h.store.renameAgent(bob, 'robert');
+    h.store.renameConversation(posted.conversation, 'weekly');
+    h.store.renameAgent(agent, 'alicia');
+    const between = h.at();
+    h.advance(60);
+    h.store.renameAgent(bob, 'bobby');
+
+    // Now: every label current.
+    const now = h.store.messageAsOf(posted.id, h.at());
+    expect(now?.body).toBe('ping @bobby about the figures');
+    expect(now?.conversationTitle).toBe('weekly');
+    expect(now?.sender.displayName).toBe('alicia');
+
+    // At the read: exactly what was handed over — not the first rename's
+    // value, which a "latest history row" lookup would have produced.
+    const then = h.store.messageAsOf(posted.id, readAt as Timestamp);
+    expect(then?.body).toBe(handed?.body);
+    expect(then?.conversationTitle).toBe(handed?.conversationTitle);
+    expect(then?.sender.displayName).toBe(handed?.sender.displayName);
+    expect(then?.mentions).toEqual([bob]);
+
+    // Between the two renames of bob.
+    expect(h.store.messageAsOf(posted.id, between)?.body).toBe('ping @robert about the figures');
+    expect(h.store.messageAsOf('nope' as MessageId, between)).toBeUndefined();
+  });
+
+  it('journals nothing for a rename to the same label', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const conversation = h.store.resolveOrCreateConversation(space, 'daily').id;
+    h.store.renameAgent(agent, 'alice');
+    h.store.renameConversation(conversation, 'daily');
+    const rows = h.store.database.prepare('SELECT COUNT(*) AS n FROM label_history').get() as {
+      n: number;
+    };
+    expect(rows.n).toBe(0);
+  });
+});
+
+describe('an attachment fetch is a read', () => {
+  it('writes a read-log row naming the file and its message', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const attachment = newAttachmentId();
+    const posted = h.store.postMessage({
+      sender: { kind: 'agent', id: agent },
+      target: { space, title: 'notes' },
+      body: 'see attached',
+      attachments: [{ id: attachment, filename: 'a.csv', contentType: 'text/csv', sizeBytes: 3 }],
+    });
+
+    h.store.recordAttachmentRead(agent, attachment, posted.message.id);
+    const entry = h.store.readReadLog({ agent }).entries[0];
+    expect(entry?.kind).toBe('attachment');
+    expect(entry?.params).toEqual({ attachment, message: posted.message.id });
+    expect(entry?.itemCount).toBe(1);
+    expect(entry?.cursor).toBe('');
+    // A file returns no stream position, so the resume hint is untouched.
+    expect(h.store.lastReadCursor(agent)).toBeUndefined();
   });
 });
 

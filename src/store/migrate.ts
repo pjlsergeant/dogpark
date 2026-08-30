@@ -35,6 +35,11 @@ function sqlFile(name: string): string {
  */
 export const MIGRATIONS: readonly Migration[] = [
   { version: 1, name: 'initial', sql: sqlFile('schema.sql') },
+  {
+    version: 2,
+    name: 'label-history-and-attachment-reads',
+    sql: sqlFile('0002-label-history-and-attachment-reads.sql'),
+  },
 ];
 
 const VERSION_TABLE = `
