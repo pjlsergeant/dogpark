@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import { constantTimeEquals, splitKey } from '../store/ids.js';
 import type { AgentRecord, SessionRecord } from '../store/index.js';
+import { constantTimeEquals, splitKey } from '../store/index.js';
 import type { AppContext } from './context.js';
 import { csrfRefused, HttpError, unauthenticated } from './errors.js';
 

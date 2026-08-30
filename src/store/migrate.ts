@@ -35,10 +35,12 @@ function sqlFile(name: string): string {
  */
 export const MIGRATIONS: readonly Migration[] = [
   { version: 1, name: 'initial', sql: sqlFile('schema.sql') },
-  // A database that ran an earlier cut of migration 2 lacks
-  // read_log.label_seq and fails at prepare in openStore; the remedy is a
-  // version 3 of exactly:
+  // Amended before it had run anywhere durable, so the rule above holds. A
+  // database that ran the earlier cut lacks read_log.label_seq and fails at
+  // prepare in openStore; the fix for that database, by hand, is
   //   ALTER TABLE read_log ADD COLUMN label_seq INTEGER NOT NULL DEFAULT 0
+  // — not a version 3, which every other database would refuse as a
+  // duplicate column.
   {
     version: 2,
     name: 'label-history-and-attachment-reads',

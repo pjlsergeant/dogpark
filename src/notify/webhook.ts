@@ -90,10 +90,7 @@ export class Notifier {
   async drain(limit = 20): Promise<number> {
     if (!this.#url) return 0;
 
-    // Two overlapping drains would send the same escalation twice — and the
-    // point of an escalation is that it wakes someone. One process, so a
-    // re-entrancy guard is enough; a second caller returns rather than
-    // queueing behind the first.
+    // A second caller returns rather than queueing behind the first.
     if (this.#draining) return 0;
     this.#draining = true;
     try {

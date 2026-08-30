@@ -259,7 +259,8 @@ not exposed. **It is not a chat client** (ADR-0007).
 * Whether FTS5 is enough, once there is history to judge it against.
 * Escalations cannot be acknowledged or retried, so the inbox only grows; and
   `/escalations` and `/search` return one capped page with no cursor.
-* Nothing lists the spaces one agent belongs to, only the reverse.
+* The admin API lists a space's members but not an agent's spaces; only the
+  agent sees those, through `identity()`.
 * There is no unread state, so the reader polls rather than knowing what is
   new.
 * A read's wording is reproducible (`GET /reads/:id/messages/:messageId`) but

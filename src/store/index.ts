@@ -54,6 +54,8 @@ import {
 
 export { StoreError } from './errors.js';
 export { RESERVED_SEQUENCE } from './text.js';
+/** The two pieces of key handling the HTTP layer shares with the store. */
+export { constantTimeEquals, splitKey } from './ids.js';
 export { migrate, MIGRATIONS } from './migrate.js';
 export type { Migration, MigrateResult } from './migrate.js';
 export type { ReadLogCursor } from './cursors.js';
@@ -407,7 +409,8 @@ function requestHash(value: unknown): string {
   return sha256(JSON.stringify(value));
 }
 
-function clampLimit(limit: number | undefined): number {
+/** The HTTP layer caps against `Limits.maxPageSize`; the store only validates. */
+function limitOrDefault(limit: number | undefined): number {
   if (limit === undefined) return DEFAULT_LIMIT;
   if (!Number.isInteger(limit) || limit < 1) throw invalid('limit must be a positive integer');
   return limit;
@@ -1622,7 +1625,7 @@ export function openStore(options: StoreOptions): Store {
 
   const readStreamTx = db.transaction((agent: AgentId, args: ReadStreamArgs): StreamPage => {
     requireAgentRow(agent);
-    const limit = clampLimit(args.limit);
+    const limit = limitOrDefault(args.limit);
     // Read the tip first and bound the query by it, so "everything up to here
     // was considered" is true of exactly the rows the query could have seen.
     const currentTip = tip();
@@ -1696,7 +1699,7 @@ export function openStore(options: StoreOptions): Store {
             : tip() + 1,
       since: range?.since === undefined ? null : normalizeTimestamp('since', range.since),
       until: range?.until === undefined ? null : normalizeTimestamp('until', range.until),
-      limit: clampLimit(limit),
+      limit: limitOrDefault(limit),
     };
   }
 
@@ -2045,7 +2048,7 @@ export function openStore(options: StoreOptions): Store {
       // searching for its id — and a rename touches no index.
       assertNoReservedSequence('query', query);
       const cache = newRenderCache();
-      const limit = clampLimit(opts?.limit);
+      const limit = limitOrDefault(opts?.limit);
       let rows;
       try {
         rows = st.search.all({ query, space: opts?.space ?? null, limit });
@@ -2095,7 +2098,7 @@ export function openStore(options: StoreOptions): Store {
         .all({
           state: filter?.state ?? null,
           dueAt: filter?.dueAt ?? null,
-          limit: clampLimit(filter?.limit),
+          limit: limitOrDefault(filter?.limit),
         })
         .map(toEscalation);
     },
@@ -2116,7 +2119,7 @@ export function openStore(options: StoreOptions): Store {
     },
 
     readReadLog(filter) {
-      const limit = clampLimit(filter?.limit);
+      const limit = limitOrDefault(filter?.limit);
       const after = filter?.after === undefined ? undefined : decodeReadLogCursor(filter.after);
       const bounds: ReadLogBounds = {
         since: filter?.since === undefined ? null : normalizeTimestamp('since', filter.since),

@@ -988,6 +988,12 @@ describe('bodies are canonical', () => {
 describe('the reserved control character', () => {
   const poison = `before${RESERVED_SEQUENCE}after`;
 
+  // The value ADR-0010 and every agent's delimiter depend on; the rest of the
+  // suite uses the symbol and would not notice it changing.
+  it('is U+001E', () => {
+    expect(RESERVED_SEQUENCE).toBe('\u001E');
+  });
+
   it('is rejected in a body, and nothing is stored', () => {
     const h = harness();
     const { agent, space } = scene(h);

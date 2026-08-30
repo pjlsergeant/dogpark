@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { AgentRecord } from '../../store/index.js';
-import type { Agent, AttachmentId, MessageId } from '../../types.js';
+import type { Agent, AttachmentId } from '../../types.js';
 import { authenticateHuman, csrfTokenFor, requireSession, SESSION_COOKIE } from '../auth.js';
 import type { AppContext } from '../context.js';
 import { notFound, unauthenticated } from '../errors.js';
@@ -19,6 +19,7 @@ import {
 import {
   asAgentId,
   asConversationId,
+  asMessageId,
   asReadLogCursor,
   asSpaceId,
   asTimestamp,
@@ -210,7 +211,7 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
 
       guarded.post('/agents/:id/unarchive', async (request) => {
         const { id } = request.params as { id: string };
-        // A hashed key cannot be re-shown, so the role comes back with a new one.
+        // A hashed key cannot be re-shown, so the agent comes back with a new one.
         const record = ctx.store.unarchiveAgent(asAgentId(id));
         const issued = ctx.store.issueKey(record.id);
         return { agent: bare(record), keyId: issued.id, key: issued.key };
@@ -288,8 +289,8 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
        */
       guarded.get('/reads/:id/messages/:messageId', async (request) => {
         const { id, messageId } = request.params as { id: string; messageId: string };
-        const rendered = ctx.store.renderAsOfRead(messageId as MessageId, id);
-        if (rendered === undefined) throw notFound('read');
+        const rendered = ctx.store.renderAsOfRead(asMessageId(messageId), id);
+        if (rendered === undefined) throw notFound('read or message');
         return rendered;
       });
 

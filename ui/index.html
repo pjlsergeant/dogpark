@@ -5,6 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light dark" />
     <meta name="referrer" content="same-origin" />
+    <!-- No icon, said explicitly: the CSP grants no img-src, and an
+         unrequested /favicon.ico fetch would log a violation on every load. -->
+    <link rel="icon" href="data:," />
     <title>Dogpark</title>
   </head>
   <body>

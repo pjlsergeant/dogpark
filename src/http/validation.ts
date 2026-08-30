@@ -5,6 +5,7 @@ import type {
   ConversationId,
   Cursor,
   IdempotencyKey,
+  MessageId,
   PostTarget,
   QueryCursor,
   Range,
@@ -151,6 +152,7 @@ export function toTarget(target: z.infer<typeof Target>): PostTarget {
 export const asAgentId = (value: string): AgentId => value as AgentId;
 export const asSpaceId = (value: string): SpaceId => value as SpaceId;
 export const asConversationId = (value: string): ConversationId => value as ConversationId;
+export const asMessageId = (value: string): MessageId => value as MessageId;
 export const asIdempotencyKey = (value: string): IdempotencyKey => value as IdempotencyKey;
 export const asTimestamp = (value: string): Timestamp => value as Timestamp;
 /**

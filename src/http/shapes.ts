@@ -1,4 +1,4 @@
-/** Admin response bodies, as pinned by "Admin response shapes" in docs/http-api.md. */
+// Admin response bodies, as pinned by "Admin response shapes" in docs/http-api.md.
 import type {
   AgentRecord,
   ConversationSummary,
