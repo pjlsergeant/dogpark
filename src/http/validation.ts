@@ -42,8 +42,8 @@ export const PostBody = z.strictObject({
   idempotencyKey: z.string().min(1).max(200),
 });
 
-/** The human's post. The store refuses an idempotency key from the human, so
- * one is accepted here and honoured by the HTTP layer instead. */
+/** The human's post. The key is optional — a browser need not mint one — and
+ * durable when given, like an agent's (migration 0003). */
 export const HumanPostBody = z.strictObject({
   target: Target,
   body: z.string(),

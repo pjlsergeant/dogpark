@@ -41,6 +41,33 @@ describe('migrations', () => {
     }
   });
 
+  it('carries existing agent keys across the idempotency rebuild', () => {
+    const path = file();
+    const db = new Database(path);
+    try {
+      // Stop at 2, which is the shape 0003 has to migrate away from.
+      migrate(
+        db,
+        MIGRATIONS.filter((m) => m.version <= 2),
+      );
+      db.prepare(
+        "INSERT INTO agent (id, display_name, created_at, archived) VALUES ('a', 'alice', 'then', 0)",
+      ).run();
+      db.prepare(
+        'INSERT INTO idempotency (agent_id, key, request_hash, outcome_json, created_at) ' +
+          "VALUES ('a', 'k', 'h', '{\"messageId\":\"m\"}', 'then')",
+      ).run();
+
+      const result = migrate(db);
+      expect(result.applied).toContain(3);
+
+      const rows = db.prepare('SELECT writer, key, request_hash FROM idempotency').all();
+      expect(rows).toEqual([{ writer: 'a', key: 'k', request_hash: 'h' }]);
+    } finally {
+      db.close();
+    }
+  });
+
   it('records what it applied in a version table', () => {
     const db = new Database(file());
     try {

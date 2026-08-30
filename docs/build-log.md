@@ -130,6 +130,8 @@ the difference.
 
 ### `DOGPARK_TRUST_PROXY` is an address list, not a boolean
 
+Graduated to ADR-0016.
+
 A boolean meant trusting `X-Forwarded-*` from anyone who could reach the port.
 That let an attacker claim any client address, bypassing login throttling, and
 claim `X-Forwarded-Proto: https` while speaking plaintext — defeating the
@@ -156,21 +158,21 @@ direction you are travelling" and the rule is identical in both directions; and
 the first backwards page anchors at the sequence tip as it stood when the read
 began, so writes mid-walk cannot shift the window.
 
-### Deferred: the human's writes are not durably idempotent
+### Done: the human's writes are durably idempotent
 
-The store keys idempotency on an agent id, and there is no human row, so the
-HTTP layer keeps an in-memory table to stop a double-click double-posting. A
-double-click straddling a restart still double-posts, and it maintains a second
-copy of the store's rules that can drift.
+The store keyed idempotency on an agent id, and there is no human row, so the
+HTTP layer kept an in-memory table to stop a double-click double-posting. A
+double-click straddling a restart still double-posted, and it was a second copy
+of the store's rules that could drift — and did, storing rendered results the
+store deliberately does not (ADR-0014).
 
-The fix is a migration keying idempotency on a writer that may be the literal
-`human`, since ids are base32 and cannot collide with it. Not done: it is a
-migration plus a coordinated change across two layers, and the failure it
-prevents is a duplicate message rather than a lost one.
+Migration 0003 keys the table on a writer that may be the literal `human`,
+which no agent id can be. `postMessage` handles both writer kinds in one
+transaction and the HTTP-layer table is gone.
 
 ## What the auth throttle actually protects
 
-Worth recording because it was got wrong three times.
+Worth recording because it was got wrong three times. Graduated to ADR-0015.
 
 An unauthenticated caller can present any key. The first attempt to bound that
 refused a request when both the source address and the agent id claimed in the

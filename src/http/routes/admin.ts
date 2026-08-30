@@ -20,6 +20,7 @@ import {
   AdminAgentsQuery,
   asAgentId,
   asConversationId,
+  asIdempotencyKey,
   asReadLogCursor,
   asSpaceId,
   asTimestamp,
@@ -251,43 +252,20 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
         const { payload } = collected;
         try {
           assertBodyFits(payload.body, ctx.limits.maxMessageBytes);
-
-          // Attachment ids are minted per request, so they are left out of the
-          // replay hash: a retry uploading the same file is the same request.
-          // The digest is in, for the same reason the store keeps it — without
-          // it a *different* file of the same name, type and size replays the
-          // original message.
-          const shape = {
-            target: payload.target,
-            body: payload.body,
-            files: collected.attachments.map((a) => ({
-              filename: a.filename,
-              contentType: a.contentType,
-              sizeBytes: a.sizeBytes,
-              contentDigest: a.contentDigest ?? null,
-            })),
-          };
-          if (payload.idempotencyKey !== undefined) {
-            const replay = ctx.humanPosts.lookup(payload.idempotencyKey, shape);
-            if (replay !== undefined) {
-              await collected.discard();
-              return replay;
-            }
-          }
-
           const result = ctx.store.postMessage({
             sender: HUMAN,
             target: toTarget(payload.target),
             body: payload.body,
             ...(collected.attachments.length === 0 ? {} : { attachments: collected.attachments }),
+            ...(payload.idempotencyKey === undefined
+              ? {}
+              : { idempotencyKey: asIdempotencyKey(payload.idempotencyKey) }),
           });
-          ctx.writes.notify();
-
-          const posted = { message: result.message, conversation: result.conversation };
-          if (payload.idempotencyKey !== undefined) {
-            ctx.humanPosts.remember(payload.idempotencyKey, shape, posted);
-          }
-          return posted;
+          // A replay committed nothing, so the files just written belong to no
+          // message. Remove them rather than leaving litter behind a retry.
+          if (!result.created) await collected.discard();
+          else ctx.writes.notify();
+          return { message: result.message, conversation: result.conversation };
         } catch (error) {
           await collected.discard();
           throw error;

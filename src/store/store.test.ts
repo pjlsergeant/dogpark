@@ -549,6 +549,58 @@ describe('idempotency', () => {
     expect(h.store.readSpace({ kind: 'agent', id: agent }, space).messages).toHaveLength(2);
   });
 
+  it('scopes the human separately from every agent, and durably', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+
+    const first = h.store.postMessage({
+      sender: { kind: 'human' },
+      target: { space, title: 'notes' },
+      body: 'from the human',
+      idempotencyKey: key('shared'),
+    });
+    // The same key from an agent is a different writer, so it writes.
+    const byAgent = h.store.postMessage({
+      sender: { kind: 'agent', id: agent },
+      target: { space, title: 'notes' },
+      body: 'from alice',
+      idempotencyKey: key('shared'),
+    });
+    // The human replaying its own key does not.
+    const replay = h.store.postMessage({
+      sender: { kind: 'human' },
+      target: { space, title: 'notes' },
+      body: 'from the human',
+      idempotencyKey: key('shared'),
+    });
+
+    expect(byAgent.created).toBe(true);
+    expect(replay.created).toBe(false);
+    expect(replay.message.id).toBe(first.message.id);
+    expect(h.store.readSpace({ kind: 'agent', id: agent }, space).messages).toHaveLength(2);
+  });
+
+  it('rejects a replayed human key that carries a different request', () => {
+    const h = harness();
+    const { space } = scene(h);
+    h.store.postMessage({
+      sender: { kind: 'human' },
+      target: { space, title: 'notes' },
+      body: 'the first thing',
+      idempotencyKey: key('reused'),
+    });
+    expectStoreError(
+      () =>
+        h.store.postMessage({
+          sender: { kind: 'human' },
+          target: { space, title: 'notes' },
+          body: 'something else entirely',
+          idempotencyKey: key('reused'),
+        }),
+      'invalid_request',
+    );
+  });
+
   it('writes the key only with the write it covers', () => {
     const h = harness();
     const { agent, space } = scene(h);

@@ -562,6 +562,15 @@ export interface Store {
   deleteExpiredSessions(): number;
 }
 
+/**
+ * Who a write is idempotent for. An agent is its own id; the human is the
+ * literal `human`, which no agent id can be — ids are sixteen characters of a
+ * restricted base32 alphabet (migration 0003).
+ */
+function writerOf(sender: { readonly kind: 'agent' | 'human'; readonly id?: AgentId }): string {
+  return sender.kind === 'agent' && sender.id !== undefined ? sender.id : 'human';
+}
+
 export function openStore(options: StoreOptions): Store {
   if (options.file !== ':memory:') mkdirSync(dirname(options.file), { recursive: true });
   const db: Db = new Database(options.file);
@@ -891,15 +900,15 @@ export function openStore(options: StoreOptions): Store {
     ),
 
     getIdempotency: db.prepare<
-      { agent: string; key: string },
+      { writer: string; key: string },
       { request_hash: string; outcome_json: string }
-    >('SELECT request_hash, outcome_json FROM idempotency WHERE agent_id = @agent AND key = @key'),
+    >('SELECT request_hash, outcome_json FROM idempotency WHERE writer = @writer AND key = @key'),
     putIdempotency: db.prepare<
-      { agent: string; key: string; hash: string; outcome: string; at: string },
+      { writer: string; key: string; hash: string; outcome: string; at: string },
       unknown
     >(
-      'INSERT INTO idempotency (agent_id, key, request_hash, outcome_json, created_at) ' +
-        'VALUES (@agent, @key, @hash, @outcome, @at)',
+      'INSERT INTO idempotency (writer, key, request_hash, outcome_json, created_at) ' +
+        'VALUES (@writer, @key, @hash, @outcome, @at)',
     ),
 
     insertRead: db.prepare<
@@ -1304,10 +1313,6 @@ export function openStore(options: StoreOptions): Store {
   const postTx = db.transaction((input: PostMessageInput): PostMessageResult => {
     const { sender } = input;
 
-    if (sender.kind === 'human' && input.idempotencyKey !== undefined) {
-      throw invalid('idempotency keys are scoped per agent');
-    }
-
     // Validate before anything else, including before the idempotency lookup:
     // a rejected write should be rejected identically whether or not its key
     // has been seen, and the reserved sequence must never reach a stored row.
@@ -1342,8 +1347,11 @@ export function openStore(options: StoreOptions): Store {
       })),
     });
 
-    if (sender.kind === 'agent' && input.idempotencyKey !== undefined) {
-      const existing = st.getIdempotency.get({ agent: sender.id, key: input.idempotencyKey });
+    if (input.idempotencyKey !== undefined) {
+      const existing = st.getIdempotency.get({
+        writer: writerOf(sender),
+        key: input.idempotencyKey,
+      });
       if (existing !== undefined) {
         const outcome = JSON.parse(existing.outcome_json) as PostOutcome;
         const replayed = st.messageById.get({ id: outcome.messageId });
@@ -1358,7 +1366,7 @@ export function openStore(options: StoreOptions): Store {
         // Checked before the hash, so losing access looks the same whether the
         // replayed request matches or not — and the same as a space that never
         // existed (ADR-0003).
-        if (!isCurrentMember(sender.id, replayed.space_id as SpaceId)) {
+        if (sender.kind === 'agent' && !isCurrentMember(sender.id, replayed.space_id as SpaceId)) {
           throw notFound('conversation' in input.target ? 'conversation' : 'space');
         }
 
@@ -1414,10 +1422,10 @@ export function openStore(options: StoreOptions): Store {
 
     // Same transaction as the write itself: a key never exists without its
     // outcome, nor an outcome without its key.
-    if (sender.kind === 'agent' && input.idempotencyKey !== undefined) {
+    if (input.idempotencyKey !== undefined) {
       const outcome: PostOutcome = { messageId: id };
       st.putIdempotency.run({
-        agent: sender.id,
+        writer: writerOf(sender),
         key: input.idempotencyKey,
         hash,
         outcome: JSON.stringify(outcome),
@@ -1441,7 +1449,7 @@ export function openStore(options: StoreOptions): Store {
       reason: input.reason,
     });
 
-    const existing = st.getIdempotency.get({ agent: input.agent, key: input.idempotencyKey });
+    const existing = st.getIdempotency.get({ writer: input.agent, key: input.idempotencyKey });
     if (existing !== undefined) {
       const outcome = JSON.parse(existing.outcome_json) as EscalationOutcomeRecord;
       const row = st.getEscalation.get({ id: outcome.escalationId });
@@ -1479,7 +1487,7 @@ export function openStore(options: StoreOptions): Store {
     });
     const outcome: EscalationOutcomeRecord = { escalationId: id };
     st.putIdempotency.run({
-      agent: input.agent,
+      writer: input.agent,
       key: input.idempotencyKey,
       hash,
       outcome: JSON.stringify(outcome),

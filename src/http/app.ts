@@ -8,7 +8,6 @@ import { attachmentRoot, createAttachmentFiles } from './attachments.js';
 import type { AppContext } from './context.js';
 import { limitsFrom } from './context.js';
 import { invalid, toWireError } from './errors.js';
-import { createHumanIdempotency } from './human-idempotency.js';
 import { assertUsablePasswordHash } from './password.js';
 import { createRateLimiter } from './rate-limit.js';
 import { adminRoutes } from './routes/admin.js';
@@ -57,7 +56,6 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     agentLimiter: createRateLimiter(limits.requestsPerMinute),
     loginLimiter: createRateLimiter(LOGINS_PER_MINUTE),
     failedAuthLimiter: createRateLimiter(FAILED_AUTHS_PER_MINUTE),
-    humanPosts: createHumanIdempotency(),
     // Only under a declared TLS proxy: on loopback a Secure cookie would never
     // come back, locking the human out of a development instance (ADR-0016).
     secureCookies: config.behindProxy,

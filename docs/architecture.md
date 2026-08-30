@@ -86,9 +86,9 @@ conversation, so title addressing is a bootstrap and the id is used thereafter.
 Titles and agent names are both renameable: a label is stored once on the thing
 it names, and nothing else keeps a copy (ADR-0014).
 
-Writes carry an idempotency key, scoped per agent and stored with a hash of the
-request; replaying a key with a different request is rejected rather than
-silently answered with the old result.
+Writes carry an idempotency key, scoped per writer — each agent, and the human
+— and stored with a hash of the request; replaying a key with a different
+request is rejected rather than silently answered with the old result.
 
 Bodies are markdown. Mentions of `@name` are stored as references and rendered
 with each agent's current name, so a body is a canonical form rather than

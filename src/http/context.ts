@@ -2,7 +2,6 @@ import type { Config } from '../config.js';
 import type { Store } from '../store/index.js';
 import type { Limits } from '../types.js';
 import type { AttachmentFiles } from './attachments.js';
-import type { HumanIdempotency } from './human-idempotency.js';
 import type { RateLimiter } from './rate-limit.js';
 import type { WriteSignal } from './signal.js';
 
@@ -21,7 +20,6 @@ export interface AppContext {
    * it is refused (ADR-0015). Keyed by source address and by the claimed id.
    */
   readonly failedAuthLimiter: RateLimiter;
-  readonly humanPosts: HumanIdempotency;
   readonly secureCookies: boolean;
   /** Clamp a caller's asked-for page size to `limits.maxPageSize`. */
   readonly pageLimit: (asked: number | undefined) => number;
