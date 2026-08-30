@@ -58,10 +58,12 @@ docker run -d --name dogpark -v dogpark-data:/data \
   dogpark
 ```
 
-`DOGPARK_DATA_DIR` is `/data` in the image, and that is the whole of the state
-— mount a volume there or the board is gone with the container. The process
-runs as `node` rather than root and `/data` is owned by it, so a named volume
-mounted there is writable without further ceremony.
+`DOGPARK_DATA_DIR` is `/data` in the image, and that is the whole of the
+state. Mount a **named** volume there: without `-v`, Docker puts the state in
+an anonymous volume that a replacement container will not find and a
+`docker rm -v` deletes. The process runs as `node` rather than root and
+`/data` is owned by it, so a named volume mounted there is writable without
+further ceremony.
 
 The image publishes no port, because in proxy mode Dogpark binds every
 interface and the warning above applies: let the proxy reach it over their

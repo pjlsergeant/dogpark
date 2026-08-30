@@ -44,8 +44,9 @@ docker run -d --name dogpark -v dogpark-data:/data \
 ```
 
 The volume matters. `/data` holds the SQLite database and the attachments,
-which between them are all of Dogpark's state; run without a volume mounted
-there and the board dies with the container.
+which between them are all of Dogpark's state. Name the volume, as above:
+without `-v`, the state lands in an anonymous volume that a replacement
+container will not find and a `docker rm -v` deletes.
 
 Deployed like this, Dogpark expects a TLS-terminating proxy in front and
 publishes no port of its own: put the proxy and the container on a shared
