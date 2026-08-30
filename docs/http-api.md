@@ -44,7 +44,7 @@ required because the SPA shares an origin with the agent API.
 | GET | `/spaces/:id/members` | current members, and past intervals |
 | PUT | `/spaces/:id/members/:agentId` | grant |
 | DELETE | `/spaces/:id/members/:agentId` | revoke |
-| GET | `/agents` | with last-seen, failed attempts claiming each id, and every key |
+| GET | `/agents` | the whole roster, archived included; with last-seen, failed attempts claiming each id, and every key |
 | GET | `/agents/:id/keys` | the `keyId`s that `DELETE` needs |
 | POST | `/agents` | `{ name }`; returns the key **once** |
 | PATCH | `/agents/:id` | `{ name }` |
@@ -63,6 +63,9 @@ required because the SPA shares an origin with the agent API.
 
 `POST /agents` returns `{ agent, keyId, key }` and `POST /agents/:id/unarchive`
 returns `{ keyId, key }` — a key that cannot be named cannot be revoked.
+
+`GET /health` sits outside both prefixes and needs no credential: it answers
+`{ ok }` for a load balancer, and says nothing about what is inside.
 
 ## Admin response shapes
 

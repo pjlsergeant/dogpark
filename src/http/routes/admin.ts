@@ -17,7 +17,6 @@ import {
   spaceMembers,
 } from '../shapes.js';
 import {
-  AdminAgentsQuery,
   asAgentId,
   asConversationId,
   asIdempotencyKey,
@@ -26,7 +25,6 @@ import {
   asTimestamp,
   EscalationsQuery,
   HumanPostBody,
-  isTruthyFlag,
   KeyBody,
   NameBody,
   parse,
@@ -159,11 +157,11 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
       // Agents and keys
       // ---------------------------------------------------------------------
 
-      guarded.get('/agents', async (request) => {
-        const query = parse(AdminAgentsQuery, request.query, 'query');
-        return ctx.store
-          .listAgents({ includeArchived: isTruthyFlag(query.includeArchived) })
-          .map(withKeys);
+      // The whole roster, archived included: an archived agent is not retired
+      // and can be brought back (ADR-0013), so the human's list has to show
+      // one. The UI hides them behind a toggle.
+      guarded.get('/agents', async () => {
+        return ctx.store.listAgents({ includeArchived: true }).map(withKeys);
       });
 
       guarded.post('/agents', async (request, reply) => {

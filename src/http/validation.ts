@@ -97,8 +97,6 @@ export const SearchQuery = z.strictObject({
   limit: z.coerce.number().int().positive().optional(),
 });
 
-export const AdminAgentsQuery = z.strictObject({ includeArchived: z.string().optional() });
-
 const TRUE = new Set(['', '1', 'true', 'yes', 'on']);
 
 export function isTruthyFlag(value: string | undefined): boolean {

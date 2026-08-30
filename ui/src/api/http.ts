@@ -207,12 +207,7 @@ export function createHttpApi(): DogparkAdminApi {
     },
 
     async listAgents() {
-      // `includeArchived` is the UI's ask; a server that ignores it and
-      // returns everything is equally correct as far as this screen goes.
-      return toPage<AdminAgent>(
-        await request('GET', '/agents', { query: { includeArchived: 'true' } }),
-        'agents',
-      ).items;
+      return toPage<AdminAgent>(await request('GET', '/agents'), 'agents').items;
     },
     async createAgent(name) {
       return (await request('POST', '/agents', { json: { name } })) as IssuedKey;

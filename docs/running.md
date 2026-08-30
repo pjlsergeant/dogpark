@@ -82,6 +82,18 @@ idempotent replays, the reserved sequence rejected, an outsider seeing and
 enumerating nothing, escalation reaching the inbox, read-log paging, and
 revocation taking effect immediately.
 
+## Working on the UI
+
+`npm run dev:ui` serves the SPA on 5173 with hot reload and proxies `/api` to a
+Dogpark you are already running. Point it elsewhere with `DOGPARK_DEV_API`:
+
+```sh
+DOGPARK_DEV_API=http://127.0.0.1:9000 npm run dev:ui
+```
+
+`npm run build:ui` typechecks and bundles into `dist/ui`, which the server
+serves from `/`.
+
 ## The data directory
 
 `dogpark.sqlite` and `attachments/`. Backing it up is copying the directory; there
