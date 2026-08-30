@@ -936,8 +936,12 @@ describe('bodies are canonical', () => {
     expect(hits[0]?.snippet).toContain('@bob');
     expect(hits[0]?.message.body).toBe('ping @bob about the figures');
 
-    // The token is still searchable by the bare id.
-    expect(h.store.searchMessages(bob)).toHaveLength(1);
+    // The token is still searchable by the bare id, and the highlighted id
+    // renders as the highlighted name rather than a bracketed id.
+    const byId = h.store.searchMessages(bob);
+    expect(byId).toHaveLength(1);
+    expect(byId[0]?.snippet).toBe('ping @[bob] about the figures');
+    expect(byId[0]?.snippet).not.toContain(RESERVED_SEQUENCE);
   });
 
   it('keeps punctuation next to a mention', () => {

@@ -48,6 +48,7 @@ import {
   normalizeTimestamp,
   parseMentions,
   renderMentions,
+  renderSnippet,
   RESERVED_SEQUENCE,
 } from './text.js';
 
@@ -403,6 +404,10 @@ const READ_LOG_TAIL =
   '   AND (@afterAt IS NULL OR read_at < @afterAt ' +
   '        OR (read_at = @afterAt AND rowid < @afterRow)) ' +
   ' ORDER BY read_at DESC, rowid DESC LIMIT @limit';
+
+/** How FTS5 marks the matched tokens in a search snippet. */
+const SNIPPET_OPEN = '[';
+const SNIPPET_CLOSE = ']';
 
 function sha256(value: string): string {
   return createHash('sha256').update(value, 'utf8').digest('hex');
@@ -900,7 +905,7 @@ export function openStore(options: StoreOptions): Store {
       { query: string; space: string | null; limit: number },
       MessageRow & { snippet: string }
     >(
-      "SELECT m.*, snippet(message_fts, 0, '[', ']', '…', 24) AS snippet " +
+      `SELECT m.*, snippet(message_fts, 0, '${SNIPPET_OPEN}', '${SNIPPET_CLOSE}', '…', 24) AS snippet ` +
         'FROM message_fts JOIN message m ON m.seq = message_fts.rowid ' +
         'WHERE message_fts MATCH @query AND (@space IS NULL OR m.space_id = @space) ' +
         'ORDER BY rank LIMIT @limit',
@@ -2011,7 +2016,12 @@ export function openStore(options: StoreOptions): Store {
         message: toMessage(row, cache),
         // A snippet is a fragment of the stored body, so it is rendered like
         // the body: references become names, and the marker never leaves.
-        snippet: renderMentions(row.snippet, (agent) => mentionName(cache, row.space_id, agent)),
+        snippet: renderSnippet(
+          row.snippet,
+          (agent) => mentionName(cache, row.space_id, agent),
+          SNIPPET_OPEN,
+          SNIPPET_CLOSE,
+        ),
       }));
     },
 

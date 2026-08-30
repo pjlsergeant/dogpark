@@ -131,6 +131,36 @@ export function renderMentions(
 }
 
 /**
+ * Renders an FTS5 snippet. A snippet is a fragment of the stored body with
+ * the matched tokens wrapped in `open`/`close`, and the bare id is the token a
+ * reference contributes: a search for an agent's id highlights it as
+ * `@<marker>[<id>]`, which `renderMentions` alone would not recognise. The
+ * highlight is kept around the rendered name, so the match is still visible.
+ */
+export function renderSnippet(
+  snippet: string,
+  resolve: (agent: AgentId) => string | undefined,
+  open: string,
+  close: string,
+): string {
+  const highlighted = new RegExp(
+    `@${RESERVED_SEQUENCE}${escapeRegExp(open)}(${ID_PATTERN})${escapeRegExp(close)}`,
+    'g',
+  );
+  return renderMentions(
+    snippet.replace(
+      highlighted,
+      (_whole, id: string) => `@${open}${resolve(id as AgentId) ?? id}${close}`,
+    ),
+    resolve,
+  );
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
  * The mentions of a stored body, in order of appearance and deduplicated.
  * Parsed on output: there is no mentions table, so a rename touches nothing.
  */
