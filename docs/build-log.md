@@ -167,3 +167,35 @@ The fix is a migration keying idempotency on a writer that may be the literal
 `human`, since ids are base32 and cannot collide with it. Not done: it is a
 migration plus a coordinated change across two layers, and the failure it
 prevents is a duplicate message rather than a lost one.
+
+## What the auth throttle actually protects
+
+Worth recording because it was got wrong three times.
+
+An unauthenticated caller can present any key. The first attempt to bound that
+refused a request when both the source address and the agent id claimed in the
+key had spent their budget. That was bypassable: once the address bucket was
+spent, rotating a fabricated id gave every attempt a fresh claim bucket.
+
+Refusing on either bucket alone is worse. The address is shared by every agent
+on one host, which a fleet often is, so refusing on it locks out neighbours.
+The claimed id is public — it is the middle of every key, and any agent can
+list its peers — so refusing on it lets anyone lock out a named agent.
+
+The mistake was assuming there was expensive work to protect. Verification is
+one SHA-256 and an indexed lookup: the store deliberately does not stretch,
+because a key is 256 random bits with no dictionary behind it. The only real
+cost of a bad attempt is the counter write.
+
+So neither bucket refuses a request. They bound the *write*, a rejected key is
+always 401, and request-rate floods belong to the reverse proxy this design
+already assumes is in front. A fix that locks out legitimate callers to save a
+hash is not a fix.
+
+## A missing header is not consent
+
+In proxy mode a request was refused only if `X-Forwarded-Proto` said plaintext.
+A request that reached the process directly could omit the header and be
+served — and proxy mode binds `0.0.0.0`, so an exposed port carried bearer
+tokens in the clear. Treating silence as consent made the check optional for
+exactly the caller it existed to stop.
