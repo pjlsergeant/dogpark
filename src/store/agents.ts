@@ -2,11 +2,11 @@
 import { randomBytes } from 'node:crypto';
 import type { AgentId, Timestamp } from '../types.js';
 import type { StoreContext } from './context.js';
-import { sha256, uniqueOr } from './context.js';
-import { invalid, notFound } from './errors.js';
+import { invalid, notFound, uniqueOr } from './errors.js';
+import { sha256 } from './hash.js';
 import { KEY_PREFIX, newId, splitKey } from './ids.js';
-import type { Store } from './index.js';
-import type { AgentRecord } from './records.js';
+import type { AgentRecord, Store } from './records.js';
+import type { AgentRow } from './statements.js';
 import { assertNoReservedSequence, assertValidName } from './text.js';
 
 export function agentStore(
@@ -25,7 +25,18 @@ export function agentStore(
   | 'revokeKey'
   | 'listKeys'
 > {
-  const { db, st, now, toAgentRecord, requireAgentRow, requireSpaceRow, isCurrentMember } = ctx;
+  const { db, st, now, requireAgentRow, requireSpaceRow, isCurrentMember } = ctx;
+
+  function toAgentRecord(row: AgentRow): AgentRecord {
+    return {
+      id: row.id as AgentId,
+      displayName: row.display_name,
+      archived: row.archived === 1,
+      createdAt: row.created_at as Timestamp,
+      lastSeenAt: row.last_seen_at as Timestamp | null,
+      failedAuthAttempts: row.failed_auth_attempts,
+    };
+  }
 
   /**
    * A rename journals the label it replaces, in the same transaction, so the

@@ -4,6 +4,7 @@
  * `StoreContext`.
  */
 import type { Database as Db } from 'better-sqlite3';
+import { SNIPPET_CLOSE, SNIPPET_OPEN } from './text.js';
 
 /**
  * What the store uses of a prepared statement. Its own type rather than the
@@ -11,7 +12,7 @@ import type { Database as Db } from 'better-sqlite3';
  * type that a declaration file cannot name. `P` is the bound parameters:
  * `[]` for none, otherwise one named-parameter object.
  */
-export interface Prepared<P extends object | unknown[], R> {
+export interface Prepared<P extends Record<string, unknown> | [], R> {
   get(...params: P extends [] ? [] : [P]): R | undefined;
   all(...params: P extends [] ? [] : [P]): R[];
   run(...params: P extends [] ? [] : [P]): { readonly changes: number };
@@ -94,15 +95,18 @@ export interface ReadLogRow {
   item_count: number;
 }
 
-/** Everything the read-log statements bind apart from the agent. */
-export interface ReadLogBounds {
+/**
+ * Everything the read-log statements bind apart from the agent. A type, not
+ * an interface, so it satisfies `Prepared`'s named-parameter constraint.
+ */
+export type ReadLogBounds = {
   since: string | null;
   until: string | null;
   afterAt: string | null;
   /** Only read when `afterAt` is not null, but a named parameter binds either way. */
   afterRow: number;
   limit: number;
-}
+};
 
 export interface ConversationSummaryRow extends ConversationRow {
   message_count: number;
@@ -134,15 +138,11 @@ const READ_LOG_TAIL =
   '        OR (read_at = @afterAt AND rowid < @afterRow)) ' +
   ' ORDER BY read_at DESC, rowid DESC LIMIT @limit';
 
-/** How FTS5 marks the matched tokens in a search snippet. */
-const SNIPPET_OPEN = '[';
-const SNIPPET_CLOSE = ']';
-
 export function prepareStatements(db: Db) {
   // The library's conditional `Statement` type is not assignable to `Prepared`
   // for a still-generic `P`, though every instantiation is; the cast is the
   // one place the two meet.
-  const prepare = <P extends object | unknown[], R>(sql: string): Prepared<P, R> =>
+  const prepare = <P extends Record<string, unknown> | [], R>(sql: string): Prepared<P, R> =>
     db.prepare<P, R>(sql) as unknown as Prepared<P, R>;
 
   return {
@@ -155,9 +155,6 @@ export function prepareStatements(db: Db) {
       'INSERT INTO agent (id, display_name, created_at) VALUES (@id, @name, @at)',
     ),
     getAgent: prepare<{ id: string }, AgentRow>('SELECT * FROM agent WHERE id = @id'),
-    getAgentByName: prepare<{ name: string }, AgentRow>(
-      'SELECT * FROM agent WHERE display_name = @name',
-    ),
     renameAgent: prepare<{ id: string; name: string }, unknown>(
       'UPDATE agent SET display_name = @name WHERE id = @id',
     ),

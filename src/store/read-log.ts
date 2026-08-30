@@ -1,12 +1,11 @@
 /** The read log: recording reads, and the forensic view over them (ADR-0005). */
 import type { AgentId, Cursor, Timestamp } from '../types.js';
 import type { StoreContext } from './context.js';
-import { clampLimit } from './context.js';
 import { decodeReadLogCursor, encodeReadLogCursor } from './cursors.js';
 import { newId } from './ids.js';
-import type { ReadKind, ReadLogEntry } from './records.js';
+import { clampLimit } from './limits.js';
+import type { ReadKind, ReadLogEntry, Store } from './records.js';
 import type { ReadLogBounds, ReadLogRow } from './statements.js';
-import type { Store } from './index.js';
 import { normalizeTimestamp } from './text.js';
 
 export function recordRead(
@@ -32,13 +31,6 @@ export function readLogStore(
   ctx: StoreContext,
 ): Pick<Store, 'readReadLog' | 'lastReadCursor' | 'recordAttachmentRead'> {
   const { st, requireAgentRow } = ctx;
-  const writeRead = (
-    agent: AgentId,
-    kind: ReadKind,
-    params: unknown,
-    cursor: string,
-    itemCount: number,
-  ): void => recordRead(ctx, agent, kind, params, cursor, itemCount);
 
   function toReadLogEntry(row: ReadLogRow): ReadLogEntry {
     return {
@@ -92,7 +84,7 @@ export function readLogStore(
       requireAgentRow(agent);
       // No position comes back from a file, so the cursor is empty rather
       // than invented; the parameters say which file, and whose message.
-      writeRead(agent, 'attachment', { attachment, message }, '', 1);
+      recordRead(ctx, agent, 'attachment', { attachment, message }, '', 1);
     },
   };
 }

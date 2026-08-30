@@ -1,9 +1,9 @@
 /** Spaces, and membership as append-only intervals (ADR-0011). */
 import type { AgentId, SpaceId, Timestamp } from '../types.js';
 import type { StoreContext } from './context.js';
-import { uniqueOr } from './context.js';
+import { uniqueOr } from './errors.js';
 import { newId } from './ids.js';
-import type { Store } from './index.js';
+import type { Store } from './records.js';
 import { assertNonEmpty } from './text.js';
 
 export function spaceStore(

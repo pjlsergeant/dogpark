@@ -25,3 +25,15 @@ export function notFound(what: string): StoreError {
 export function invalid(message: string): StoreError {
   return new StoreError('invalid_request', message);
 }
+
+/**
+ * SQLite reports a violated unique index as an opaque error; turn the ones we
+ * provoke deliberately into `invalid_request` and let anything else through
+ * unchanged.
+ */
+export function uniqueOr(error: unknown, message: string): unknown {
+  if (error instanceof Error && /UNIQUE constraint failed/.test(error.message)) {
+    return new StoreError('invalid_request', message);
+  }
+  return error;
+}

@@ -15,33 +15,32 @@ import type {
   StreamItem,
   StreamPage,
 } from '../types.js';
-import { resolveConversationTx } from './conversations.js';
+import type { ConversationResolver } from './conversations.js';
 import type { StoreContext } from './context.js';
-import { clampLimit, constantTimeEquals, requestHash } from './context.js';
+import { constantTimeEquals, requestHash } from './hash.js';
+import { clampLimit } from './limits.js';
 import { decodeCursor, decodeQueryCursor, encodeCursor, encodeQueryCursor } from './cursors.js';
 import { invalid, notFound } from './errors.js';
 import { newId } from './ids.js';
-import type { Store } from './index.js';
-import { recordRead } from './reads.js';
+import { recordRead } from './read-log.js';
 import type {
   PostMessageInput,
   PostMessageResult,
   Reader,
-  ReadKind,
   ReadStreamArgs,
+  Store,
 } from './records.js';
 import { createRenderer } from './render.js';
 import type { ConversationRow, MessageRow } from './statements.js';
 import {
   assertNoReservedSequence,
   assertNonEmpty,
+  encodeMentions,
   normalizeTimestamp,
   renderSnippet,
+  SNIPPET_CLOSE,
+  SNIPPET_OPEN,
 } from './text.js';
-
-/** How FTS5 marks the matched tokens in a search snippet. */
-const SNIPPET_OPEN = '[';
-const SNIPPET_CLOSE = ']';
 
 /**
  * Who a write is idempotent for. An agent is its own id; the human is
@@ -61,6 +60,7 @@ function writerOf(sender: { readonly kind: 'agent' | 'human'; readonly id?: Agen
 
 export function messageStore(
   ctx: StoreContext,
+  resolveConversation: ConversationResolver,
 ): Pick<
   Store,
   | 'postMessage'
@@ -71,26 +71,29 @@ export function messageStore(
   | 'getAttachment'
   | 'renderAsOfRead'
 > {
-  const {
-    db,
-    st,
-    now,
-    nextSeq,
-    tip,
-    toConversation,
-    requireAgentRow,
-    requireReadAccess,
-    isCurrentMember,
-  } = ctx;
-  const { newRenderCache, mentionName, toMessage, toEvent, canonicalBody } = createRenderer(ctx);
-  const resolveConversation = resolveConversationTx(ctx);
-  const writeRead = (
-    agent: AgentId,
-    kind: ReadKind,
-    params: unknown,
-    cursor: string,
-    itemCount: number,
-  ): void => recordRead(ctx, agent, kind, params, cursor, itemCount);
+  const { db, st, now, nextSeq, toConversation, requireAgentRow, isCurrentMember } = ctx;
+  const { newRenderCache, mentionName, toMessage, toEvent } = createRenderer(ctx);
+
+  function tip(): number {
+    return st.tip.get()?.next ?? 0;
+  }
+
+  /**
+   * Current access, evaluated at read time. Everything an agent may not see
+   * reports `not_found`, so error codes cannot map the fleet (ADR-0003).
+   */
+  function requireReadAccess(reader: Reader, space: SpaceId, what: string): void {
+    if (reader.kind === 'human') return;
+    if (!isCurrentMember(reader.id, space)) throw notFound(what);
+  }
+
+  /** Mentions resolved to references on the way in (ADR-0014). */
+  function canonicalBody(space: SpaceId, body: string): string {
+    return encodeMentions(body, (name) => {
+      const row = st.resolveMentionName.get({ space, name });
+      return row === undefined ? undefined : (row.id as AgentId);
+    });
+  }
 
   interface PostOutcome {
     readonly messageId: string;
@@ -288,7 +291,7 @@ export function messageStore(
     const nextSeqValue = hasMore && lastSeq !== undefined ? lastSeq : Math.max(currentTip, after);
     const nextCursor = encodeCursor(nextSeqValue);
 
-    writeRead(agent, 'stream', { from: args.from ?? null, limit }, nextCursor, items.length);
+    recordRead(ctx, agent, 'stream', { from: args.from ?? null, limit }, nextCursor, items.length);
     return { items, nextCursor, hasMore };
   });
 
@@ -385,7 +388,8 @@ export function messageStore(
       });
       const page = pageMessages(rows, plan);
       if (reader.kind === 'agent') {
-        writeRead(
+        recordRead(
+          ctx,
           reader.id,
           'conversation',
           { conversation, range: range ?? null, limit: plan.limit },
@@ -418,7 +422,8 @@ export function messageStore(
       });
       const page = pageMessages(rows, plan);
       if (reader.kind === 'agent') {
-        writeRead(
+        recordRead(
+          ctx,
           reader.id,
           'space',
           { space, range: range ?? null, limit: plan.limit },

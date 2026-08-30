@@ -9,23 +9,23 @@ import type {
   Timestamp,
 } from '../types.js';
 import type { StoreContext } from './context.js';
-import { uniqueOr } from './context.js';
-import { notFound } from './errors.js';
+import { notFound, uniqueOr } from './errors.js';
 import { newId } from './ids.js';
-import type { Store } from './index.js';
-import type { Reader } from './records.js';
+import type { Reader, Store } from './records.js';
 import type { ConversationRow, ConversationSummaryRow } from './statements.js';
 import { assertNonEmpty } from './text.js';
+
+export type ConversationResolver = Transaction<
+  (space: SpaceId, title: string, createdBy: Reader | undefined) => ConversationRow
+>;
 
 /**
  * Resolve-or-create in one statement pair inside one transaction, so two
  * writers racing on the same subject line cannot open two threads
- * (ADR-0012). Shared with `postMessage`, which is how threads are opened in
- * production.
+ * (ADR-0012). Built once by `openStore` and shared with `postMessage`, which
+ * is how threads are opened in production.
  */
-export function resolveConversationTx(
-  ctx: StoreContext,
-): Transaction<(space: SpaceId, title: string, createdBy: Reader | undefined) => ConversationRow> {
+export function conversationResolver(ctx: StoreContext): ConversationResolver {
   const { db, st, now } = ctx;
   return db.transaction(
     (space: SpaceId, title: string, createdBy: Reader | undefined): ConversationRow => {
@@ -46,6 +46,7 @@ export function resolveConversationTx(
 
 export function conversationStore(
   ctx: StoreContext,
+  resolveConversation: ConversationResolver,
 ): Pick<
   Store,
   | 'resolveOrCreateConversation'
@@ -54,7 +55,6 @@ export function conversationStore(
   | 'listConversationSummaries'
 > {
   const { db, st, now, humanDisplayName, toConversation, requireSpaceRow } = ctx;
-  const resolveConversation = resolveConversationTx(ctx);
 
   /** The sender of a conversation's last message, or null if it has none. */
   function toLastSender(row: ConversationSummaryRow): Sender | null {

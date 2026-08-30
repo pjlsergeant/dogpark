@@ -2,10 +2,10 @@
 import { randomBytes } from 'node:crypto';
 import type { Timestamp } from '../types.js';
 import type { StoreContext } from './context.js';
-import { sha256 } from './context.js';
 import { invalid } from './errors.js';
+import { sha256 } from './hash.js';
 import { newId } from './ids.js';
-import type { Store } from './index.js';
+import type { Store } from './records.js';
 
 export function sessionStore(
   ctx: StoreContext,

@@ -17,7 +17,7 @@ import type {
 } from '../types.js';
 import type { StoreContext } from './context.js';
 import type { EventRow, MessageRow } from './statements.js';
-import { encodeMentions, parseMentions, renderMentions } from './text.js';
+import { parseMentions, renderMentions } from './text.js';
 
 /**
  * A per-call cache: one page can hold many messages from one conversation
@@ -130,14 +130,5 @@ export function createRenderer(ctx: StoreContext) {
     };
   }
 
-  function canonicalBody(space: SpaceId, body: string): string {
-    return encodeMentions(body, (name) => {
-      const row = st.resolveMentionName.get({ space, name });
-      return row === undefined ? undefined : (row.id as AgentId);
-    });
-  }
-
-  return { newRenderCache, mentionName, toMessage, toEvent, canonicalBody };
+  return { newRenderCache, mentionName, toMessage, toEvent };
 }
-
-export type Renderer = ReturnType<typeof createRenderer>;

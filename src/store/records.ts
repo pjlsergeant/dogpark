@@ -1,22 +1,31 @@
 /**
- * Public shapes of the store that the protocol (`src/types.ts`) does not
- * already name: what the HTTP layer and the UI's admin surface see.
+ * The store's public surface: the shapes the protocol (`src/types.ts`) does
+ * not already name, and the `Store` interface the domain modules implement.
  */
+import type { Database as Db } from 'better-sqlite3';
 import type {
   Agent,
   AgentId,
+  Attachment,
   AttachmentId,
   Conversation,
   ConversationId,
+  Cursor,
   IdempotencyKey,
   Message,
+  MessageId,
+  MessagePage,
   PostTarget,
+  Range,
   ReadFrom,
   Sender,
+  Space,
   SpaceId,
+  StreamPage,
   Timestamp,
 } from '../types.js';
 import type { ReadLogCursor } from './cursors.js';
+import type { MigrateResult } from './migrate.js';
 
 /**
  * Who is reading or writing. The human has no agent row, so the union is not
@@ -215,4 +224,155 @@ export interface StoreOptions {
   readonly humanDisplayName: string;
   /** Injectable so tests can control ordering and expiry. */
   readonly now?: (() => Date) | undefined;
+}
+
+export interface Store {
+  close(): void;
+  /** Escape hatch for the HTTP layer's health check. Not for queries. */
+  readonly database: Db;
+  /** What `openStore` migrated the schema to on the way in. */
+  readonly schema: MigrateResult;
+  readonly reservedSequence: string;
+
+  // Agents
+  createAgent(displayName: string): AgentRecord;
+  renameAgent(agent: AgentId, displayName: string): AgentRecord;
+  archiveAgent(agent: AgentId): AgentRecord;
+  unarchiveAgent(agent: AgentId): AgentRecord;
+  listAgents(options?: { readonly includeArchived?: boolean | undefined }): readonly AgentRecord[];
+  getAgent(agent: AgentId): AgentRecord | undefined;
+  listAgentsSharingSpaceWith(agent: AgentId, space?: SpaceId | undefined): readonly Agent[];
+
+  // Keys
+  issueKey(agent: AgentId, label?: string | undefined): IssuedKey;
+  /**
+   * `countFailure` false verifies without charging the agent's failure
+   * counter — for a caller that has decided this attempt is part of a flood
+   * and should not drive public telemetry further.
+   */
+  verifyKey(
+    presented: string,
+    options?: { readonly countFailure?: boolean },
+  ): AgentRecord | undefined;
+  revokeKey(keyId: string): void;
+  listKeys(agent: AgentId): readonly KeyRecord[];
+
+  // Spaces and membership
+  createSpace(name: string): Space;
+  renameSpace(space: SpaceId, name: string): Space;
+  listSpaces(): readonly Space[];
+  getSpace(space: SpaceId): Space | undefined;
+  grantMembership(agent: AgentId, space: SpaceId): boolean;
+  revokeMembership(agent: AgentId, space: SpaceId): boolean;
+  isCurrentMember(agent: AgentId, space: SpaceId): boolean;
+  listSpacesForAgent(agent: AgentId): readonly Space[];
+  listMembershipIntervals(filter?: {
+    readonly agent?: AgentId | undefined;
+    readonly space?: SpaceId | undefined;
+  }): readonly MembershipInterval[];
+
+  // Conversations
+  /** Test fixtures only: production opens threads through `postMessage`. */
+  resolveOrCreateConversation(
+    space: SpaceId,
+    title: string,
+    createdBy?: Reader | undefined,
+  ): Conversation;
+  getConversation(conversation: ConversationId): Conversation | undefined;
+  renameConversation(conversation: ConversationId, title: string): Conversation;
+  /**
+   * The thread list: every conversation in a space with its message count,
+   * last activity and last sender, ordered by last activity. The admin
+   * surface's — no call enumerates a space's conversations for an agent.
+   */
+  listConversationSummaries(space: SpaceId): readonly ConversationSummary[];
+
+  // Messages
+  postMessage(input: PostMessageInput): PostMessageResult;
+  readStream(agent: AgentId, args?: ReadStreamArgs): StreamPage;
+  /**
+   * Both message queries honour `Range.order`. `oldest` pages forward from the
+   * start; `newest` pages backwards from the end and returns each page
+   * newest-first, so `messages[0]` is the newest message on it. `hasMore`
+   * means "more in the direction you are travelling" — older ones, backwards.
+   */
+  readConversation(
+    reader: Reader,
+    conversation: ConversationId,
+    range?: Range | undefined,
+    limit?: number | undefined,
+  ): MessagePage;
+  readSpace(
+    reader: Reader,
+    space: SpaceId,
+    range?: Range | undefined,
+    limit?: number | undefined,
+  ): MessagePage;
+  searchMessages(
+    query: string,
+    options?: {
+      readonly space?: SpaceId | undefined;
+      readonly limit?: number | undefined;
+    },
+  ): readonly SearchHit[];
+  /**
+   * Metadata only; the bytes live on the volume. Carries the space as well as
+   * the message, because a file's visibility is its message's and the caller
+   * would otherwise have to fetch the message just to learn which space to
+   * authorise against.
+   */
+  getAttachment(
+    attachment: AttachmentId,
+  ): (Attachment & { readonly message: MessageId; readonly space: SpaceId }) | undefined;
+  /**
+   * One message rendered with the labels in force when a given read-log row
+   * was written: the sender's name, the conversation's title and the
+   * mentioned names as they stood then, from the label history (migration
+   * 0002). Ordered by the history's own sequence rather than by clock, so a
+   * read and a rename in the same millisecond still come out in the order
+   * they happened.
+   *
+   * A label snapshot, not proof of inclusion: this does not check that the
+   * message was on that read's page. Whether it was is a question about the
+   * row's kind, parameters and cursor, which the row records; this answers
+   * the other half — given that it was, what wording went out. Undefined if
+   * either id is unknown.
+   */
+  renderAsOfRead(message: MessageId, read: string): Message | undefined;
+
+  // Escalations
+  recordEscalation(input: RecordEscalationInput): EscalationOutcome;
+  listEscalations(filter?: {
+    readonly state?: NotificationState | undefined;
+    readonly dueAt?: Timestamp | undefined;
+    readonly limit?: number | undefined;
+  }): readonly EscalationRecord[];
+  markEscalationNotification(
+    escalation: string,
+    state: NotificationState,
+    options?: {
+      readonly error?: string | undefined;
+      readonly nextAttemptAt?: Timestamp | undefined;
+    },
+  ): EscalationRecord;
+
+  // The read log
+  /**
+   * The forensic view, newest first, filtered and paged. This is the read log
+   * table's only full reader: it grows faster than anything else here, so
+   * every page is bounded and resumable.
+   */
+  readReadLog(filter?: ReadLogFilter): ReadLogPage;
+  lastReadCursor(agent: AgentId): Cursor | undefined;
+  /**
+   * An attachment fetch is a read of content and gets its row like any other
+   * (ADR-0005). Called by the route once the bytes are about to be served.
+   */
+  recordAttachmentRead(agent: AgentId, attachment: AttachmentId, message: MessageId): void;
+
+  // Sessions
+  createSession(ttlSeconds: number): IssuedSession;
+  verifySession(token: string): SessionRecord | undefined;
+  deleteSession(token: string): boolean;
+  deleteExpiredSessions(): number;
 }

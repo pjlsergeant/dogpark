@@ -130,6 +130,10 @@ export function renderMentions(
     .replaceAll(RESERVED_SEQUENCE, '');
 }
 
+/** How FTS5 is asked to mark the matched tokens in a snippet; `renderSnippet` looks for the same pair. */
+export const SNIPPET_OPEN = '[';
+export const SNIPPET_CLOSE = ']';
+
 /**
  * Renders an FTS5 snippet. A snippet is a fragment of the stored body with
  * the matched tokens wrapped in `open`/`close`, and the bare id is the token a

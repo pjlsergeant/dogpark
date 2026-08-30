@@ -1,15 +1,16 @@
 /** Escalations, carrying their own notification retry state. */
 import type { AgentId, ConversationId, SpaceId, Timestamp } from '../types.js';
 import type { StoreContext } from './context.js';
-import { clampLimit, constantTimeEquals, requestHash } from './context.js';
+import { constantTimeEquals, requestHash } from './hash.js';
+import { clampLimit } from './limits.js';
 import { invalid, notFound } from './errors.js';
 import { newId } from './ids.js';
-import type { Store } from './index.js';
 import type {
   EscalationOutcome,
   EscalationRecord,
   NotificationState,
   RecordEscalationInput,
+  Store,
 } from './records.js';
 import type { EscalationRow } from './statements.js';
 import { assertNonEmpty } from './text.js';
@@ -49,7 +50,7 @@ export function escalationStore(
 
     const existing = st.getIdempotency.get({ writer: input.agent, key: input.idempotencyKey });
     if (existing !== undefined) {
-      // As in `postTx`: a key last used for a post is a different request.
+      // As in `postMessage`: a key last used for a post is a different request.
       const outcome = JSON.parse(existing.outcome_json) as Partial<EscalationOutcomeRecord>;
       if (typeof outcome.escalationId !== 'string') {
         throw invalid('idempotency key was already used for a different request');
