@@ -353,7 +353,7 @@ function Thread({
     if (fresh) {
       // A full load: land on the message that was sought, if the walk found
       // it; otherwise — no link, a stale id, a thread longer than the budget
-      // — at the live edge, however many pages were pulled on the way.
+      // — at the live edge, on the newest page alone (`loadThread`).
       const sought = seek.current;
       seek.current = undefined;
       const target = sought === undefined ? null : document.getElementById(`m-${sought}`);

@@ -69,20 +69,23 @@ describe('assembling a thread from newest-first pages', () => {
     expect(loaded.pages).toBe(2);
   });
 
-  it('gives up at the beginning of a thread that never held it', async () => {
+  it('opens on the newest page alone when the thread never held it', async () => {
     const api = fakeThread(9, 3);
     const loaded = await loadThread(api, conversation, 'nope' as MessageId);
-    expect(loaded.messages).toHaveLength(9);
-    expect(loaded.hasMore).toBe(false);
+    // Walked to the beginning looking, then discarded the walk: one page, so
+    // the reader is at the live edge and keeps following it.
     expect(api.calls).toBe(3);
+    expect(ids(loaded)).toEqual(['m7', 'm8', 'm9']);
+    expect(loaded.pages).toBe(1);
+    expect(loaded.hasMore).toBe(true);
   });
 
-  it('walks no further than the page budget', async () => {
+  it('walks no further than the budget, and shows the newest page if that was not enough', async () => {
     const api = fakeThread(100, 3);
     const loaded = await loadThread(api, conversation, 'm1' as MessageId, 4);
-    expect(loaded.pages).toBe(4);
-    expect(loaded.messages).toHaveLength(12);
-    expect(loaded.hasMore).toBe(true);
+    expect(api.calls).toBe(4);
+    expect(loaded.pages).toBe(1);
+    expect(ids(loaded)).toEqual(['m98', 'm99', 'm100']);
   });
 
   it('prepends one older page on request, and nothing past the beginning', async () => {

@@ -20,9 +20,11 @@ export interface Loaded {
 export type ThreadReader = Pick<DogparkAdminApi, 'readConversation'>;
 
 /**
- * How far back a deep link walks looking for its message before giving up and
- * showing what it has. A link to a message that is not in the thread — or a
- * thread longer than this — opens at the newest page, as it did before.
+ * How far back a deep link walks looking for its message before giving up. A
+ * link to a message that is not in the thread — or a thread longer than this
+ * — opens on the newest page alone, exactly as a thread opened without a link:
+ * the pages walked on the way are discarded, so the reader is in the one-page
+ * shape the poll treats as "at the live edge" and keeps following the tip.
  */
 export const MAX_PAGES_FOR_TARGET = 50;
 
@@ -58,13 +60,14 @@ export async function loadThread(
   maxPages: number = MAX_PAGES_FOR_TARGET,
 ): Promise<Loaded> {
   const first = await api.readConversation(conversation, { order: 'newest' });
-  let loaded: Loaded = {
+  const newest: Loaded = {
     messages: [...first.messages].reverse(),
     nextCursor: first.nextCursor,
     hasMore: first.hasMore,
     pages: 1,
   };
-  if (target === undefined) return loaded;
+  if (target === undefined) return newest;
+  let loaded = newest;
   const holdsTarget = (): boolean => loaded.messages.some((m) => m.id === target);
   while (
     !holdsTarget() &&
@@ -74,5 +77,5 @@ export async function loadThread(
   ) {
     loaded = await olderPage(api, conversation, loaded);
   }
-  return loaded;
+  return holdsTarget() ? loaded : newest;
 }
