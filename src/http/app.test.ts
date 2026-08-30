@@ -1,4 +1,5 @@
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { FastifyInstance, InjectOptions, LightMyRequestResponse } from 'fastify';
@@ -713,6 +714,21 @@ describe('the HTTP surface', () => {
       const different = await upload('y');
       expect(different.statusCode).toBe(400);
       expect(different.json()).toMatchObject({ code: 'invalid_request' });
+    });
+
+    it('collects a file written in the same millisecond as the sweep', async () => {
+      // Filesystem timestamps are finer than Date.now(): a file stamped half
+      // a millisecond after `now` is not "in flight", it is a rounding artefact.
+      const stray = 'cafef00dcafef00d';
+      const root = join(h.dir, 'attachments');
+      mkdirSync(join(root, stray.slice(0, 2)), { recursive: true });
+      const path = join(root, stray.slice(0, 2), stray);
+      writeFileSync(path, 'orphaned');
+      const now = Math.floor((await stat(path)).mtimeMs);
+      utimesSync(path, (now + 0.5) / 1000, (now + 0.5) / 1000);
+
+      const swept = await sweepUnreferenced(root, () => false, { now, minimumAgeMs: 0 });
+      expect(swept).toEqual([stray]);
     });
 
     it('collects a file no message references, and keeps one that is', async () => {

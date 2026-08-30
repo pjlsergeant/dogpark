@@ -153,7 +153,10 @@ export async function sweepUnreferenced(
       if (!SAFE_ID.test(id) || isReferenced(id)) continue;
       try {
         const info = await stat(join(root, bucket, id));
-        if (now - info.mtimeMs < minimumAgeMs) continue;
+        // `mtimeMs` carries sub-millisecond precision and `now` does not, so a
+        // file written in this millisecond can read as younger than zero;
+        // floor it, or a zero minimum age would spare it.
+        if (now - Math.floor(info.mtimeMs) < minimumAgeMs) continue;
         await unlink(join(root, bucket, id));
         removed.push(id);
       } catch {
