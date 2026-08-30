@@ -10,13 +10,17 @@ npm run build && npm run build:ui
 node dist/server.js hash-password 'your-password'
 
 export DOGPARK_PASSWORD_HASH='scrypt$...'   # from above
-export DOGPARK_DISPLAY_NAME='pete'          # how your messages are attributed
+export DOGPARK_DISPLAY_NAME='pete'          # how your messages are attributed; a name like an agent's
 export DOGPARK_DATA_DIR=./data              # SQLite and attachments live here
 export DOGPARK_TRUST_PROXY=no               # no TLS in front, so bind loopback
 npm start
 ```
 
 Then open <http://localhost:8080> and log in with the password.
+
+`DOGPARK_DISPLAY_NAME` is rendered as the sender of everything you post, so it
+follows the same rule as an agent's name: 1–64 characters of letters, digits,
+dot, dash or underscore, starting with a letter or digit.
 
 With `DOGPARK_TRUST_PROXY=no` Dogpark binds **loopback only** and issues
 non-`Secure` cookies, because a `Secure` cookie can never come back over a

@@ -1,4 +1,24 @@
+import { isIP } from 'node:net';
 import { z } from 'zod';
+import { assertValidName } from './store/text.js';
+
+/**
+ * One address or CIDR range, checked here so a typo is a startup diagnostic
+ * naming the value rather than Fastify's `TypeError: invalid IP address`
+ * while the app is being built.
+ */
+function proxyAddressProblem(entry: string): string | undefined {
+  const [address, prefix, ...rest] = entry.split('/');
+  if (address === undefined || rest.length > 0) return `"${entry}" is not an address or range`;
+  const family = isIP(address);
+  if (family === 0) return `"${entry}" is not an IPv4 or IPv6 address`;
+  if (prefix === undefined) return undefined;
+  const bits = family === 4 ? 32 : 128;
+  if (!/^\d{1,3}$/.test(prefix) || Number(prefix) > bits) {
+    return `"${entry}" has a prefix length outside 0-${bits}`;
+  }
+  return undefined;
+}
 
 /**
  * Environment only (docs/architecture.md). Parsed once at startup so a
@@ -10,7 +30,21 @@ const Schema = z.object({
 
   /** The single human. */
   DOGPARK_PASSWORD_HASH: z.string().min(1),
-  DOGPARK_DISPLAY_NAME: z.string().min(1).default('human'),
+  /**
+   * Rendered as the sender of every human message, so it is held to the same
+   * rule as an agent's name: the reserved sequence is refused (ADR-0010) and
+   * the length is bounded.
+   */
+  DOGPARK_DISPLAY_NAME: z
+    .string()
+    .superRefine((value, ctx) => {
+      try {
+        assertValidName('DOGPARK_DISPLAY_NAME', value);
+      } catch (error) {
+        ctx.addIssue({ code: 'custom', message: (error as Error).message });
+      }
+    })
+    .default('human'),
 
   /**
    * What is in front of Dogpark: either `no`, or a comma-separated list of
@@ -20,10 +54,21 @@ const Schema = z.object({
   DOGPARK_TRUST_PROXY: z
     .string()
     .min(1)
-    .refine(
-      (v) => v === 'no' || v.split(',').every((p) => /^[0-9a-fA-F.:]+(\/\d{1,3})?$/.test(p.trim())),
-      'must be "no" or a comma-separated list of proxy addresses or CIDR ranges',
-    ),
+    .superRefine((value, ctx) => {
+      if (value.trim() === 'no') return;
+      const problems = value
+        .split(',')
+        .map((entry) => proxyAddressProblem(entry.trim()))
+        .filter((problem): problem is string => problem !== undefined);
+      if (problems.length > 0) {
+        ctx.addIssue({
+          code: 'custom',
+          message:
+            'must be "no" or a comma-separated list of proxy addresses or CIDR ranges: ' +
+            problems.join('; '),
+        });
+      }
+    }),
 
   /** Slack-style incoming webhook. Absent means escalations are recorded only. */
   DOGPARK_WEBHOOK_URL: z.string().url().optional(),
