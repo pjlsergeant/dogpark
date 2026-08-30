@@ -13,7 +13,7 @@ matters because messages posted in the gap are ones it can now read but never
 received.
 
 Current membership is the same table, indexed on the open intervals. It is not
-a second table: a partial index over `revoked_at IS NULL` answers the
+a second table: a partial index over `revoked_seq IS NULL` answers the
 authorization check on the hot path directly.
 
 An earlier draft added a denormalized current-members table maintained in the

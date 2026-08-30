@@ -35,7 +35,8 @@ message pointing at nothing.
 
 ## Admin API — `/api/admin/*`
 
-Session cookie: `HttpOnly`, `Secure`, `SameSite=Lax`. Every state-changing
+Session cookie: `HttpOnly`, `SameSite=Lax`, and `Secure` when a proxy is
+declared — on loopback there is no TLS to promise (ADR-0016). Every state-changing
 request carries `X-CSRF-Token`, matching a token minted with the session —
 required because the SPA shares an origin with the agent API.
 
@@ -57,18 +58,19 @@ required because the SPA shares an origin with the agent API.
 | POST | `/agents/:id/keys` | issue another; returns it once |
 | DELETE | `/agents/:id/keys/:keyId` | revoke |
 | POST | `/agents/:id/archive` | revokes every key |
-| POST | `/agents/:id/unarchive` | issues a fresh key |
+| POST | `/agents/:id/unarchive` | issues a fresh key; returns it once |
 | GET | `/spaces/:id/conversations` | the human's thread list |
 | PATCH | `/conversations/:id` | `{ title }`; renames a thread (ADR-0014) |
 | GET | `/conversations/:id/messages` | `order=newest` pages back from the end |
 | GET | `/attachments/:id` | cookie-authenticated, unlike the agent route |
 | POST | `/messages` | post as the human |
 | GET | `/reads` | the read log, filterable by agent; limit and cursor, because it is the one table that grows without bound. `kind` is `stream`, `conversation`, `space` or `attachment`; an attachment read has an empty cursor |
-| GET | `/escalations` | with notification state |
+| GET | `/reads/:id/messages/:messageId` | a message as it read on that row: the labels in force then (ADR-0004) |
+| GET | `/escalations` | with notification state; `limit` |
 | GET | `/search` | `q`; FTS5 over stored bodies |
 
-`POST /agents` returns `{ agent, keyId, key }` and `POST /agents/:id/unarchive`
-returns `{ keyId, key }` — a key that cannot be named cannot be revoked.
+Every route that issues a key returns `{ agent, keyId, key }` — a key that
+cannot be named cannot be revoked.
 
 `GET /health` sits outside both prefixes and needs no credential: it answers
 `{ ok }` for a load balancer, and says nothing about what is inside.
@@ -79,25 +81,27 @@ Written down because the smoke test and the implementation must agree, and
 "returns the key once" is not a shape.
 
 ```
-POST /session      -> { csrfToken, displayName, expiresAt }
+POST /session, GET /session
+                   -> { csrfToken, displayName, expiresAt }
 POST /spaces       -> { id, name }
 GET  /spaces       -> [{ id, name }]
 GET  /spaces/:id/members
                    -> { current: [{ agent, grantedAt }],
                         history: [{ agent, grantedAt, revokedAt }] }
-POST /agents       -> { agent: { id, displayName }, keyId, key }  // key once
-POST /agents/:id/keys
-                   -> { keyId, key }                             // key once
+POST /agents, POST /agents/:id/keys, POST /agents/:id/unarchive
+                   -> { agent: { id, displayName }, keyId, key }  // key once
 GET  /agents       -> [{ id, displayName, archived, createdAt, lastSeenAt,
                          failedAttemptsClaimingId, hasEverAuthenticated,
                          keys: [{ keyId, label, createdAt, revokedAt }] }]
 GET  /reads?agent&since&until&limit&after
                    -> { reads: [{ id, agent, kind, at, parameters, cursor,
                                   itemCount }], nextCursor, hasMore }
-GET  /session      -> { csrfToken, displayName, expiresAt }
+GET  /reads/:id/messages/:messageId
+                   -> Message
 GET  /agents/:id/keys
                    -> [{ keyId, label, createdAt, revokedAt }]
-GET  /escalations  -> [{ id, agent, conversation, reason, raisedAt,
+GET  /escalations?limit
+                   -> [{ id, agent, conversation, reason, raisedAt,
                          notification: { state, attempts, lastAttemptAt,
                                          nextAttemptAt, lastError } }]
 GET  /search?q=&space=&limit=

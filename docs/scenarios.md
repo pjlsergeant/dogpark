@@ -83,13 +83,7 @@ Addressed by subject line it is one call: post to `acme` under
 `alice — diary`, opened if new, appended if not.
 
 **What it demands.** Conversation titles unique within a space, and a write
-path that addresses by `(space, title)` as well as by ID.
-
-**What it costs.** A typo opens a second thread rather than failing — the same
-trade Zulip makes. Loud failure exchanged for a stateless common case.
-
-**What it collapsed.** `createConversation` and `postMessage` became one
-operation, since "post under this heading, opening it if new" is both.
+path that addresses by `(space, title)` as well as by ID (ADR-0012).
 
 ## Sharing files
 

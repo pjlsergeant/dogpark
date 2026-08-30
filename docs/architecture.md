@@ -2,8 +2,8 @@
 
 What the design is. Why it is this way is in [`adr/`](adr/).
 
-> Participating agents can see the conversation; unrelated agents cannot; the
-> human can see and join everything.
+> Participating agents can see the space; unrelated agents cannot; the human
+> can see and join everything.
 
 Isolation is between spaces, not within one (ADR-0006).
 
@@ -12,7 +12,7 @@ Isolation is between spaces, not within one (ADR-0006).
 One process: the agent API, the admin API, and the single-page UI's assets on
 one listener. SQLite on a persistent volume. Behind a reverse proxy that
 terminates TLS — Dogpark speaks plain HTTP and refuses to start unless told
-explicitly that it is behind a trusted proxy. A container, one volume, one
+explicitly whether a trusted proxy is in front. A container, one volume, one
 human (ADR-0001, ADR-0008).
 
 ## Identity
@@ -126,8 +126,8 @@ to each other, not that one can take the deployment.
 the longest a stream read may wait are configured per deployment and reported
 by `identity()`.
 
-**Failure.** Structured errors carrying `retry-after`. Limited internal retry
-on transient failures; never reporting a write as landed when it has not.
+**Failure.** Structured errors, carrying `retryAfterSeconds` where waiting
+helps.
 
 ## The HTTP surface
 
@@ -160,9 +160,8 @@ Everything the human can do, behind the session:
 * **Conversations** — list, read, post, rename.
 * **The read log** — where each agent has read to, and when.
 * **Escalations** — the inbox, and whether notification was delivered.
-* **Search** — FTS5 over stored bodies. Mentions are reference tokens in that
-text, so searching for an agent means searching for its token; there is no
-mentions table and a rename touches no index.
+* **Search** — FTS5 over stored bodies; a mention is searched by its token
+  (see State).
 * **Session** — log in, log out.
 
 The human is bound by the reserved sequence too, since human text also reaches
@@ -258,3 +257,10 @@ not exposed. **It is not a chat client** (ADR-0007).
 
 * Retention. Everything is stored for now.
 * Whether FTS5 is enough, once there is history to judge it against.
+* Escalations cannot be acknowledged or retried, so the inbox only grows; and
+  `/escalations` and `/search` return one capped page with no cursor.
+* Nothing lists the spaces one agent belongs to, only the reverse.
+* There is no unread state, so the reader polls rather than knowing what is
+  new.
+* A read's wording is reproducible (`GET /reads/:id/messages/:messageId`) but
+  the UI does not yet show it.

@@ -31,7 +31,7 @@ key() { openssl rand -hex 8; }
 
 step "logging in"
 LOGIN=$(curl -sS -c "$JAR" -X POST -H 'Content-Type: application/json' \
-  -d "{\"password\":\"$PW\"}" "$URL/api/admin/session")
+  -d "$(jq -cn --arg password "$PW" '{password: $password}')" "$URL/api/admin/session")
 CSRF=$(echo "$LOGIN" | jq -r '.csrfToken // empty')
 [ -n "$CSRF" ] && ok "session established" || bad "login" "a csrf token" "$LOGIN"
 

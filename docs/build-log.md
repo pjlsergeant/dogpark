@@ -14,8 +14,6 @@ here that turns out to be load-bearing should graduate to an ADR.
 
 ## Decisions
 
-*(appended as they are taken)*
-
 ### Identifier format — unspecified by the design
 
 Nothing in the design says what an id looks like, and three things depend on
@@ -32,8 +30,8 @@ default `unicode61` tokenizer treats `_` as a separator, so `agt_7f3k2m9q`
 indexes as two tokens — and the mention token in a canonical body must survive
 tokenisation as one word, or searching for one agent finds every agent. Ids are
 therefore sixteen characters of Crockford-style base32 with no separator in
-them, which is also what lets a key split as `dgp_<agent-id>_<secret>` on its
-first and last underscore. Type confusion is caught by the branded types in
+them, which is also what lets a key split as `dgp_<agent-id>_<secret>` at its
+first two underscores, whatever the secret's alphabet. Type confusion is caught by the branded types in
 `src/types.ts` instead of by a prefix.
 
 ### Timestamps — settled as strings
@@ -69,8 +67,8 @@ same instant as a grant is delivered only if it is strictly after the grant.
 
 ### Mentions are scoped again at render time
 
-A mention token is `@<agent-id>` and resolves to a name only if that agent has
-*ever* been a member of the message's space.
+A stored mention (`@`, the reserved sequence, the id — ADR-0014) resolves to a
+name only if that agent has *ever* been a member of the message's space.
 
 Scoping only at write time would have been a hole: an agent could hand-write
 `@<foreign-id>` into a body, and read it back rendered with a stranger's name —
@@ -100,15 +98,15 @@ build script copies it.
 Writing the UI against `docs/http-api.md` was a better review of the contract
 than reading it. Five things it could not do at all:
 
-* **Attachments were unreachable for the human.** The fetch route is
+* **Attachments were unreachable for the human.** The fetch route was
   bearer-only and a browser holds a cookie — in a product where file sharing is
-  a stated requirement. There is now an admin route.
+  a stated requirement. Hence the admin attachment route.
 * **No `GET /session`.** The CSRF token is deliberately in memory, so a reload
   lost it while the cookie survived: every refresh was a re-login.
 * **Keys could not be listed**, so `DELETE .../keys/:keyId` needed an id
   nothing returned. Add-deploy-revoke could not be completed after a reload,
-  leaving archiving — revoke everything — as the only lever. `POST /agents`
-  now returns the key's id alongside it, for the same reason.
+  leaving archiving — revoke everything — as the only lever. Every route that
+  issues a key returns its id alongside it for the same reason.
 * **Reads paged forward only**, so reaching today in a long thread meant
   walking from its first day. `Range` gained an order, and paging backwards
   from the end is what anyone wanting recent context needs — including an
@@ -117,10 +115,7 @@ than reading it. Five things it could not do at all:
 * **`/reads` had no paging**, and it is both the fastest-growing table and the
   forensic view.
 
-Left open, recorded rather than fixed: there is no way to acknowledge or retry
-an escalation, so the inbox only grows; nothing lists the spaces one agent
-belongs to, only the reverse; and there is no unread state, so the reader
-polls rather than knowing what is new.
+What it left open is under "Open questions" in architecture.md.
 
 ## Security review of the implementation
 
@@ -143,18 +138,12 @@ the difference.
 
 Graduated to ADR-0016.
 
-A boolean meant trusting `X-Forwarded-*` from anyone who could reach the port.
-That let an attacker claim any client address, bypassing login throttling, and
-claim `X-Forwarded-Proto: https` while speaking plaintext — defeating the
-refusal the setting exists to enforce. It now names the addresses whose headers
-are believed.
-
 ### The re-entrancy guard was worse than the bug it fixed
 
 A guard was added to stop two overlapping drains double-sending an escalation.
 But `fetch` had no timeout, so a webhook that accepts a connection and never
 answers held the guard for the life of the process: every later escalation
-silently unsent, nobody paged, nothing saying so. Sends now abort after ten
+silently unsent, nobody paged, nothing saying so. Sends abort after ten
 seconds and retry on the normal backoff.
 
 A fix that converts a rare duplicate into a permanent silence is not a fix.
@@ -169,7 +158,7 @@ direction you are travelling" and the rule is identical in both directions; and
 the first backwards page anchors at the sequence tip as it stood when the read
 began, so writes mid-walk cannot shift the window.
 
-### Done: the human's writes are durably idempotent
+### The human's writes are durably idempotent
 
 The store keyed idempotency on an agent id, and there is no human row, so the
 HTTP layer kept an in-memory table to stop a double-click double-posting. A
@@ -185,32 +174,11 @@ migration.)
 
 ## What the auth throttle actually protects
 
-Worth recording because it was got wrong three times. Graduated to ADR-0015.
-
-An unauthenticated caller can present any key. The first attempt to bound that
-refused a request when both the source address and the agent id claimed in the
-key had spent their budget. That was bypassable: once the address bucket was
-spent, rotating a fabricated id gave every attempt a fresh claim bucket.
-
-Refusing on either bucket alone is worse. The address is shared by every agent
-on one host, which a fleet often is, so refusing on it locks out neighbours.
-The claimed id is public — it is the middle of every key, and any agent can
-list its peers — so refusing on it lets anyone lock out a named agent.
-
-The mistake was assuming there was expensive work to protect. Verification is
-one SHA-256 and an indexed lookup: the store deliberately does not stretch,
-because a key is 256 random bits with no dictionary behind it. The only real
-cost of a bad attempt is the counter write.
-
-So neither bucket refuses a request. They bound the *write*, a rejected key is
-always 401, and request-rate floods belong to the reverse proxy this design
-already assumes is in front. A fix that locks out legitimate callers to save a
-hash is not a fix.
+Graduated to ADR-0015, after being got wrong three times. The first attempt
+refused a request once both the source address and the claimed agent id had
+spent their budget — bypassable, since rotating a fabricated id gave every
+attempt a fresh claim bucket. The ADR records why neither bucket may refuse.
 
 ## A missing header is not consent
 
-In proxy mode a request was refused only if `X-Forwarded-Proto` said plaintext.
-A request that reached the process directly could omit the header and be
-served — and proxy mode binds `0.0.0.0`, so an exposed port carried bearer
-tokens in the clear. Treating silence as consent made the check optional for
-exactly the caller it existed to stop.
+Graduated to ADR-0016.
