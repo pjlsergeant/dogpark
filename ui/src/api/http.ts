@@ -145,7 +145,6 @@ export function createHttpApi(): DogparkAdminApi {
   }
 
   return {
-    kind: 'http',
 
     async login(password) {
       const raw = (await request('POST', '/session', { json: { password } })) as Record<

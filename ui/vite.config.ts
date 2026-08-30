@@ -6,10 +6,8 @@ import react from '@vitejs/plugin-react';
  * The SPA. Built into `dist/ui`, which Fastify serves from `/` with `/api/*`
  * taking precedence (docs/http-api.md).
  *
- * `--mode mock` (see `.env.mock`, used by `npm run dev:ui`) swaps the API
- * client for the fixture-backed one so screens can be developed with no
- * server. In every other mode the mock is not reachable: it lives behind a
- * dynamic import that the flag never satisfies.
+ * `npm run dev:ui` serves the SPA alone and proxies `/api` to a running
+ * Dogpark (`DOGPARK_DEV_API`, default `http://127.0.0.1:8080`).
  */
 export default defineConfig({
   root: fileURLToPath(new URL('.', import.meta.url)),

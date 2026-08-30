@@ -356,15 +356,6 @@ kbd.lit {
   flex-direction: column;
 }
 
-.mock-banner {
-  margin: 0;
-  padding: 6px 16px;
-  background: var(--warn-soft);
-  color: var(--warn);
-  font-size: 0.85rem;
-  border-bottom: 1px solid var(--line);
-}
-
 .screen {
   padding: 22px 26px 60px;
   max-width: 1100px;
@@ -603,12 +594,6 @@ kbd.lit {
   color: var(--bad);
   font-size: 0.9rem;
   margin: 10px 0 0;
-}
-
-.mock-note {
-  margin: 16px 0 0;
-  font-size: 0.82rem;
-  color: var(--ink-muted);
 }
 
 /* ----------------------------------------------------------------- agents */

@@ -1,9 +1,8 @@
 /**
  * The whole server surface this app touches, in one interface.
  *
- * Two implementations: `http.ts` (the real admin API) and `mock/` (fixtures,
- * dev only). Screens depend on this and nothing else, so no component ever
- * knows a URL.
+ * Implemented by `http.ts`. Screens depend on this and nothing else, so no
+ * component ever knows a URL.
  */
 import type {
   AdminAgent,
@@ -33,9 +32,6 @@ export interface ConversationQuery {
 }
 
 export interface DogparkAdminApi {
-  /** Which implementation this is. The UI says so out loud when it is `mock`. */
-  readonly kind: 'http' | 'mock';
-
   // Session ---------------------------------------------------------------
   login(password: string): Promise<SessionCredentials>;
   /**

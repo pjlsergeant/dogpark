@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { DogparkAdminApi } from './api/index.js';
-import { ApiError, createApi, usingMock } from './api/index.js';
+import { ApiError, createApi } from './api/index.js';
 import { AppProvider, useApp } from './app/api-context.js';
 import type { Session } from './app/api-context.js';
 import { href, navigate, useRoute } from './app/router.js';
@@ -181,11 +181,6 @@ function Shell(): ReactNode {
     <div className="app">
       <Sidebar route={route.name} chord={chord} onHelp={() => setHelp(true)} />
       <div className="content">
-        {usingMock && (
-          <p className="mock-banner">
-            Fixture mode: no server is being contacted, and nothing you do here is saved.
-          </p>
-        )}
         <Screen />
       </div>
       {help && <Shortcuts onClose={() => setHelp(false)} />}

@@ -8,7 +8,6 @@
 import { useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import type { DogparkAdminApi } from '../api/index.js';
-import { usingMock } from '../api/index.js';
 import { toApiError } from '../app/useAsync.js';
 import type { Session } from '../app/api-context.js';
 
@@ -77,12 +76,6 @@ export function Login({
         <button type="submit" className="btn btn-primary" disabled={busy || password === ''}>
           {busy ? 'Signing in…' : 'Sign in'}
         </button>
-
-        {usingMock && (
-          <p className="mock-note">
-            Running against fixtures, with no server. The password is <code>dogpark</code>.
-          </p>
-        )}
       </form>
     </main>
   );
