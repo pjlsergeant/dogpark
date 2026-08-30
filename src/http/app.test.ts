@@ -1931,11 +1931,13 @@ describe("the human's long poll and space counts", () => {
       me.send('PATCH', `/api/admin/spaces/${space.id}`, { name: 'renamed-under-them' }),
     );
 
+    // The rename really happened, and landed while the poll was still
+    // waiting — a poll that outlasts a failed or late write proves nothing.
+    expect((await renamed).statusCode).toBe(200);
+    expect(Date.now() - started).toBeLessThan(1500);
+
     const response = await waiting;
     const elapsed = Date.now() - started;
-    // The rename really happened — a poll that outlasts a failed write
-    // proves nothing.
-    expect((await renamed).statusCode).toBe(200);
     expect(response.statusCode).toBe(200);
     expect((response.json() as { items: unknown[] }).items).toEqual([]);
     // Timed out rather than woken: the rename reached the UI signal only.
