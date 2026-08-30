@@ -80,23 +80,9 @@ function claimedAgentId(presented: string): string {
 /**
  * Bearer authentication, then this agent's share of `requestsPerMinute`.
  *
- * Failed authentication is limited *before* verification, because verification
- * is the cost: a SHA-256 over the presented key on the event loop, and a bump
- * of `failed_auth_attempts` against the id the key claimed. Every agent id is
- * public — it is the middle of every key, and any agent can list its peers —
- * so without this anyone who can reach the port can make a healthy agent look
- * broken, for free and without limit.
- *
- * Two buckets, and a refusal needs *both* to be exhausted. Either alone is a
- * lockout waiting to happen: the claimed id is attacker-supplied, so gating on
- * it alone would let anyone shut a named agent out; the source address is
- * shared by every agent on one host, so gating on it alone would let one agent
- * with a stale key shut out its neighbours. Requiring both means a flood is
- * stopped where it comes from, while an agent whose own key verifies — and so
- * has spent nothing from either bucket — is never caught in it.
- *
- * Only failures are charged. A valid key costs nothing here and is limited by
- * `requestsPerMinute` like every other agent call.
+ * A bad key is always 401, never 429: the two failure buckets bound how often
+ * a failure is counted, and refuse nothing (ADR-0015). Only failures are
+ * charged; a valid key costs nothing here.
  */
 export function authenticateAgent(ctx: AppContext) {
   return async function agentGuard(request: FastifyRequest): Promise<void> {
@@ -107,19 +93,7 @@ export function authenticateAgent(ctx: AppContext) {
 
     const byAddress = `ip:${request.ip}`;
     const byClaim = `id:${claimedAgentId(presented)}`;
-    // Neither bucket refuses, and that is deliberate.
-    //
-    // Refusing before verification cannot work: you cannot tell a valid key
-    // from a flood without verifying it, so refusing on the address locks out
-    // every other agent on that host — plausible, since a fleet often shares a
-    // box — and refusing on the claimed id lets anyone lock out a named agent,
-    // because every id is public.
-    //
-    // There is little to protect anyway. Verification is one SHA-256 and an
-    // indexed lookup: the store does not stretch, because a key is 256 random
-    // bits with no dictionary behind it. The only real cost of a bad attempt
-    // is the counter write, so that is what the buckets bound. Request-rate
-    // floods are the reverse proxy's job, which this design assumes is there.
+    // Whether to write the failure down, not whether to serve it (ADR-0015).
     const countFailure =
       ctx.failedAuthLimiter.peek(byAddress).allowed && ctx.failedAuthLimiter.peek(byClaim).allowed;
 

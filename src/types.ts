@@ -1,7 +1,7 @@
 /**
  * The Dogpark agent-facing protocol.
  *
- * See docs/architecture.md. Provisional until there is an implementation.
+ * See docs/architecture.md.
  */
 
 /**

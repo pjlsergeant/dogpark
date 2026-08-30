@@ -23,14 +23,9 @@ interface Binding {
 }
 
 /**
- * Dogpark speaks plain HTTP. `DOGPARK_TRUST_PROXY` is the declaration that
- * something in front of it terminates TLS, and it has no default: the
- * ambiguous state is refused at configuration time (`src/config.ts`).
- *
- * What follows from the declaration is where to listen. Declared: a proxy is
- * in front, so bind every interface and let it reach us. Not declared: nothing
- * is in front, so binding the network would put bearer tokens on the wire in
- * the clear. Loopback only, which is the one place plaintext is honest.
+ * Where to listen follows from the proxy declaration: every interface when one
+ * is in front, loopback when nothing is — the one place plaintext is honest
+ * (ADR-0016).
  */
 export function resolveBinding(config: Config): Binding {
   return config.behindProxy

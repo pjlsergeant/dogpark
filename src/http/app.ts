@@ -68,12 +68,9 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   };
 
   const app = Fastify({
-    // Believed only when declared: otherwise X-Forwarded-For is a header any
-    // client can write, and the rate limiter would key on a fiction.
-    // The address list, not a boolean: Fastify then believes X-Forwarded-*
-    // only from the declared proxies. Trusting every peer would let anyone who
-    // can reach the port claim any client address, and claim https while
-    // speaking plaintext.
+    // The declared addresses, never `true`: believing X-Forwarded-* from any
+    // peer lets it claim any client address, and https over plaintext
+    // (ADR-0016).
     trustProxy: config.trustProxy === false ? false : [...config.trustProxy],
     bodyLimit: config.DOGPARK_MAX_MESSAGE_BYTES + 64 * 1024,
     ...(options.logger === undefined ? {} : { logger: options.logger }),
@@ -110,16 +107,9 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   });
 
   /**
-   * Told there is a proxy, so every API request must carry that proxy's word
-   * that it arrived over TLS. Anything else has put a bearer token or a session
-   * cookie on the wire in the clear.
-   *
-   * A missing header is refused too, not waved through. Proxy mode binds
-   * 0.0.0.0, so a request that reaches the process directly can simply omit
-   * the header — treating silence as consent would make the whole check
-   * optional for exactly the caller it exists to stop. A declared proxy is
-   * expected to set it; if yours does not, it is not terminating TLS on
-   * Dogpark's behalf in a way Dogpark can verify.
+   * A declared proxy must prove TLS on every API request. Silence is refused
+   * rather than waved through, because proxy mode binds 0.0.0.0 and a direct
+   * caller can simply omit the header (ADR-0016).
    */
   app.addHook('onRequest', async (request) => {
     if (!config.behindProxy || !request.url.startsWith('/api/')) return;

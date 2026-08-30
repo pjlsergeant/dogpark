@@ -13,14 +13,9 @@ const Schema = z.object({
   DOGPARK_DISPLAY_NAME: z.string().min(1).default('human'),
 
   /**
-   * Dogpark speaks plain HTTP and must be told what is in front of it.
-   *
-   * Either `no`, or a comma-separated list of addresses or CIDR ranges that
-   * are permitted to set `X-Forwarded-*`. Not a boolean: trusting the headers
-   * from *anyone* who can reach the port means anyone who can reach it can
-   * claim any client address — bypassing login throttling — and claim
-   * `X-Forwarded-Proto: https` while speaking plaintext, which defeats the
-   * refusal this setting exists to enforce.
+   * What is in front of Dogpark: either `no`, or a comma-separated list of
+   * addresses or CIDR ranges permitted to set `X-Forwarded-*`. A list rather
+   * than a boolean, and no default (ADR-0016).
    */
   DOGPARK_TRUST_PROXY: z
     .string()

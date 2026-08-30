@@ -18,3 +18,5 @@
 | [0012](0012-subject-line-addressing.md) | Messages are addressed by subject line |
 | [0013](0013-agent-identities-are-roles.md) | Agent identities are roles, archived rather than retired |
 | [0014](0014-labels-are-mutable-references-are-stored.md) | Labels are mutable; references are what get stored |
+| [0015](0015-failed-auth-is-counted-not-refused.md) | Failed authentication is counted, not refused |
+| [0016](0016-tls-is-the-proxy-declaration.md) | Plaintext is refused unless a proxy is declared |

@@ -123,8 +123,7 @@ export function readFromQuery(query: z.infer<typeof StreamQuery>): ReadFrom | un
 /**
  * `order` is passed straight through. The store pages backwards from the end
  * for `newest` and returns each page newest-first, so nothing here has to
- * re-page a read — which is why this was refused rather than shimmed while the
- * store ordered by sequence ascending, full stop.
+ * re-page a read.
  */
 export function rangeFromQuery(query: z.infer<typeof RangeQuery>): Range {
   return {

@@ -336,13 +336,8 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
           .map((record) => escalationRow(ctx.store, cache, record));
       });
 
-      /**
-       * The store turns FTS5's own parse failure into `invalid_request` — the
-       * human's typo, not a server fault — so nothing is caught here. The
-       * catch that used to be here matched every `SQLITE*` code, which by the
-       * time it could still fire meant reporting a locked or corrupt database
-       * as a bad search query.
-       */
+      // The store turns FTS5's own parse failure into `invalid_request` — the
+      // human's typo, not a server fault — so nothing is caught here.
       guarded.get('/search', async (request) => {
         const query = parse(SearchQuery, request.query, 'query');
         return ctx.store

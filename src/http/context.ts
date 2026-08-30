@@ -17,8 +17,8 @@ export interface AppContext {
   /** Login is not an agent call, so it is limited by source address instead. */
   readonly loginLimiter: RateLimiter;
   /**
-   * Failed bearer authentication, charged before the key is verified. Keyed
-   * both by source address and by the id the key claimed; see `auth.ts`.
+   * Bounds how often a failed bearer authentication is counted — never whether
+   * it is refused (ADR-0015). Keyed by source address and by the claimed id.
    */
   readonly failedAuthLimiter: RateLimiter;
   readonly humanPosts: HumanIdempotency;
