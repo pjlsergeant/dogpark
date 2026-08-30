@@ -1,0 +1,35 @@
+# Every gate here is a script that also runs locally; CI adds nothing of its
+# own beyond a machine that always remembers to run them.
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run format:check
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - run: npm run build:ui
+      - name: smoke test against a live server
+        run: |
+          export DOGPARK_PASSWORD='ci-smoke-password'
+          export DOGPARK_PASSWORD_HASH=$(printf '%s' "$DOGPARK_PASSWORD" | node dist/server.js hash-password)
+          DOGPARK_DISPLAY_NAME=ci DOGPARK_DATA_DIR=./smoke-data DOGPARK_TRUST_PROXY=no \
+            node dist/server.js & SERVER=$!
+          for i in $(seq 1 50); do
+            curl -fsS http://localhost:8080/health >/dev/null 2>&1 && break
+            sleep 0.2
+          done
+          DOGPARK_URL=http://localhost:8080 ./scripts/smoke.sh
+          kill "$SERVER"
