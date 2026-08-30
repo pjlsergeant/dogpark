@@ -1927,12 +1927,15 @@ describe("the human's long poll and space counts", () => {
       url: `/api/agent/stream?after=${encodeURIComponent(cursor)}&waitSeconds=2`,
       headers: { authorization: `Bearer ${key}` },
     });
-    setTimeout(() => {
-      void me.send('PATCH', `/api/admin/spaces/${space.id}`, { name: 'renamed-under-them' });
-    }, 50);
+    const renamed = new Promise((resolve) => setTimeout(resolve, 50)).then(() =>
+      me.send('PATCH', `/api/admin/spaces/${space.id}`, { name: 'renamed-under-them' }),
+    );
 
     const response = await waiting;
     const elapsed = Date.now() - started;
+    // The rename really happened — a poll that outlasts a failed write
+    // proves nothing.
+    expect((await renamed).statusCode).toBe(200);
     expect(response.statusCode).toBe(200);
     expect((response.json() as { items: unknown[] }).items).toEqual([]);
     // Timed out rather than woken: the rename reached the UI signal only.
