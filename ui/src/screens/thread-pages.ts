@@ -13,7 +13,7 @@ export interface Loaded {
   readonly messages: readonly Message[];
   readonly nextCursor: string | null;
   readonly hasMore: boolean;
-  /** How many pages have been pulled, so polling knows whether it can reset. */
+  /** How many pages have been pulled: on one, the reader follows the tip; on more, it stays put. */
   readonly pages: number;
 }
 

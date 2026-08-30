@@ -1,6 +1,7 @@
 /**
  * The reader: a space's threads on the left, one thread's messages on the
- * right, and a composer under them.
+ * right, and a composer under them — or, as of a past read, the thread as
+ * the agent could have seen it then, with nothing to post with.
  *
  * This is the screen the human actually lives in, so it is the one that has
  * to be pleasant: per-agent attribution, day separators, real timestamps on
@@ -472,7 +473,13 @@ function Thread({
       <div className="thread-body">
         {busy && loaded === null && <Loading what="messages" />}
         {error !== null && <Failure error={error} onRetry={() => void load()} />}
-        {loaded !== null && count === 0 && <Empty>Nothing here yet. Say something.</Empty>}
+        {loaded !== null && count === 0 && (
+          <Empty>
+            {asOf === undefined
+              ? 'Nothing here yet. Say something.'
+              : 'Nothing had been posted yet.'}
+          </Empty>
+        )}
 
         {loaded?.hasMore === true && (
           <div className="load-more">

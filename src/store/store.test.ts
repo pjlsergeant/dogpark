@@ -1409,6 +1409,33 @@ describe('escalations', () => {
     );
   });
 
+  it('pages across rows raised in the same millisecond without repeating or skipping one', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const conversation = h.store.resolveOrCreateConversation(space, 'notes').id;
+    // No clock advance: created_at ties, and the id has to break it the same
+    // way on every page.
+    const ids = [1, 2, 3, 4, 5].map(
+      (n) =>
+        h.store.recordEscalation({
+          agent,
+          conversation,
+          reason: `p${n}`,
+          idempotencyKey: key(`s${n}`),
+        }).escalation.id,
+    );
+    const seen: string[] = [];
+    let after: EscalationCursor | undefined;
+    for (;;) {
+      const page = h.store.listEscalations({ order: 'newest', limit: 2, after });
+      seen.push(...page.escalations.map((e) => e.id));
+      if (!page.hasMore) break;
+      after = page.nextCursor ?? undefined;
+    }
+    expect([...seen].sort()).toEqual([...ids].sort());
+    expect(seen).toEqual(h.store.listEscalations({ order: 'newest' }).escalations.map((e) => e.id));
+  });
+
   it('refuses an escalation about a conversation the agent cannot see', () => {
     const h = harness();
     const { agent } = scene(h);
@@ -1872,6 +1899,23 @@ describe('search pages', () => {
     expect(third.hasMore).toBe(false);
     // The whole list in one page is the pages concatenated: same order.
     expect(h.store.searchMessages('alpha').hits.map((hit) => hit.message.id)).toEqual(seen);
+  });
+
+  it('continues past hits of equal rank, which is the equality arm of the cursor', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    // Identical bodies score identically; only the seq tells them apart.
+    const ids = [1, 2, 3].map((n) => post(h, agent, space, `t${n}`, 'alpha').id);
+    const seen: string[] = [];
+    let after: SearchCursor | undefined;
+    for (;;) {
+      const page = h.store.searchMessages('alpha', { limit: 1, after });
+      seen.push(...page.hits.map((hit) => hit.message.id));
+      if (!page.hasMore) break;
+      after = page.nextCursor ?? undefined;
+    }
+    expect([...seen].sort()).toEqual([...ids].sort());
+    expect(seen).toEqual(h.store.searchMessages('alpha').hits.map((hit) => hit.message.id));
   });
 
   it('pages newest first on the sequence when asked', () => {

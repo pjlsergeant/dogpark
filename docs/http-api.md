@@ -66,7 +66,7 @@ required because the SPA shares an origin with the agent API.
 | POST | `/messages` | post as the human |
 | GET | `/reads` | the read log, filterable by agent; limit and cursor, because it is the one table that grows without bound. `kind` is `stream`, `conversation`, `space` or `attachment`; an attachment read has an empty cursor |
 | GET | `/reads/:id` | one row, with the conversation or space it read resolved for linking |
-| GET | `/reads/:id/conversations/:conversationId/messages` | the thread as it read on that row: `readConversation` for the human, labels as of then; paged the same way; nothing logged |
+| GET | `/reads/:id/conversations/:conversationId/messages` | the thread as it read on that row: `readConversation` for the human, labels as of then, ending at the read's millisecond; paged the same way; nothing logged |
 | GET | `/reads/:id/messages/:messageId` | a message rendered with the labels in force when that row was written (ADR-0004). A label snapshot, not proof the message was on that page: that is the row's kind, parameters and cursor |
 | GET | `/escalations` | the inbox, newest first; `order`, `after`, `limit`; carries `undelivered`, counted over the whole table |
 | GET | `/search` | `q`; FTS5 over stored bodies. `order` is `relevance` (default) or `newest`; `after`, `limit` |
@@ -134,8 +134,9 @@ diagnose anything.
 rather than one frozen at the time.
 
 `/escalations` pages like `/reads`: a keyset cursor over `(created_at, id)`,
-`order` defaulting to `newest`. `undelivered` counts every row not yet `sent`,
-whatever page is showing, so the inbox badge cannot be fooled by paging.
+`order` defaulting to `newest`; the cursor names its order and the other order
+refuses it. `undelivered` counts every row not yet `sent`, whatever page is
+showing, so the inbox badge cannot be fooled by paging.
 
 `/search` pages too. Relevance order is bm25 with the newer message first among
 equals, and its cursor carries the rank; because bm25 weighs a term against
