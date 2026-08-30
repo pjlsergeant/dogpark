@@ -157,7 +157,9 @@ async function main(): Promise<void> {
   const notifier = new Notifier(escalationQueue(store), {
     ...(config.DOGPARK_WEBHOOK_URL === undefined ? {} : { webhookUrl: config.DOGPARK_WEBHOOK_URL }),
   });
-  notifier.start();
+  notifier.start(undefined, (error: unknown) => {
+    app.log.error({ err: error }, 'the escalation queue failed to drain');
+  });
 
   let closing = false;
   const shutdown = (signal: string): void => {

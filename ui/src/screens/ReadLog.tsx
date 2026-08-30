@@ -6,7 +6,7 @@
  * cursor at the head means the agent is *here*, not that it was handed
  * everything behind here, so a seek has to be visibly a seek (ADR-0005).
  */
-import { useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { AgentId, ReadLogEntry } from '../api/index.js';
 import { useApi } from '../app/api-context.js';
@@ -45,8 +45,47 @@ export function ReadLogScreen({ agent }: { agent?: AgentId | undefined }): React
     [api, agent],
   );
 
-  const entries = reads.state.data?.items ?? [];
+  // Pages after the first accumulate here; the filter change that refetches
+  // the first page clears them.
+  const [tail, setTail] = useState<{
+    readonly items: readonly ReadLogEntry[];
+    readonly nextCursor: string | null;
+    readonly hasMore: boolean;
+  } | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [moreFailed, setMoreFailed] = useState(false);
+
+  useEffect(() => {
+    setTail(null);
+    setMoreFailed(false);
+  }, [agent]);
+
+  const first = reads.state.data;
+  const entries = [...(first?.items ?? []), ...(tail?.items ?? [])];
+  const nextCursor = tail === null ? (first?.nextCursor ?? null) : tail.nextCursor;
+  const hasMore = tail === null ? first?.hasMore === true : tail.hasMore;
   const known = useMemo(() => agents.state.data ?? [], [agents.state.data]);
+
+  const loadMore = useCallback(async () => {
+    if (nextCursor === null) return;
+    setLoadingMore(true);
+    setMoreFailed(false);
+    try {
+      const page = await api.listReads({
+        ...(agent === undefined ? {} : { agent }),
+        after: nextCursor,
+      });
+      setTail((current) => ({
+        items: [...(current?.items ?? []), ...page.items],
+        nextCursor: page.nextCursor,
+        hasMore: page.hasMore,
+      }));
+    } catch {
+      setMoreFailed(true);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [api, agent, nextCursor]);
 
   return (
     <section className="screen">
@@ -142,8 +181,18 @@ export function ReadLogScreen({ agent }: { agent?: AgentId | undefined }): React
         </table>
       )}
 
-      {reads.state.data?.hasMore === true && (
-        <p className="muted small">More rows exist beyond this page.</p>
+      {hasMore && nextCursor !== null && (
+        <div className="row load-more">
+          <button
+            type="button"
+            className="btn"
+            disabled={loadingMore}
+            onClick={() => void loadMore()}
+          >
+            {loadingMore ? 'Loading…' : 'Load older rows'}
+          </button>
+          {moreFailed && <span className="muted small">That did not load. Try again.</span>}
+        </div>
       )}
     </section>
   );

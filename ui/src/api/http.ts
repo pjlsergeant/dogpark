@@ -277,16 +277,13 @@ export function createHttpApi(): DogparkAdminApi {
         'reads',
       );
     },
-    async listEscalations(after?: string) {
-      return toPage<Escalation>(
-        await request('GET', '/escalations', { query: { after } }),
-        'escalations',
-      );
+    async listEscalations() {
+      return toPage<Escalation>(await request('GET', '/escalations'), 'escalations');
     },
     async search(query: SearchQuery) {
       return toPage<SearchResult>(
         await request('GET', '/search', {
-          query: { q: query.q, space: query.space, after: query.after },
+          query: { q: query.q, space: query.space },
         }),
         'results',
       );

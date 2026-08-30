@@ -264,7 +264,5 @@ export interface ReadLogFilter {
 
 export interface SearchQuery {
   readonly q: string;
-
   readonly space?: SpaceId | undefined;
-  readonly after?: string | undefined;
 }

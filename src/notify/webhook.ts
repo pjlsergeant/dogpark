@@ -122,7 +122,7 @@ export class Notifier {
     return sent;
   }
 
-  start(intervalMs = 10_000, onError: (e: unknown) => void = () => {}): void {
+  start(intervalMs = 10_000, onError: (e: unknown) => void): void {
     // Failures inside the queue — not the webhook, which drain() handles —
     // would otherwise escape as an unhandled rejection from a timer, which
     // can take the process down and otherwise makes notification stop

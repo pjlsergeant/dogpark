@@ -88,14 +88,12 @@ export const ReadLogQuery = z.strictObject({
 
 export const EscalationsQuery = z.strictObject({
   limit: z.coerce.number().int().positive().optional(),
-  after: z.string().optional(),
 });
 
 export const SearchQuery = z.strictObject({
   q: z.string().min(1),
   space: Id.optional(),
   limit: z.coerce.number().int().positive().optional(),
-  after: z.string().optional(),
 });
 
 export const AdminAgentsQuery = z.strictObject({ includeArchived: z.string().optional() });

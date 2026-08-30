@@ -1396,3 +1396,9 @@ kbd.lit {
   gap: 10px;
   padding: 12px 0 4px;
 }
+
+.load-more {
+  margin-top: 12px;
+  gap: 10px;
+  align-items: center;
+}

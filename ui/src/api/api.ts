@@ -67,7 +67,7 @@ export interface DogparkAdminApi {
 
   // Forensics -------------------------------------------------------------
   listReads(filter?: ReadLogFilter): Promise<Page<ReadLogEntry>>;
-  listEscalations(after?: string): Promise<Page<Escalation>>;
+  listEscalations(): Promise<Page<Escalation>>;
   search(query: SearchQuery): Promise<Page<SearchResult>>;
 
   /**
