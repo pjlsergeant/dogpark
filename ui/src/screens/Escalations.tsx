@@ -100,8 +100,7 @@ export function EscalationsScreen(): ReactNode {
         <div>
           <h1>Escalations</h1>
           <p className="muted">
-            Out of band by design: the agent that raised it does not know you were told, and the
-            peer it is about never sees it.
+            A private channel to you: the agent an escalation is about never sees it.
           </p>
         </div>
         <div className="row">
