@@ -127,8 +127,10 @@ async function main(): Promise<void> {
   if (config.behindProxy) {
     // 0.0.0.0 is the whole point of the declaration — the proxy has to reach
     // us — but it is also every other interface. If the port is published, the
-    // proxy is no longer the only way in, and the TLS refusal that
-    // `X-Forwarded-Proto` powers is bypassed by simply not sending the header.
+    // proxy is no longer the only way in. A direct caller is refused — whether
+    // it omits `X-Forwarded-Proto` or forges `https`, since the header is
+    // believed only from the declared addresses — but by the time it is
+    // refused, its credentials have already crossed the network in the clear.
     app.log.warn(
       { host: binding.host, trustedProxies: config.trustProxy },
       'listening on every interface because a proxy is declared: publish this port only to ' +

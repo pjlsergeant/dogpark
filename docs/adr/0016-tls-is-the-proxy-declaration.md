@@ -27,11 +27,24 @@ silence as consent would make the check optional for exactly the caller it
 exists to stop. A declared proxy is expected to set it; one that does not is
 not terminating TLS in a way Dogpark can verify.
 
+The header is believed only from the declared addresses — the proof reads the
+protocol Fastify derives under `trustProxy`, never the raw header — so a direct
+caller that *forges* `X-Forwarded-Proto: https` is refused exactly like one that
+omits it. And the proof follows the route, not the raw request line: a
+percent-encoded spelling of an API path reaches the same handler and meets the
+same check.
+
 ## Consequences
 
-Publishing the port in proxy mode bypasses the whole scheme: anything that can
-reach it speaks to Dogpark directly, in plaintext, and needs only to omit a
-header. The process warns about this at startup; it cannot detect it.
+Publishing the port in proxy mode still matters, though not because the check
+can be talked past: a direct caller is refused whether it omits the header or
+forges it. What the refusal cannot do is un-send the credentials a client has
+already put on the wire in the clear before being refused. The process warns
+about this at startup; it cannot detect it.
+
+The residual gap is a caller *inside* a declared range — a `/16` that names
+more than the proxy — which is believed like the proxy is. Declare addresses,
+not neighbourhoods.
 
 There is no way to run Dogpark on a network without a proxy in front. That is
 the point.

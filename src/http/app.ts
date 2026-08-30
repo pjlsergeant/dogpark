@@ -104,27 +104,6 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   });
 
   /**
-   * A declared proxy must prove TLS on every API request. Silence is refused
-   * rather than waved through, because proxy mode binds 0.0.0.0 and a direct
-   * caller can simply omit the header (ADR-0016).
-   */
-  app.addHook('onRequest', async (request) => {
-    if (!config.behindProxy || !request.url.startsWith('/api/')) return;
-    const declared = request.headers['x-forwarded-proto'];
-    const proto = String(declared ?? '')
-      .split(',')[0]
-      ?.trim()
-      .toLowerCase();
-    if (proto !== 'https') {
-      throw invalid(
-        'this deployment is configured behind a TLS-terminating proxy, but the request ' +
-          `did not arrive over one (X-Forwarded-Proto: ${proto === '' ? 'absent' : proto}); ` +
-          'refusing to accept credentials over plaintext',
-      );
-    }
-  });
-
-  /**
    * An empty JSON body is no body, not a malformed one. Several admin routes
    * change state without carrying anything — `PUT .../members/:agentId`, the
    * archive pair — and a client that sets `Content-Type: application/json`
@@ -171,8 +150,42 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   const health = store.database.prepare<[], { ok: number }>('SELECT 1 AS ok');
   app.get('/health', async () => ({ ok: health.get()?.ok === 1 }));
 
-  await app.register(agentRoutes(ctx), { prefix: '/api/agent' });
-  await app.register(adminRoutes(ctx), { prefix: '/api/admin' });
+  /**
+   * A declared proxy must prove TLS on every API request. Silence is refused
+   * rather than waved through, because proxy mode binds 0.0.0.0 and a direct
+   * caller can simply omit the header (ADR-0016).
+   *
+   * Scoped to the `/api` plugin rather than tested against the raw URL: the
+   * router decodes percent-escapes before matching, so `/%61pi/...` reaches
+   * an API route while failing a string prefix test. A hook inside the scope
+   * runs for exactly the routes the router put there.
+   *
+   * `request.protocol`, not the raw header: `trustProxy` filters only what
+   * Fastify derives, so the raw `X-Forwarded-Proto` is whatever any peer sent.
+   * The derived value is `https` only when a declared proxy said so.
+   */
+  await app.register(
+    async (api) => {
+      if (config.behindProxy) {
+        api.addHook('onRequest', async (request) => {
+          if (request.protocol === 'https') return;
+          const raw = request.headers['x-forwarded-proto'];
+          const claimed = String(raw ?? '').split(',')[0]?.trim().toLowerCase() ?? '';
+          const seen =
+            claimed === ''
+              ? 'X-Forwarded-Proto: absent'
+              : `X-Forwarded-Proto: ${claimed}, believed only from a declared proxy`;
+          throw invalid(
+            'this deployment is configured behind a TLS-terminating proxy, but the request ' +
+              `did not arrive over one (${seen}); refusing to accept credentials over plaintext`,
+          );
+        });
+      }
+      await api.register(agentRoutes(ctx), { prefix: '/agent' });
+      await api.register(adminRoutes(ctx), { prefix: '/admin' });
+    },
+    { prefix: '/api' },
+  );
   await app.register(staticRoutes(options.uiRoot));
 
   await app.ready();

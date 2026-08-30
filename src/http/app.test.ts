@@ -1383,6 +1383,60 @@ describe('the HTTP surface', () => {
       }
     });
 
+    it('disbelieves X-Forwarded-Proto: https from an address that is not the proxy', async () => {
+      // The trust list governs what Fastify derives, never the raw header. A
+      // direct caller that forges the header must still read as plaintext.
+      const proxied = await harness({ DOGPARK_TRUST_PROXY: '127.0.0.1' });
+      try {
+        const agent = proxied.store.createAgent('gamma');
+        const key = proxied.store.issueKey(agent.id).key;
+        const forged = await proxied.app.inject({
+          method: 'GET',
+          url: '/api/agent/identity',
+          remoteAddress: '10.0.0.9',
+          headers: { 'x-forwarded-proto': 'https', authorization: `Bearer ${key}` },
+        });
+        expect(forged.statusCode).toBe(400);
+        expect(forged.json()).toMatchObject({ code: 'invalid_request' });
+
+        const honest = await proxied.app.inject({
+          method: 'GET',
+          url: '/api/agent/identity',
+          remoteAddress: '127.0.0.1',
+          headers: { 'x-forwarded-proto': 'https', authorization: `Bearer ${key}` },
+        });
+        expect(honest.statusCode).toBe(200);
+      } finally {
+        await teardown(proxied);
+      }
+    });
+
+    it('proves TLS on a percent-encoded spelling of an API path too', async () => {
+      // The router decodes before matching, so `/%61pi/` reaches the API; the
+      // proof has to follow the route, not the raw string.
+      const proxied = await harness({ DOGPARK_TRUST_PROXY: '127.0.0.1' });
+      try {
+        const agent = proxied.store.createAgent('gamma');
+        const key = proxied.store.issueKey(agent.id).key;
+        const canonical = await proxied.app.inject({
+          method: 'GET',
+          url: '/api/agent/identity',
+          headers: { authorization: `Bearer ${key}` },
+        });
+        expect(canonical.statusCode).toBe(400);
+
+        const encoded = await proxied.app.inject({
+          method: 'GET',
+          url: '/%61pi/agent/identity',
+          headers: { authorization: `Bearer ${key}` },
+        });
+        expect(encoded.statusCode).toBe(400);
+        expect(encoded.json()).toMatchObject({ code: 'invalid_request' });
+      } finally {
+        await teardown(proxied);
+      }
+    });
+
     it('ignores a forwarded protocol when no proxy is declared', async () => {
       const response = await h.app.inject({
         method: 'GET',
