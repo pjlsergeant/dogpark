@@ -110,8 +110,14 @@ export class Notifier {
     return sent;
   }
 
-  start(intervalMs = 10_000): void {
-    this.#timer ??= setInterval(() => void this.drain(), intervalMs).unref();
+  start(intervalMs = 10_000, onError: (e: unknown) => void = () => {}): void {
+    // Failures inside the queue — not the webhook, which drain() handles —
+    // would otherwise escape as an unhandled rejection from a timer, which
+    // can take the process down and otherwise makes notification stop
+    // silently. Silent is the worst outcome for the thing that pages a human.
+    this.#timer ??= setInterval(() => {
+      this.drain().catch(onError);
+    }, intervalMs).unref();
   }
 
   stop(): void {

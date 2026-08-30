@@ -7,6 +7,13 @@ import { migrate, MIGRATIONS, type Migration } from './migrate.js';
 
 const dirs: string[] = [];
 
+/**
+ * One past the newest real migration. Written this way so that adding a
+ * migration does not break the tests that stack a synthetic one on top.
+ */
+const NEWEST = MIGRATIONS.reduce((max, m) => Math.max(max, m.version), 0);
+const NEXT = NEWEST + 1;
+
 function file(): string {
   const dir = mkdtempSync(join(tmpdir(), 'dogpark-migrate-'));
   dirs.push(dir);
@@ -56,12 +63,12 @@ describe('migrations', () => {
     try {
       migrate(db);
       const extra: Migration = {
-        version: 2,
+        version: NEXT,
         name: 'later',
         sql: 'CREATE TABLE later (id TEXT PRIMARY KEY) STRICT',
       };
       const result = migrate(db, [...MIGRATIONS, extra]);
-      expect(result.applied).toEqual([2]);
+      expect(result.applied).toEqual([NEXT]);
       expect(db.prepare('SELECT COUNT(*) AS n FROM later').get()).toEqual({ n: 0 });
     } finally {
       db.close();
@@ -73,16 +80,18 @@ describe('migrations', () => {
     try {
       migrate(db);
       const broken: Migration = {
-        version: 2,
+        version: NEXT,
         name: 'broken',
         sql: 'CREATE TABLE half (id TEXT PRIMARY KEY) STRICT; THIS IS NOT SQL;',
       };
-      expect(() => migrate(db, [...MIGRATIONS, broken])).toThrow(/migration 2 \(broken\) failed/);
+      expect(() => migrate(db, [...MIGRATIONS, broken])).toThrow(
+        new RegExp(`migration ${NEXT} \\(broken\\) failed`),
+      );
 
       const versions = db.prepare('SELECT MAX(version) AS v FROM schema_version').get() as {
         v: number;
       };
-      expect(versions.v).toBe(1);
+      expect(versions.v).toBe(NEWEST);
       expect(() => db.prepare('SELECT 1 FROM half').get()).toThrow(/no such table/);
     } finally {
       db.close();
@@ -94,9 +103,9 @@ describe('migrations', () => {
     try {
       migrate(db, [
         ...MIGRATIONS,
-        { version: 2, name: 'later', sql: 'CREATE TABLE later (id TEXT PRIMARY KEY) STRICT' },
+        { version: NEXT, name: 'later', sql: 'CREATE TABLE later (id TEXT PRIMARY KEY) STRICT' },
       ]);
-      expect(() => migrate(db, MIGRATIONS)).toThrow(/knows only up to 1/);
+      expect(() => migrate(db, MIGRATIONS)).toThrow(new RegExp(`knows only up to ${NEWEST}`));
     } finally {
       db.close();
     }

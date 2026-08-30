@@ -708,7 +708,7 @@ describe('the HTTP surface', () => {
     });
 
     it('marks the cookie Secure once a TLS-terminating proxy is declared', async () => {
-      const proxied = await harness({ DOGPARK_TRUST_PROXY: 'yes' });
+      const proxied = await harness({ DOGPARK_TRUST_PROXY: '127.0.0.1' });
       try {
         const response = await proxied.app.inject({
           method: 'POST',
@@ -1049,7 +1049,7 @@ describe('the HTTP surface', () => {
   // -------------------------------------------------------------------------
   describe('the proxy declaration', () => {
     it('refuses a request the proxy says arrived over plaintext', async () => {
-      const proxied = await harness({ DOGPARK_TRUST_PROXY: 'yes' });
+      const proxied = await harness({ DOGPARK_TRUST_PROXY: '127.0.0.1' });
       try {
         const response = await proxied.app.inject({
           method: 'GET',

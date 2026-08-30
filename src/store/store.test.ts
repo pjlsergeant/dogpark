@@ -15,7 +15,7 @@ import type {
   Timestamp,
 } from '../types.js';
 import { StoreError } from './errors.js';
-import { openStore, type Store } from './index.js';
+import { newAttachmentId, openStore, type Store, type ReadLogCursor } from './index.js';
 import { RESERVED_SEQUENCE } from './text.js';
 
 // ---------------------------------------------------------------------------
@@ -1084,5 +1084,596 @@ describe('posting', () => {
     const h = harness();
     const { agent, space } = scene(h);
     expectStoreError(() => post(h, agent, space, 'notes', '   '), 'invalid_request');
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe('reading backwards', () => {
+  /** Five messages a minute apart, and the instant each one was written. */
+  function thread(h: Harness): {
+    agent: AgentId;
+    space: SpaceId;
+    conversation: ConversationId;
+    at: Record<string, Timestamp>;
+  } {
+    const { agent, space } = scene(h);
+    const at: Record<string, Timestamp> = {};
+    for (const body of ['one', 'two', 'three', 'four', 'five']) {
+      h.advance(60);
+      at[body] = h.at();
+      post(h, agent, space, 'notes', body);
+    }
+    const conversation = h.store.listConversations(space)[0]?.id ?? ('' as ConversationId);
+    return { agent, space, conversation, at };
+  }
+
+  const reader = (agent: AgentId): { kind: 'agent'; id: AgentId } => ({ kind: 'agent', id: agent });
+
+  it('pages a conversation backwards from the end, newest first', () => {
+    const h = harness();
+    const { agent, conversation } = thread(h);
+
+    const first = h.store.readConversation(reader(agent), conversation, { order: 'newest' }, 2);
+    // The page reads in the order that was asked for: the first message on it
+    // is the newest, so an agent wanting the last two has them without
+    // reversing anything or counting from an end it cannot see.
+    expect(first.messages.map((m) => m.body)).toEqual(['five', 'four']);
+    expect(first.hasMore).toBe(true);
+
+    // `after` continues in the direction of travel: older than the last one
+    // handed over.
+    const second = h.store.readConversation(
+      reader(agent),
+      conversation,
+      { order: 'newest', after: first.nextCursor },
+      2,
+    );
+    expect(second.messages.map((m) => m.body)).toEqual(['three', 'two']);
+    expect(second.hasMore).toBe(true);
+
+    const third = h.store.readConversation(
+      reader(agent),
+      conversation,
+      { order: 'newest', after: second.nextCursor },
+      2,
+    );
+    expect(third.messages.map((m) => m.body)).toEqual(['one']);
+    // Nothing older left, so this is the end of the walk.
+    expect(third.hasMore).toBe(false);
+
+    const fourth = h.store.readConversation(
+      reader(agent),
+      conversation,
+      { order: 'newest', after: third.nextCursor },
+      2,
+    );
+    expect(fourth.messages).toEqual([]);
+    // A query skips nothing, backwards as well as forwards, so an empty page
+    // leaves the position untouched.
+    expect(fourth.nextCursor).toBe(third.nextCursor);
+  });
+
+  it('pages a space backwards too, and covers exactly what paging forwards covers', () => {
+    const h = harness();
+    const { agent, space } = thread(h);
+
+    const forwards: string[] = [];
+    let cursor = undefined as undefined | ReturnType<typeof h.store.readSpace>['nextCursor'];
+    // Bounded: a page that never stops advancing is a bug to fail on, not to
+    // hang on.
+    for (let guard = 0; guard < 10; guard += 1) {
+      const page = h.store.readSpace(
+        reader(agent),
+        space,
+        cursor === undefined ? undefined : { after: cursor },
+        2,
+      );
+      forwards.push(...page.messages.map((m) => m.body));
+      cursor = page.nextCursor;
+      if (!page.hasMore) break;
+    }
+
+    const backwards: string[] = [];
+    let back = undefined as undefined | typeof cursor;
+    for (let guard = 0; guard < 10; guard += 1) {
+      const page = h.store.readSpace(
+        reader(agent),
+        space,
+        back === undefined ? { order: 'newest' } : { order: 'newest', after: back },
+        2,
+      );
+      backwards.push(...page.messages.map((m) => m.body));
+      back = page.nextCursor;
+      if (!page.hasMore) break;
+    }
+
+    expect(forwards).toEqual(['one', 'two', 'three', 'four', 'five']);
+    // The same messages from the other end: order is which way you walk, not
+    // which messages are in range.
+    expect(backwards).toEqual([...forwards].reverse());
+  });
+
+  it('bounds a backwards read by since and until, like a forwards one', () => {
+    const h = harness();
+    const { agent, space, at } = thread(h);
+    const range = { since: at['two'] as Timestamp, until: at['five'] as Timestamp };
+
+    expect(h.store.readSpace(reader(agent), space, range).messages.map((m) => m.body)).toEqual([
+      'two',
+      'three',
+      'four',
+    ]);
+    // since is still inclusive and until still exclusive; only the direction
+    // of travel changed.
+    expect(
+      h.store
+        .readSpace(reader(agent), space, { ...range, order: 'newest' })
+        .messages.map((m) => m.body),
+    ).toEqual(['four', 'three', 'two']);
+
+    // And paging backwards inside a range stops at the range, not at the
+    // conversation's first day.
+    const page = h.store.readSpace(reader(agent), space, { ...range, order: 'newest' }, 2);
+    expect(page.messages.map((m) => m.body)).toEqual(['four', 'three']);
+    expect(page.hasMore).toBe(true);
+    const rest = h.store.readSpace(
+      reader(agent),
+      space,
+      { ...range, order: 'newest', after: page.nextCursor },
+      2,
+    );
+    expect(rest.messages.map((m) => m.body)).toEqual(['two']);
+    expect(rest.hasMore).toBe(false);
+  });
+
+  it('starts at the end as it stood when the read began', () => {
+    const h = harness();
+    const { agent, space, conversation } = thread(h);
+
+    const page = h.store.readConversation(reader(agent), conversation, { order: 'newest' }, 2);
+    post(h, agent, space, 'notes', 'six');
+
+    // Resuming continues backwards through the history the first page was
+    // taken from. A message written since is newer than the whole walk, so it
+    // is not something paging backwards can reach.
+    const next = h.store.readConversation(
+      reader(agent),
+      conversation,
+      { order: 'newest', after: page.nextCursor },
+      2,
+    );
+    expect(next.messages.map((m) => m.body)).toEqual(['three', 'two']);
+  });
+
+  it('returns an empty page with a usable cursor for a thread with nothing in it', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const empty = h.store.resolveOrCreateConversation(space, 'silence').id;
+
+    const page = h.store.readConversation(reader(agent), empty, { order: 'newest' });
+    expect(page.messages).toEqual([]);
+    expect(page.hasMore).toBe(false);
+    post(h, agent, space, 'silence', 'first thing');
+    // The cursor was the end of an empty thread, so resuming from it still
+    // finds nothing older — it is a position, not a subscription.
+    expect(
+      h.store.readConversation(reader(agent), empty, { order: 'newest', after: page.nextCursor })
+        .messages,
+    ).toEqual([]);
+  });
+
+  it('records the order it read in, like every other parameter', () => {
+    const h = harness();
+    const { agent, space } = thread(h);
+    h.store.readSpace(reader(agent), space, { order: 'newest' }, 2);
+    expect(h.store.listReadLog({ agent })[0]?.params).toMatchObject({
+      range: { order: 'newest' },
+    });
+  });
+
+  it('refuses an order it does not know rather than reading forwards', () => {
+    const h = harness();
+    const { agent, space } = thread(h);
+    expectStoreError(
+      () => h.store.readSpace(reader(agent), space, { order: 'sideways' as 'newest' }),
+      'invalid_request',
+    );
+  });
+});
+
+describe('the read log is paged', () => {
+  function reads(h: Harness, agent: AgentId, space: SpaceId, count: number): void {
+    for (let i = 0; i < count; i += 1) {
+      h.store.readSpace({ kind: 'agent', id: agent }, space);
+    }
+  }
+
+  it('pages newest first without repeating or skipping a row', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    // All five in the same millisecond: read_at alone cannot order them, and a
+    // cursor that only carried the timestamp would either repeat or skip.
+    reads(h, agent, space, 5);
+
+    const all = h.store.listReadLog({ agent });
+    expect(all).toHaveLength(5);
+
+    const seen: string[] = [];
+    let cursor: ReadLogCursor | null = null;
+    for (let guard = 0; guard < 10; guard += 1) {
+      const page: ReturnType<Store['readReadLog']> = h.store.readReadLog({
+        agent,
+        limit: 2,
+        ...(cursor === null ? {} : { after: cursor }),
+      });
+      expect(page.entries.length).toBeLessThanOrEqual(2);
+      seen.push(...page.entries.map((e) => e.id));
+      cursor = page.nextCursor;
+      if (!page.hasMore) break;
+    }
+    expect(seen).toEqual(all.map((e) => e.id));
+    expect(new Set(seen).size).toBe(5);
+  });
+
+  it('leaves an exhausted page where it was, and is stable against later reads', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    reads(h, agent, space, 3);
+    const original = h.store.listReadLog({ agent }).map((e) => e.id);
+
+    const first = h.store.readReadLog({ agent, limit: 2 });
+    expect(first.entries.map((e) => e.id)).toEqual(original.slice(0, 2));
+
+    // The log keeps growing between pages — it is the fastest-growing table
+    // here. Keyset paging means the second page is still the third row, not
+    // whatever an offset now points at.
+    h.advance(60);
+    reads(h, agent, space, 4);
+
+    const second = h.store.readReadLog({ agent, limit: 2, after: first.nextCursor ?? undefined });
+    expect(second.entries.map((e) => e.id)).toEqual(original.slice(2));
+    expect(second.hasMore).toBe(false);
+
+    const third = h.store.readReadLog({
+      agent,
+      limit: 2,
+      after: second.nextCursor ?? undefined,
+    });
+    expect(third.entries).toEqual([]);
+    expect(third.nextCursor).toBe(second.nextCursor);
+  });
+
+  it('bounds the log by time, inclusive at since and exclusive at until', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    reads(h, agent, space, 1);
+    h.advance(60);
+    const middle = h.at();
+    reads(h, agent, space, 1);
+    h.advance(60);
+    const end = h.at();
+    reads(h, agent, space, 1);
+
+    const window = h.store.readReadLog({ agent, since: middle, until: end });
+    expect(window.entries).toHaveLength(1);
+    expect(window.entries[0]?.readAt).toBe(middle);
+    expect(h.store.readReadLog({ agent, since: end }).entries).toHaveLength(1);
+    expect(h.store.readReadLog({ agent, until: end }).entries).toHaveLength(2);
+  });
+
+  it('still filters by agent, and a cursor from one agent does not cross to another', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const bob = h.store.createAgent('bob').id;
+    h.store.grantMembership(bob, space);
+    reads(h, agent, space, 2);
+    h.advance(60);
+    h.store.readSpace({ kind: 'agent', id: bob }, space);
+
+    expect(h.store.readReadLog({ agent }).entries.every((e) => e.agent === agent)).toBe(true);
+    expect(h.store.readReadLog().entries).toHaveLength(3);
+    expect(h.store.readReadLog({ agent: bob }).entries).toHaveLength(1);
+
+    // Bob's read is the newest, so continuing from it inside alice's filter
+    // yields alice's rows and nothing of bob's.
+    const bobPage = h.store.readReadLog({ agent: bob });
+    const after = h.store.readReadLog({ agent, after: bobPage.nextCursor as ReadLogCursor });
+    expect(after.entries).toHaveLength(2);
+    expect(after.entries.every((e) => e.agent === agent)).toBe(true);
+  });
+
+  it('refuses a cursor that is not one of its own', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    reads(h, agent, space, 1);
+    const stream = h.store.readStream(agent);
+    expectStoreError(
+      () => h.store.readReadLog({ after: stream.nextCursor as unknown as ReadLogCursor }),
+      'invalid_request',
+    );
+  });
+});
+
+describe('attachments carry their space', () => {
+  it('says which space authorises the download, without a second lookup', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const id = newAttachmentId();
+    const posted = h.store.postMessage({
+      sender: { kind: 'agent', id: agent },
+      target: { space, title: 'notes' },
+      body: 'see attached',
+      attachments: [{ id, filename: 'report.csv', contentType: 'text/csv', sizeBytes: 42 }],
+    });
+
+    const record = h.store.getAttachment(id);
+    expect(record?.message).toBe(posted.message.id);
+    // The join already selected it; withholding it only bought the caller a
+    // getMessage call to learn what it had already read.
+    expect(record?.space).toBe(space);
+  });
+
+  it('mints ids from the store rather than from whoever is calling it', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const first = newAttachmentId();
+    expect(first).toMatch(/^[0-9a-hjkmnp-tv-z]{16}$/);
+    expect(newAttachmentId()).not.toBe(first);
+
+    // And what it mints is what `AttachmentInput` wants: no cast at the call
+    // site, which is what sent callers into ./ids.js in the first place.
+    const posted = h.store.postMessage({
+      sender: { kind: 'agent', id: agent },
+      target: { space, title: 'notes' },
+      body: 'see attached',
+      attachments: [{ id: first, filename: 'a.txt', contentType: 'text/plain', sizeBytes: 1 }],
+    });
+    expect(posted.message.attachments[0]?.id).toBe(first);
+  });
+});
+
+describe('search', () => {
+  it('reports a malformed query as an invalid request, not a database fault', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    post(h, agent, space, 'notes', 'hello world');
+
+    for (const malformed of ['"', 'hello AND', 'NEAR(', '']) {
+      const error = expectStoreError(() => h.store.searchMessages(malformed), 'invalid_request');
+      expect(error.message).toMatch(/FTS5/i);
+    }
+  });
+
+  it('does not rewrite a query into one that parses', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    post(h, agent, space, 'notes', 'hello world');
+
+    // The quoted phrase is honoured as a phrase, and the unbalanced quote is
+    // refused rather than dropped — which would have turned it into this.
+    expect(h.store.searchMessages('"hello world"')).toHaveLength(1);
+    expect(h.store.searchMessages('"world hello"')).toHaveLength(0);
+    expectStoreError(() => h.store.searchMessages('"hello world'), 'invalid_request');
+  });
+});
+
+describe('conversation summaries', () => {
+  it('counts, dates and attributes each thread in a space', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const bob = h.store.createAgent('bob').id;
+    h.store.grantMembership(bob, space);
+
+    post(h, agent, space, 'alpha', 'one');
+    h.advance(60);
+    post(h, bob, space, 'beta', 'two');
+    h.advance(60);
+    post(h, agent, space, 'alpha', 'three');
+    h.advance(60);
+    const lastAt = h.at();
+    h.store.postMessage({
+      sender: { kind: 'human' },
+      target: { space, title: 'beta' },
+      body: 'four',
+    });
+    const empty = h.store.resolveOrCreateConversation(space, 'gamma');
+
+    const summaries = h.store.listConversationSummaries(space);
+    // Most recently active first: a thread list is a list of what happened
+    // last, and a thread nobody has posted to has not happened at all.
+    expect(summaries.map((s) => s.title)).toEqual(['beta', 'alpha', 'gamma']);
+
+    const beta = summaries[0];
+    expect(beta?.messageCount).toBe(2);
+    expect(beta?.lastActivityAt).toBe(lastAt);
+    expect(beta?.lastSender).toEqual({ kind: 'human', displayName: 'the human' });
+
+    const alpha = summaries[1];
+    expect(alpha?.messageCount).toBe(2);
+    expect(alpha?.lastSender).toEqual({ kind: 'agent', id: agent, displayName: 'alice' });
+
+    const gamma = summaries[2];
+    expect(gamma?.id).toBe(empty.id);
+    expect(gamma?.messageCount).toBe(0);
+    expect(gamma?.lastActivityAt).toBeNull();
+    expect(gamma?.lastSender).toBeNull();
+  });
+
+  it('renders the sender name at read time, like every other label', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    post(h, agent, space, 'alpha', 'one');
+    h.store.renameAgent(agent, 'alice2');
+    expect(h.store.listConversationSummaries(space)[0]?.lastSender).toEqual({
+      kind: 'agent',
+      id: agent,
+      displayName: 'alice2',
+    });
+  });
+
+  it('does not reach across spaces', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const other = h.store.createSpace('other').id;
+    h.store.grantMembership(agent, other);
+    post(h, agent, space, 'alpha', 'one');
+    post(h, agent, other, 'beta', 'two');
+
+    expect(h.store.listConversationSummaries(space).map((s) => s.title)).toEqual(['alpha']);
+    expect(h.store.listConversationSummaries(other).map((s) => s.title)).toEqual(['beta']);
+    expectStoreError(
+      () => h.store.listConversationSummaries('nosuchspace00000' as SpaceId),
+      'not_found',
+    );
+  });
+});
+
+describe('replaying an idempotency key', () => {
+  function postWithKey(
+    h: Harness,
+    agent: AgentId,
+    space: SpaceId,
+    k: IdempotencyKey,
+    attachment?: { id: AttachmentId; filename?: string; digest?: string },
+  ): ReturnType<Store['postMessage']> {
+    return h.store.postMessage({
+      sender: { kind: 'agent', id: agent },
+      target: { space, title: 'notes' },
+      body: 'the report',
+      idempotencyKey: k,
+      ...(attachment === undefined
+        ? {}
+        : {
+            attachments: [
+              {
+                id: attachment.id,
+                filename: attachment.filename ?? 'report.csv',
+                contentType: 'text/csv',
+                sizeBytes: 42,
+                ...(attachment.digest === undefined ? {} : { contentDigest: attachment.digest }),
+              },
+            ],
+          }),
+    });
+  }
+
+  it('follows current access, so a revoked agent cannot read a space back', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const first = postWithKey(h, agent, space, key('k1'));
+    expect(first.created).toBe(true);
+
+    h.store.revokeMembership(agent, space);
+
+    // A replay hands back a rendered message — body, title, sender,
+    // attachment metadata. Returning it here would be a way for an agent to
+    // recover a space it has lost, using keys it minted itself.
+    expectStoreError(() => postWithKey(h, agent, space, key('k1')), 'not_found');
+    // Indistinguishable from a space that never existed.
+    expectStoreError(
+      () =>
+        h.store.postMessage({
+          sender: { kind: 'agent', id: agent },
+          target: { space: 'nosuchspace00000' as SpaceId, title: 'notes' },
+          body: 'the report',
+          idempotencyKey: key('k1'),
+        }),
+      'not_found',
+    );
+
+    // And nothing was written in the meantime: the key still covers the one
+    // message it always did.
+    h.store.grantMembership(agent, space);
+    const replay = postWithKey(h, agent, space, key('k1'));
+    expect(replay.created).toBe(false);
+    expect(replay.message.id).toBe(first.message.id);
+  });
+
+  it('hides a mismatched request behind the same not found, once access is gone', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    postWithKey(h, agent, space, key('k1'));
+    h.store.revokeMembership(agent, space);
+
+    // Not `invalid_request`: whether a key was used for this request or some
+    // other one is something only a reader of that space may learn.
+    expectStoreError(
+      () =>
+        h.store.postMessage({
+          sender: { kind: 'agent', id: agent },
+          target: { space, title: 'notes' },
+          body: 'something else entirely',
+          idempotencyKey: key('k1'),
+        }),
+      'not_found',
+    );
+  });
+
+  it('replays a retried upload, whose attachment ids are new every time', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const first = postWithKey(h, agent, space, key('k1'), { id: newAttachmentId() });
+
+    // The retry streamed the same file to the volume again and minted a fresh
+    // id for it, because that is what writing the file before the row commits
+    // requires. Same request all the same.
+    const retry = postWithKey(h, agent, space, key('k1'), { id: newAttachmentId() });
+    expect(retry.created).toBe(false);
+    expect(retry.message.id).toBe(first.message.id);
+    expect(retry.message.attachments).toEqual(first.message.attachments);
+
+    // What the caller stated about the file is still part of the request.
+    expectStoreError(
+      () =>
+        postWithKey(h, agent, space, key('k1'), {
+          id: newAttachmentId(),
+          filename: 'something-else.csv',
+        }),
+      'invalid_request',
+    );
+  });
+
+  it('applies the same rule to a replayed escalation', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    post(h, agent, space, 'notes', 'one');
+    const conversation = h.store.listConversations(space)[0]?.id ?? ('' as ConversationId);
+    const first = h.store.recordEscalation({
+      agent,
+      conversation,
+      reason: 'the numbers do not add up',
+      idempotencyKey: key('e1'),
+    });
+    expect(first.created).toBe(true);
+
+    h.store.revokeMembership(agent, space);
+    expectStoreError(
+      () =>
+        h.store.recordEscalation({
+          agent,
+          conversation,
+          reason: 'the numbers do not add up',
+          idempotencyKey: key('e1'),
+        }),
+      'not_found',
+    );
+  });
+
+  it('tells two files of the same shape apart when the caller digests them', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    postWithKey(h, agent, space, key('k1'), { id: newAttachmentId(), digest: 'sha256:aaa' });
+
+    expect(
+      postWithKey(h, agent, space, key('k1'), { id: newAttachmentId(), digest: 'sha256:aaa' })
+        .created,
+    ).toBe(false);
+    // Same name, same type, same size, different bytes: a different request.
+    expectStoreError(
+      () =>
+        postWithKey(h, agent, space, key('k1'), { id: newAttachmentId(), digest: 'sha256:bbb' }),
+      'invalid_request',
+    );
   });
 });

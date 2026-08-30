@@ -32,7 +32,7 @@ interface Binding {
  * the clear. Loopback only, which is the one place plaintext is honest.
  */
 export function resolveBinding(config: Config): Binding {
-  return config.trustProxy
+  return config.behindProxy
     ? { host: '0.0.0.0', secureCookies: true }
     : { host: '127.0.0.1', secureCookies: false };
 }
@@ -121,10 +121,10 @@ async function main(): Promise<void> {
     logger: true,
   });
   app.log.info(
-    { schemaVersion: schema.to, trustProxy: config.trustProxy, host: binding.host },
+    { schemaVersion: schema.to, trustProxy: config.behindProxy, host: binding.host },
     'dogpark starting',
   );
-  if (!config.trustProxy) {
+  if (!config.behindProxy) {
     app.log.warn(
       'DOGPARK_TRUST_PROXY=no: listening on loopback only and issuing non-Secure ' +
         'session cookies. Set it to yes when a TLS-terminating proxy is in front.',

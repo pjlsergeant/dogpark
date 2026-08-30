@@ -52,7 +52,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     // Secure cookie back at all; without one Dogpark binds loopback and a
     // Secure cookie would simply never return, locking the human out of a
     // development instance. See `resolveBinding` in server.ts.
-    secureCookies: config.trustProxy,
+    secureCookies: config.behindProxy,
     sessionTtlSeconds: SESSION_TTL_SECONDS,
     now: () => new Date(),
   };
@@ -60,7 +60,11 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   const app = Fastify({
     // Believed only when declared: otherwise X-Forwarded-For is a header any
     // client can write, and the rate limiter would key on a fiction.
-    trustProxy: config.trustProxy,
+    // The address list, not a boolean: Fastify then believes X-Forwarded-*
+    // only from the declared proxies. Trusting every peer would let anyone who
+    // can reach the port claim any client address, and claim https while
+    // speaking plaintext.
+    trustProxy: config.trustProxy === false ? false : [...config.trustProxy],
     bodyLimit: config.DOGPARK_MAX_MESSAGE_BYTES + 64 * 1024,
     ...(options.logger === undefined ? {} : { logger: options.logger }),
   });
@@ -102,7 +106,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
    * all says nothing, and is not second-guessed.
    */
   app.addHook('onRequest', async (request) => {
-    if (!config.trustProxy || !request.url.startsWith('/api/')) return;
+    if (!config.behindProxy || !request.url.startsWith('/api/')) return;
     const declared = request.headers['x-forwarded-proto'];
     if (declared === undefined) return;
     const proto = String(declared).split(',')[0]?.trim().toLowerCase();

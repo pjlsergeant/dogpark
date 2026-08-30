@@ -28,7 +28,15 @@ import type {
   SystemEvent,
   Timestamp,
 } from '../types.js';
-import { decodeCursor, decodeQueryCursor, encodeCursor, encodeQueryCursor } from './cursors.js';
+import {
+  decodeCursor,
+  decodeQueryCursor,
+  decodeReadLogCursor,
+  encodeCursor,
+  encodeQueryCursor,
+  encodeReadLogCursor,
+  type ReadLogCursor,
+} from './cursors.js';
 import { invalid, notFound, StoreError } from './errors.js';
 import { newId } from './ids.js';
 import { migrate } from './migrate.js';
@@ -47,6 +55,24 @@ export { StoreError } from './errors.js';
 export { RESERVED_SEQUENCE } from './text.js';
 export { migrate, MIGRATIONS } from './migrate.js';
 export type { Migration, MigrateResult } from './migrate.js';
+export type { ReadLogCursor } from './cursors.js';
+
+/**
+ * Mints an id for an attachment that is about to be written.
+ *
+ * `AttachmentInput.id` is caller-minted on purpose — the file is written to
+ * the volume under this id before the message row commits — but the alphabet
+ * and the length are the store's, not the caller's. Without this export the
+ * only way to satisfy the interface was to reach past it into `./ids.js`,
+ * which made an internal module part of the contract by accident.
+ *
+ * Deliberately the only minter exported: agents, spaces, messages and
+ * conversations get their ids from the store itself, and a caller that can
+ * mint one of those can collide with one.
+ */
+export function newAttachmentId(): AttachmentId {
+  return newId() as AttachmentId;
+}
 
 // ---------------------------------------------------------------------------
 // Public shapes the protocol does not already name
@@ -109,6 +135,16 @@ export interface AttachmentInput {
   readonly filename: string;
   readonly contentType: string;
   readonly sizeBytes: number;
+  /**
+   * A digest of the bytes, if the caller has one. Not stored: it exists so
+   * that a retried write hashes to the same request as the original.
+   *
+   * Without it, two uploads agreeing on name, type and size are the same
+   * request as far as an idempotency key is concerned, whatever the bytes say.
+   * The caller streams those bytes to the volume and can hash them on the way
+   * past; the store never sees them.
+   */
+  readonly contentDigest?: string | undefined;
 }
 
 export interface PostMessageInput {
@@ -159,6 +195,26 @@ export interface EscalationOutcome {
   readonly created: boolean;
 }
 
+/**
+ * A conversation plus what a thread list has to show beside it.
+ *
+ * Derived, never stored: a count and a maximum over the messages already
+ * indexed by `(conversation_id, seq)`. The alternative — the caller reading
+ * every message in the space and folding them — is a full space scan per
+ * request, and it renders labels the store would render anyway.
+ */
+export interface ConversationSummary extends Conversation {
+  readonly messageCount: number;
+  /** When the last message landed. Null for a thread nobody has posted to. */
+  readonly lastActivityAt: Timestamp | null;
+  /**
+   * Who wrote it, rendered like any other label (ADR-0014) — an agent's
+   * current display name, or the human's configured one. Null with
+   * `lastActivityAt`.
+   */
+  readonly lastSender: Sender | null;
+}
+
 export type ReadKind = 'stream' | 'conversation' | 'space';
 
 export interface ReadLogEntry {
@@ -170,6 +226,33 @@ export interface ReadLogEntry {
   readonly params: unknown;
   readonly cursor: string;
   readonly itemCount: number;
+}
+
+/**
+ * Which reads to return, newest first.
+ *
+ * `since`/`until` follow the same convention as `Range` — inclusive and
+ * exclusive respectively — and bound `readAt`, not the cursor the read
+ * returned.
+ */
+export interface ReadLogFilter {
+  readonly agent?: AgentId | undefined;
+  readonly since?: Timestamp | undefined;
+  readonly until?: Timestamp | undefined;
+  /** Position of the last entry already seen. Continues strictly older. */
+  readonly after?: ReadLogCursor | undefined;
+  readonly limit?: number | undefined;
+}
+
+export interface ReadLogPage {
+  readonly entries: readonly ReadLogEntry[];
+  /**
+   * Where to continue from, which is the position of the last entry returned.
+   * An empty page keeps the position it was given; null only when nothing was
+   * returned and nothing was supplied — there is no position yet.
+   */
+  readonly nextCursor: ReadLogCursor | null;
+  readonly hasMore: boolean;
 }
 
 export interface SessionRecord {
@@ -267,6 +350,8 @@ interface EscalationRow {
 }
 
 interface ReadLogRow {
+  /** The table's implicit rowid, selected explicitly: it is half the cursor. */
+  row_id: number;
   id: string;
   agent_id: string;
   read_at: string;
@@ -274,6 +359,24 @@ interface ReadLogRow {
   params_json: string;
   cursor: string;
   item_count: number;
+}
+
+/** Everything the read-log statements bind apart from the agent. */
+interface ReadLogBounds {
+  since: string | null;
+  until: string | null;
+  afterAt: string | null;
+  /** Only read when `afterAt` is not null, but a named parameter binds either way. */
+  afterRow: number;
+  limit: number;
+}
+
+interface ConversationSummaryRow extends ConversationRow {
+  message_count: number;
+  last_sent_at: string | null;
+  last_sender_kind: string | null;
+  last_sender_agent_id: string | null;
+  last_sender_name: string | null;
 }
 
 interface StreamRow {
@@ -285,6 +388,23 @@ const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 1000;
 
 const KEY_PREFIX = 'dgp';
+
+const READ_LOG_COLUMNS =
+  'SELECT rowid AS row_id, id, agent_id, read_at, kind, params_json, cursor, item_count ' +
+  '  FROM read_log WHERE ';
+
+/**
+ * The range, the keyset cursor and the ordering, shared by both read-log
+ * statements. `read_at` is not unique, so the rowid breaks the tie and both
+ * halves travel in the cursor; without that, a page taken across reads
+ * recorded in the same millisecond either repeats rows or skips them.
+ */
+const READ_LOG_TAIL =
+  '   AND (@since IS NULL OR read_at >= @since) ' +
+  '   AND (@until IS NULL OR read_at < @until) ' +
+  '   AND (@afterAt IS NULL OR read_at < @afterAt ' +
+  '        OR (read_at = @afterAt AND rowid < @afterRow)) ' +
+  ' ORDER BY read_at DESC, rowid DESC LIMIT @limit';
 
 function sha256(value: string): string {
   return createHash('sha256').update(value, 'utf8').digest('hex');
@@ -357,10 +477,23 @@ export interface Store {
   getConversation(conversation: ConversationId): Conversation | undefined;
   renameConversation(conversation: ConversationId, title: string): Conversation;
   listConversations(space: SpaceId): readonly Conversation[];
+  /**
+   * The thread list: every conversation in a space with its message count,
+   * last activity and last sender, ordered by last activity. The admin
+   * surface's, like `listConversations` — no call enumerates a space's
+   * conversations for an agent.
+   */
+  listConversationSummaries(space: SpaceId): readonly ConversationSummary[];
 
   // Messages
   postMessage(input: PostMessageInput): PostMessageResult;
   readStream(agent: AgentId, args?: ReadStreamArgs): StreamPage;
+  /**
+   * Both message queries honour `Range.order`. `oldest` pages forward from the
+   * start; `newest` pages backwards from the end and returns each page
+   * newest-first, so `messages[0]` is the newest message on it. `hasMore`
+   * means "more in the direction you are travelling" — older ones, backwards.
+   */
   readConversation(
     reader: Reader,
     conversation: ConversationId,
@@ -381,9 +514,15 @@ export interface Store {
       readonly limit?: number | undefined;
     },
   ): readonly SearchHit[];
+  /**
+   * Metadata only; the bytes live on the volume. Carries the space as well as
+   * the message, because a file's visibility is its message's and the caller
+   * would otherwise have to fetch the message just to learn which space to
+   * authorise against.
+   */
   getAttachment(
     attachment: AttachmentId,
-  ): (Attachment & { readonly message: MessageId }) | undefined;
+  ): (Attachment & { readonly message: MessageId; readonly space: SpaceId }) | undefined;
 
   // Escalations
   recordEscalation(input: RecordEscalationInput): EscalationOutcome;
@@ -409,10 +548,17 @@ export interface Store {
     readonly cursor: string;
     readonly itemCount: number;
   }): void;
-  listReadLog(filter?: {
-    readonly agent?: AgentId | undefined;
-    readonly limit?: number | undefined;
-  }): readonly ReadLogEntry[];
+  /**
+   * The forensic view, newest first, filtered and paged. This is the read log
+   * table's only full reader: it grows faster than anything else here, so
+   * every page is bounded and resumable.
+   */
+  readReadLog(filter?: ReadLogFilter): ReadLogPage;
+  /**
+   * The entries of `readReadLog` without the page around them, for a caller
+   * that wants one bounded slice and no continuation.
+   */
+  listReadLog(filter?: ReadLogFilter): readonly ReadLogEntry[];
   lastReadCursor(agent: AgentId): Cursor | undefined;
 
   // Sessions
@@ -677,6 +823,11 @@ export function openStore(options: StoreOptions): Store {
         ')',
     ),
 
+    // Two statements per source rather than one with a conditional ORDER BY:
+    // the direction has to be visible to the query planner, or the index on
+    // (conversation_id, seq) stops being an ordering and becomes a sort.
+    // `@after` is the exclusive bound in the direction of travel — a floor
+    // going forwards, a ceiling going backwards.
     conversationPage: db.prepare<
       {
         conversation: string;
@@ -691,6 +842,20 @@ export function openStore(options: StoreOptions): Store {
         'AND (@since IS NULL OR sent_at >= @since) AND (@until IS NULL OR sent_at < @until) ' +
         'ORDER BY seq LIMIT @limit',
     ),
+    conversationPageBackwards: db.prepare<
+      {
+        conversation: string;
+        after: number;
+        since: string | null;
+        until: string | null;
+        limit: number;
+      },
+      MessageRow
+    >(
+      'SELECT * FROM message WHERE conversation_id = @conversation AND seq < @after ' +
+        'AND (@since IS NULL OR sent_at >= @since) AND (@until IS NULL OR sent_at < @until) ' +
+        'ORDER BY seq DESC LIMIT @limit',
+    ),
     spacePage: db.prepare<
       { space: string; after: number; since: string | null; until: string | null; limit: number },
       MessageRow
@@ -698,6 +863,36 @@ export function openStore(options: StoreOptions): Store {
       'SELECT * FROM message WHERE space_id = @space AND seq > @after ' +
         'AND (@since IS NULL OR sent_at >= @since) AND (@until IS NULL OR sent_at < @until) ' +
         'ORDER BY seq LIMIT @limit',
+    ),
+    spacePageBackwards: db.prepare<
+      { space: string; after: number; since: string | null; until: string | null; limit: number },
+      MessageRow
+    >(
+      'SELECT * FROM message WHERE space_id = @space AND seq < @after ' +
+        'AND (@since IS NULL OR sent_at >= @since) AND (@until IS NULL OR sent_at < @until) ' +
+        'ORDER BY seq DESC LIMIT @limit',
+    ),
+
+    // One grouped query for the whole thread list.
+    //
+    // The bare columns beside MAX(m.seq) are the values from the row that
+    // produced the maximum — SQLite defines that for a query with exactly one
+    // min/max aggregate, and it is why this needs no correlated subquery per
+    // conversation. LEFT JOIN, so a thread nobody has posted to still appears.
+    //
+    // Ordered by last activity, which is what a thread list is for; NULL sorts
+    // last under DESC, so empty threads fall to the bottom.
+    conversationSummaries: db.prepare<{ space: string }, ConversationSummaryRow>(
+      'SELECT c.id AS id, c.space_id AS space_id, c.title AS title, ' +
+        '       COUNT(m.seq) AS message_count, MAX(m.seq) AS last_seq, ' +
+        '       m.sent_at AS last_sent_at, m.sender_kind AS last_sender_kind, ' +
+        '       m.sender_agent_id AS last_sender_agent_id, a.display_name AS last_sender_name ' +
+        '  FROM conversation c ' +
+        '  LEFT JOIN message m ON m.conversation_id = c.id ' +
+        '  LEFT JOIN agent a ON a.id = m.sender_agent_id ' +
+        ' WHERE c.space_id = @space ' +
+        ' GROUP BY c.id ' +
+        ' ORDER BY last_seq DESC, c.created_at DESC, c.id',
     ),
     search: db.prepare<
       { query: string; space: string | null; limit: number },
@@ -736,9 +931,18 @@ export function openStore(options: StoreOptions): Store {
       'INSERT INTO read_log (id, agent_id, read_at, kind, params_json, cursor, item_count) ' +
         'VALUES (@id, @agent, @at, @kind, @params, @cursor, @count)',
     ),
-    listReads: db.prepare<{ agent: string | null; limit: number }, ReadLogRow>(
-      'SELECT * FROM read_log WHERE (@agent IS NULL OR agent_id = @agent) ' +
-        'ORDER BY read_at DESC, rowid DESC LIMIT @limit',
+    // Keyset paging, not OFFSET: the log only grows, and a page taken by
+    // offset while it grows either repeats rows or skips them — in the one
+    // view whose whole job is completeness.
+    //
+    // Two statements rather than one with `@agent IS NULL OR agent_id =
+    // @agent`, because a plan is chosen when a statement is prepared and not
+    // when it is bound: that disjunction cannot use the composite index, so
+    // asking for one agent's reads would walk the whole log filtering as it
+    // went. Named separately, each gets the index that answers it.
+    listReads: db.prepare<ReadLogBounds, ReadLogRow>(READ_LOG_COLUMNS + '1 = 1' + READ_LOG_TAIL),
+    listReadsForAgent: db.prepare<ReadLogBounds & { agent: string }, ReadLogRow>(
+      READ_LOG_COLUMNS + 'agent_id = @agent' + READ_LOG_TAIL,
     ),
     lastStreamRead: db.prepare<{ agent: string }, { cursor: string }>(
       "SELECT cursor FROM read_log WHERE agent_id = @agent AND kind = 'stream' " +
@@ -843,6 +1047,34 @@ export function openStore(options: StoreOptions): Store {
       lastAttemptAt: row.last_attempt_at as Timestamp | null,
       nextAttemptAt: row.next_attempt_at as Timestamp | null,
       lastError: row.last_error,
+    };
+  }
+
+  function toReadLogEntry(row: ReadLogRow): ReadLogEntry {
+    return {
+      id: row.id,
+      agent: row.agent_id as AgentId,
+      readAt: row.read_at as Timestamp,
+      kind: row.kind as ReadKind,
+      params: JSON.parse(row.params_json) as unknown,
+      cursor: row.cursor,
+      itemCount: row.item_count,
+    };
+  }
+
+  /** The sender of a conversation's last message, or null if it has none. */
+  function toLastSender(row: ConversationSummaryRow): Sender | null {
+    if (row.last_sender_kind === null) return null;
+    if (row.last_sender_agent_id === null) {
+      // No user record: the human's name is configuration, like everywhere.
+      return { kind: 'human', displayName: humanDisplayName };
+    }
+    /* c8 ignore next */
+    if (row.last_sender_name === null) throw new Error('message references a missing agent');
+    return {
+      kind: 'agent',
+      id: row.last_sender_agent_id as AgentId,
+      displayName: row.last_sender_name,
     };
   }
 
@@ -1110,23 +1342,45 @@ export function openStore(options: StoreOptions): Store {
           ? { conversation: input.target.conversation }
           : { space: input.target.space, title: input.target.title },
       body: input.body,
+      // Deliberately without `id`: attachment ids are minted per request, so a
+      // retry that uploads the same files carries different ones and would
+      // hash differently every time — the write would never be replayable,
+      // which is the one thing the key promises. What identifies a file here
+      // is what the caller stated about it, plus `contentDigest` when the
+      // caller computed one.
       attachments: (input.attachments ?? []).map((a) => ({
-        id: a.id,
         filename: a.filename,
         contentType: a.contentType,
         sizeBytes: a.sizeBytes,
+        contentDigest: a.contentDigest ?? null,
       })),
     });
 
     if (sender.kind === 'agent' && input.idempotencyKey !== undefined) {
       const existing = st.getIdempotency.get({ agent: sender.id, key: input.idempotencyKey });
       if (existing !== undefined) {
+        const outcome = JSON.parse(existing.outcome_json) as PostOutcome;
+        const replayed = st.messageById.get({ id: outcome.messageId });
+        /* c8 ignore next */
+        if (replayed === undefined) throw new Error(`message ${outcome.messageId} vanished`);
+
+        // A replay hands back a rendered message, so it is a read as well as a
+        // write and follows current access like every other read. Otherwise an
+        // agent removed from a space could recover its contents by replaying
+        // keys it minted itself.
+        //
+        // Checked before the hash, so losing access looks the same whether the
+        // replayed request matches or not — and the same as a space that never
+        // existed (ADR-0003).
+        if (!isCurrentMember(sender.id, replayed.space_id as SpaceId)) {
+          throw notFound('conversation' in input.target ? 'conversation' : 'space');
+        }
+
         // A different request under the same key is an error, not a silent
         // replay of the old answer.
         if (!constantTimeEquals(existing.request_hash, hash)) {
           throw invalid('idempotency key was already used for a different request');
         }
-        const outcome = JSON.parse(existing.outcome_json) as PostOutcome;
         return renderPost(outcome.messageId, false);
       }
     }
@@ -1203,13 +1457,22 @@ export function openStore(options: StoreOptions): Store {
 
     const existing = st.getIdempotency.get({ agent: input.agent, key: input.idempotencyKey });
     if (existing !== undefined) {
-      if (!constantTimeEquals(existing.request_hash, hash)) {
-        throw invalid('idempotency key was already used for a different request');
-      }
       const outcome = JSON.parse(existing.outcome_json) as EscalationOutcomeRecord;
       const row = st.getEscalation.get({ id: outcome.escalationId });
       /* c8 ignore next */
       if (row === undefined) throw new Error('escalation vanished');
+      // Same rule as a replayed post: a replay is a read, and reads follow
+      // current access. Less to leak here — the reason is the agent's own
+      // words — but confirming an escalation about a space it can no longer
+      // see is still an answer it is not entitled to.
+      const raisedIn = st.getConversation.get({ id: row.conversation_id });
+      /* c8 ignore next */
+      if (raisedIn === undefined) throw new Error('escalation references a missing conversation');
+      if (!isCurrentMember(input.agent, raisedIn.space_id as SpaceId))
+        throw notFound('conversation');
+      if (!constantTimeEquals(existing.request_hash, hash)) {
+        throw invalid('idempotency key was already used for a different request');
+      }
       return { escalation: toEscalation(row), created: false };
     }
 
@@ -1305,15 +1568,45 @@ export function openStore(options: StoreOptions): Store {
   });
 
   interface QueryPlan {
+    readonly order: 'oldest' | 'newest';
+    /**
+     * The exclusive bound in the direction of travel: a floor for `oldest`, a
+     * ceiling for `newest`. One number either way, so a cursor stays one
+     * opaque token and the direction stays a property of the request.
+     */
     readonly after: number;
     readonly since: string | null;
     readonly until: string | null;
     readonly limit: number;
   }
 
+  /**
+   * `order` picks which end to start from and which way to walk; `since` and
+   * `until` bound the same set either way. So the two orders return the same
+   * messages, in opposite orders, from opposite ends.
+   *
+   * A cursor is a position, not a direction: handing an `oldest` cursor to a
+   * `newest` read means "everything older than here", which is exactly what
+   * turning around at a known point should mean.
+   */
   function planQuery(range: Range | undefined, limit: number | undefined): QueryPlan {
+    const order = range?.order ?? 'oldest';
+    // The HTTP layer validates this against `Range`, but the store is also
+    // called directly, and a typo would otherwise silently read forwards.
+    if (order !== 'oldest' && order !== 'newest') {
+      throw invalid("order must be 'oldest' or 'newest'");
+    }
     return {
-      after: range?.after === undefined ? 0 : decodeQueryCursor(range.after),
+      order,
+      after:
+        range?.after !== undefined
+          ? decodeQueryCursor(range.after)
+          : // Nothing seen yet. Forwards that is the floor below every seq;
+            // backwards it is a ceiling above every seq, taken once here so
+            // that messages written mid-page cannot shift the window.
+            order === 'oldest'
+            ? 0
+            : tip() + 1,
       since: range?.since === undefined ? null : normalizeTimestamp('since', range.since),
       until: range?.until === undefined ? null : normalizeTimestamp('until', range.until),
       limit: clampLimit(limit),
@@ -1324,6 +1617,11 @@ export function openStore(options: StoreOptions): Store {
    * A query, not a stream position. Nothing is skipped, so the cursor is the
    * last row returned and an empty page leaves the position where it was —
    * unlike the stream, whose cursor jumps past what the access filter removed.
+   *
+   * `rows` already arrive in the requested order, so this is the same
+   * arithmetic in both directions: the page is what fits, `hasMore` is the
+   * row that did not, and the cursor is the last row handed over — the oldest
+   * one when reading backwards, which is where the next page continues from.
    */
   function pageMessages(rows: readonly MessageRow[], plan: QueryPlan): MessagePage {
     const hasMore = rows.length > plan.limit;
@@ -1351,7 +1649,9 @@ export function openStore(options: StoreOptions): Store {
       requireReadAccess(reader, row.space_id as SpaceId, 'conversation');
 
       const plan = planQuery(range, limit);
-      const rows = st.conversationPage.all({
+      const statement =
+        plan.order === 'oldest' ? st.conversationPage : st.conversationPageBackwards;
+      const rows = statement.all({
         conversation,
         after: plan.after,
         since: plan.since,
@@ -1383,7 +1683,8 @@ export function openStore(options: StoreOptions): Store {
       requireReadAccess(reader, space, 'space');
 
       const plan = planQuery(range, limit);
-      const rows = st.spacePage.all({
+      const statement = plan.order === 'oldest' ? st.spacePage : st.spacePageBackwards;
+      const rows = statement.all({
         space,
         after: plan.after,
         since: plan.since,
@@ -1650,6 +1951,16 @@ export function openStore(options: StoreOptions): Store {
       return st.listConversations.all({ space }).map(toConversation);
     },
 
+    listConversationSummaries(space) {
+      requireSpaceRow(space);
+      return st.conversationSummaries.all({ space }).map((row) => ({
+        ...toConversation(row),
+        messageCount: row.message_count,
+        lastActivityAt: row.last_sent_at as Timestamp | null,
+        lastSender: toLastSender(row),
+      }));
+    },
+
     postMessage(input) {
       return postTx(input);
     },
@@ -1681,9 +1992,22 @@ export function openStore(options: StoreOptions): Store {
       // searching for its id — and a rename touches no index.
       assertNoReservedSequence('query', query);
       const cache = newRenderCache();
-      return st.search
-        .all({ query, space: opts?.space ?? null, limit: clampLimit(opts?.limit) })
-        .map((row) => ({ message: toMessage(row, cache), snippet: row.snippet }));
+      const limit = clampLimit(opts?.limit);
+      let rows;
+      try {
+        rows = st.search.all({ query, space: opts?.space ?? null, limit });
+      } catch (error) {
+        // FTS5 parses the query itself and rejects bad syntax as a plain
+        // SQLITE_ERROR — a typo surfacing as an internal fault. The query is
+        // reported back unchanged and never rewritten into one that parses: a
+        // search that quietly means something else is worse than one that says
+        // it cannot be read.
+        if (error instanceof Database.SqliteError && error.code === 'SQLITE_ERROR') {
+          throw invalid(`search query is not valid FTS5 syntax: ${error.message}`);
+        }
+        throw error;
+      }
+      return rows.map((row) => ({ message: toMessage(row, cache), snippet: row.snippet }));
     },
 
     getAttachment(attachment) {
@@ -1695,6 +2019,9 @@ export function openStore(options: StoreOptions): Store {
         contentType: row.content_type,
         sizeBytes: row.size_bytes,
         message: row.message_id as MessageId,
+        // Already joined for; withholding it only bought the caller a second
+        // lookup to authorise a download.
+        space: row.space_id as SpaceId,
       };
     },
 
@@ -1732,18 +2059,38 @@ export function openStore(options: StoreOptions): Store {
       writeRead(entry.agent, entry.kind, entry.params, entry.cursor, entry.itemCount);
     },
 
+    readReadLog(filter) {
+      const limit = clampLimit(filter?.limit);
+      const after = filter?.after === undefined ? undefined : decodeReadLogCursor(filter.after);
+      const bounds: ReadLogBounds = {
+        since: filter?.since === undefined ? null : normalizeTimestamp('since', filter.since),
+        until: filter?.until === undefined ? null : normalizeTimestamp('until', filter.until),
+        afterAt: after?.readAt ?? null,
+        afterRow: after?.rowId ?? 0,
+        // One more than asked for, so `hasMore` is observed and not guessed.
+        limit: limit + 1,
+      };
+      const rows =
+        filter?.agent === undefined
+          ? st.listReads.all(bounds)
+          : st.listReadsForAgent.all({ ...bounds, agent: filter.agent });
+      const hasMore = rows.length > limit;
+      const page = rows.slice(0, limit);
+      const last = page.at(-1);
+      return {
+        entries: page.map(toReadLogEntry),
+        // Like the message queries and unlike the stream: nothing is skipped,
+        // so an empty page leaves the position exactly where it was.
+        nextCursor:
+          last === undefined
+            ? (filter?.after ?? null)
+            : encodeReadLogCursor({ readAt: last.read_at, rowId: last.row_id }),
+        hasMore,
+      };
+    },
+
     listReadLog(filter) {
-      return st.listReads
-        .all({ agent: filter?.agent ?? null, limit: clampLimit(filter?.limit) })
-        .map((row) => ({
-          id: row.id,
-          agent: row.agent_id as AgentId,
-          readAt: row.read_at as Timestamp,
-          kind: row.kind as ReadKind,
-          params: JSON.parse(row.params_json) as unknown,
-          cursor: row.cursor,
-          itemCount: row.item_count,
-        }));
+      return store.readReadLog(filter).entries;
     },
 
     lastReadCursor(agent) {

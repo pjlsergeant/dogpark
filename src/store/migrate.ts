@@ -35,6 +35,7 @@ function sqlFile(name: string): string {
  */
 export const MIGRATIONS: readonly Migration[] = [
   { version: 1, name: 'initial', sql: sqlFile('schema.sql') },
+  { version: 2, name: 'read log paging', sql: sqlFile('0002-read-log-paging.sql') },
 ];
 
 const VERSION_TABLE = `
