@@ -24,7 +24,7 @@ import type {
   StreamPage,
   Timestamp,
 } from '../types.js';
-import type { ReadLogCursor } from './cursors.js';
+import type { EscalationCursor, ReadLogCursor } from './cursors.js';
 import type { MigrateResult } from './migrate.js';
 
 /**
@@ -134,6 +134,27 @@ export interface RecordEscalationInput {
 export interface EscalationOutcome {
   readonly escalation: EscalationRecord;
   readonly created: boolean;
+}
+
+/**
+ * Which escalations to return. `oldest` is the notifier's walk; `newest` is
+ * the inbox. `after` is the position of the last row already seen and
+ * continues in the direction of travel.
+ */
+export interface EscalationFilter {
+  readonly state?: NotificationState | undefined;
+  /** Only rows due by then: never attempted, or scheduled at or before it. */
+  readonly dueAt?: Timestamp | undefined;
+  readonly order?: 'oldest' | 'newest' | undefined;
+  readonly after?: EscalationCursor | undefined;
+  readonly limit?: number | undefined;
+}
+
+export interface EscalationPage {
+  readonly escalations: readonly EscalationRecord[];
+  /** As `ReadLogPage.nextCursor`: the last row's position, kept when empty. */
+  readonly nextCursor: EscalationCursor | null;
+  readonly hasMore: boolean;
 }
 
 /**
@@ -342,11 +363,9 @@ export interface Store {
 
   // Escalations
   recordEscalation(input: RecordEscalationInput): EscalationOutcome;
-  listEscalations(filter?: {
-    readonly state?: NotificationState | undefined;
-    readonly dueAt?: Timestamp | undefined;
-    readonly limit?: number | undefined;
-  }): readonly EscalationRecord[];
+  listEscalations(filter?: EscalationFilter): EscalationPage;
+  /** Rows not yet `sent`: what the inbox badge counts, whatever page it shows. */
+  countUndeliveredEscalations(): number;
   markEscalationNotification(
     escalation: string,
     state: NotificationState,

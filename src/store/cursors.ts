@@ -67,23 +67,55 @@ export interface ReadLogPosition {
   readonly rowId: number;
 }
 
+/**
+ * `tag:key:timestamp`. The key comes first, so the timestamp — the only part
+ * containing a `:` — is whatever is left after the first two separators.
+ */
+function encodeKeyed(tag: string, key: string, at: string): string {
+  return Buffer.from(`${tag}:${key}:${at}`, 'utf8').toString('base64url');
+}
+
+function decodeKeyed(tag: string, kind: string, cursor: string): { key: string; at: string } {
+  const text = Buffer.from(cursor, 'base64url').toString('utf8');
+  const parts = text.split(':');
+  const [found, key] = parts;
+  const at = parts.slice(2).join(':');
+  if (found !== tag || key === undefined || key === '' || at === '') {
+    throw invalid(`not a valid ${kind} cursor`);
+  }
+  return { key, at };
+}
+
 export function encodeReadLogCursor(position: ReadLogPosition): ReadLogCursor {
-  // The rowid comes first, so the timestamp — the only part containing a `:` —
-  // is whatever is left after the first two separators.
-  return Buffer.from(`${READ_LOG_TAG}:${position.rowId}:${position.readAt}`, 'utf8').toString(
-    'base64url',
-  ) as ReadLogCursor;
+  return encodeKeyed(READ_LOG_TAG, String(position.rowId), position.readAt) as ReadLogCursor;
 }
 
 export function decodeReadLogCursor(cursor: ReadLogCursor): ReadLogPosition {
-  const text = Buffer.from(cursor, 'base64url').toString('utf8');
-  const parts = text.split(':');
-  const [found, digits] = parts;
-  const readAt = parts.slice(2).join(':');
-  if (found !== READ_LOG_TAG || digits === undefined || !/^\d+$/.test(digits) || readAt === '') {
-    throw invalid('not a valid read log cursor');
-  }
-  const rowId = Number(digits);
+  const { key, at } = decodeKeyed(READ_LOG_TAG, 'read log', cursor);
+  if (!/^\d+$/.test(key)) throw invalid('not a valid read log cursor');
+  const rowId = Number(key);
   if (!Number.isSafeInteger(rowId)) throw invalid('not a valid read log cursor');
-  return { readAt, rowId };
+  return { readAt: at, rowId };
+}
+
+/**
+ * A position in the escalation list: `created_at` is not unique either, and
+ * the id — random, never reused — breaks the tie in both directions.
+ */
+export type EscalationCursor = string & { readonly __brand: 'EscalationCursor' };
+
+const ESCALATION_TAG = 'dge1';
+
+export interface EscalationPosition {
+  readonly createdAt: string;
+  readonly id: string;
+}
+
+export function encodeEscalationCursor(position: EscalationPosition): EscalationCursor {
+  return encodeKeyed(ESCALATION_TAG, position.id, position.createdAt) as EscalationCursor;
+}
+
+export function decodeEscalationCursor(cursor: EscalationCursor): EscalationPosition {
+  const { key, at } = decodeKeyed(ESCALATION_TAG, 'escalation', cursor);
+  return { createdAt: at, id: key };
 }

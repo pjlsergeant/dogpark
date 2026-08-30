@@ -11,7 +11,8 @@ import type {
   Conversation,
   ConversationId,
   ConversationSummary,
-  Escalation,
+  EscalationFilter,
+  EscalationPage,
   HumanPostRequest,
   HumanPostResult,
   IssuedKey,
@@ -68,7 +69,7 @@ export interface DogparkAdminApi {
 
   // Forensics -------------------------------------------------------------
   listReads(filter?: ReadLogFilter): Promise<Page<ReadLogEntry>>;
-  listEscalations(): Promise<Page<Escalation>>;
+  listEscalations(filter?: EscalationFilter): Promise<EscalationPage>;
   search(query: SearchQuery): Promise<Page<SearchResult>>;
 
   /**

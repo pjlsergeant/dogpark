@@ -7,11 +7,13 @@
  * saying "something is wrong" and nobody hearing it.
  */
 import type { ReactNode } from 'react';
-import type { Escalation, NotificationState } from '../api/index.js';
+import type { Escalation, EscalationPage, NotificationState } from '../api/index.js';
 import { useApi } from '../app/api-context.js';
 import { useAsync } from '../app/useAsync.js';
+import { usePages } from '../app/usePages.js';
 import { href } from '../app/router.js';
 import { Empty, Failure, Loading, Pill, Time } from '../components/bits.js';
+import { LoadMore } from '../components/LoadMore.js';
 import { InlineMarkdown } from '../markdown/Markdown.js';
 
 const TONE: Record<NotificationState, string> = {
@@ -82,10 +84,13 @@ function Row({ escalation, spaceName }: { escalation: Escalation; spaceName: str
 
 export function EscalationsScreen(): ReactNode {
   const api = useApi();
-  const escalations = useAsync(() => api.listEscalations(), [api]);
+  const pages = usePages<Escalation, EscalationPage>(
+    (after) => api.listEscalations(after === undefined ? undefined : { after }),
+    [api],
+  );
   const spaces = useAsync(() => api.listSpaces(), [api]);
-  const items = escalations.state.data?.items ?? [];
-  const unhandled = items.filter((e) => e.notification.state !== 'sent').length;
+  // Counted server-side over every row, not over the page on screen.
+  const undelivered = pages.first.data?.undelivered ?? 0;
   const nameOf = (id: string): string =>
     (spaces.state.data ?? []).find((s) => s.id === id)?.name ?? 'a space';
 
@@ -100,25 +105,23 @@ export function EscalationsScreen(): ReactNode {
           </p>
         </div>
         <div className="row">
-          {unhandled > 0 && <Pill tone="warn">{unhandled} not delivered</Pill>}
-          <button type="button" className="btn" onClick={escalations.reload}>
+          {undelivered > 0 && <Pill tone="warn">{undelivered} not delivered</Pill>}
+          <button type="button" className="btn" onClick={pages.refresh}>
             Refresh
           </button>
         </div>
       </header>
 
-      {escalations.state.error !== null && (
-        <Failure error={escalations.state.error} onRetry={escalations.reload} />
-      )}
-      {escalations.state.status === 'loading' && escalations.state.data === null && (
+      {pages.first.error !== null && <Failure error={pages.first.error} onRetry={pages.refresh} />}
+      {pages.first.status === 'loading' && pages.first.data === null && (
         <Loading what="escalations" />
       )}
-      {escalations.state.data !== null && items.length === 0 && (
+      {pages.first.data !== null && pages.items.length === 0 && (
         <Empty>Nothing has been escalated.</Empty>
       )}
 
       <ul className="escalations">
-        {items.map((escalation) => (
+        {pages.items.map((escalation) => (
           <Row
             key={escalation.id}
             escalation={escalation}
@@ -126,6 +129,8 @@ export function EscalationsScreen(): ReactNode {
           />
         ))}
       </ul>
+
+      <LoadMore pages={pages} label="Load older escalations" />
     </section>
   );
 }

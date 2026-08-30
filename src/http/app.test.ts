@@ -122,6 +122,13 @@ async function login(h: Harness): Promise<{ cookie: string; csrf: string }> {
 
 // ---------------------------------------------------------------------------
 
+interface EscalationsBody {
+  escalations: { reason: string }[];
+  nextCursor: string | null;
+  hasMore: boolean;
+  undelivered: number;
+}
+
 describe('the HTTP surface', () => {
   let h: Harness;
   let alpha: { id: AgentId; key: string };
@@ -1497,16 +1504,20 @@ describe('the HTTP surface', () => {
         url: '/api/admin/escalations',
         headers: { cookie: session.cookie },
       });
-      const rows = inbox.json() as {
-        agent: { id: string };
-        conversation: { id: string };
-        raisedAt: string;
-        notification: { state: string };
-      }[];
+      const { escalations: rows, undelivered } = inbox.json() as {
+        escalations: {
+          agent: { id: string };
+          conversation: { id: string };
+          raisedAt: string;
+          notification: { state: string };
+        }[];
+        undelivered: number;
+      };
       expect(rows).toHaveLength(1);
       expect(rows[0]?.agent.id).toBe(alpha.id);
       expect(rows[0]?.conversation.id).toBe(conversation);
       expect(rows[0]?.notification.state).toBe('pending');
+      expect(undelivered).toBe(1);
 
       const found = await h.app.inject({
         method: 'GET',
@@ -1516,6 +1527,45 @@ describe('the HTTP surface', () => {
       const hits = found.json() as { message: { body: string }; space: { id: string } }[];
       expect(hits).toHaveLength(1);
       expect(hits[0]?.space.id).toBe(space);
+    });
+
+    it('pages the inbox newest first with a cursor, and counts the undelivered whole', async () => {
+      for (const n of [1, 2, 3]) {
+        await asAgent(alpha.key, {
+          method: 'POST',
+          url: '/api/agent/escalations',
+          payload: { conversation, reason: `problem ${n}`, idempotencyKey: `p${n}` },
+        });
+        // Distinct created_at: within one millisecond the id breaks the tie,
+        // which is stable but not chronological.
+        await new Promise((resolve) => setTimeout(resolve, 2));
+      }
+      const session = await login(h);
+      const page = async (query: string): Promise<EscalationsBody> =>
+        (
+          await h.app.inject({
+            method: 'GET',
+            url: `/api/admin/escalations?${query}`,
+            headers: { cookie: session.cookie },
+          })
+        ).json() as EscalationsBody;
+
+      const first = await page('limit=2');
+      expect(first.escalations.map((e) => e.reason)).toEqual(['problem 3', 'problem 2']);
+      expect(first.hasMore).toBe(true);
+      expect(first.undelivered).toBe(3);
+      const rest = await page(`limit=2&after=${encodeURIComponent(first.nextCursor ?? '')}`);
+      expect(rest.escalations.map((e) => e.reason)).toEqual(['problem 1']);
+      expect(rest.hasMore).toBe(false);
+      const oldest = await page('order=oldest&limit=1');
+      expect(oldest.escalations.map((e) => e.reason)).toEqual(['problem 1']);
+
+      const bad = await h.app.inject({
+        method: 'GET',
+        url: '/api/admin/escalations?after=nope',
+        headers: { cookie: session.cookie },
+      });
+      expect(bad.statusCode).toBe(400);
     });
 
     it('treats a malformed search query as a typo rather than a fault', async () => {

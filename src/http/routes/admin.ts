@@ -19,6 +19,7 @@ import {
 import {
   asAgentId,
   asConversationId,
+  asEscalationCursor,
   asMessageId,
   asReadLogCursor,
   asSpaceId,
@@ -294,12 +295,25 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
         return rendered;
       });
 
+      /**
+       * The inbox, newest first unless asked otherwise, paged like the read
+       * log. `undelivered` is counted over the whole table, so the badge is
+       * right whatever page is showing.
+       */
       guarded.get('/escalations', async (request) => {
         const query = parse(EscalationsQuery, request.query, 'query');
         const cache = new Map<string, Agent>();
-        return ctx.store
-          .listEscalations({ limit: ctx.pageLimit(query.limit) })
-          .map((record) => escalationRow(ctx.store, cache, record));
+        const page = ctx.store.listEscalations({
+          order: query.order ?? 'newest',
+          ...(query.after === undefined ? {} : { after: asEscalationCursor(query.after) }),
+          limit: ctx.pageLimit(query.limit),
+        });
+        return {
+          escalations: page.escalations.map((record) => escalationRow(ctx.store, cache, record)),
+          nextCursor: page.nextCursor,
+          hasMore: page.hasMore,
+          undelivered: ctx.store.countUndeliveredEscalations(),
+        };
       });
 
       // The store turns FTS5's own parse failure into `invalid_request` — the

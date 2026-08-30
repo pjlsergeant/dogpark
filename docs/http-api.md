@@ -66,7 +66,7 @@ required because the SPA shares an origin with the agent API.
 | POST | `/messages` | post as the human |
 | GET | `/reads` | the read log, filterable by agent; limit and cursor, because it is the one table that grows without bound. `kind` is `stream`, `conversation`, `space` or `attachment`; an attachment read has an empty cursor |
 | GET | `/reads/:id/messages/:messageId` | a message rendered with the labels in force when that row was written (ADR-0004). A label snapshot, not proof the message was on that page: that is the row's kind, parameters and cursor |
-| GET | `/escalations` | with notification state; `limit` |
+| GET | `/escalations` | the inbox, newest first; `order`, `after`, `limit`; carries `undelivered`, counted over the whole table |
 | GET | `/search` | `q`; FTS5 over stored bodies |
 
 Every route that issues a key returns `{ agent, keyId, key }` — a key that
@@ -100,10 +100,11 @@ GET  /reads/:id/messages/:messageId
                    -> Message
 GET  /agents/:id/keys
                    -> [{ keyId, label, createdAt, revokedAt }]
-GET  /escalations?limit
-                   -> [{ id, agent, conversation, reason, raisedAt,
-                         notification: { state, attempts, lastAttemptAt,
-                                         nextAttemptAt, lastError } }]
+GET  /escalations?order&after&limit
+                   -> { escalations: [{ id, agent, conversation, reason, raisedAt,
+                                        notification: { state, attempts, lastAttemptAt,
+                                                        nextAttemptAt, lastError } }],
+                        nextCursor, hasMore, undelivered }
 GET  /search?q=&space=&limit=
                    -> [{ message, conversation, space, snippet }]
 GET  /spaces/:id/conversations
@@ -121,9 +122,9 @@ diagnose anything.
 `lastSender` is a whole `Sender` rather than a name, so a thread list renders an
 agent's *current* name rather than one frozen when it last posted.
 
-`/escalations` and `/search` return plain arrays: neither has a cursor, because
-neither store query offers one. They should grow one before either list gets
-long enough to matter.
+`/escalations` pages like `/reads`: a keyset cursor over `(created_at, id)`,
+`order` defaulting to `newest`. `undelivered` counts every row not yet `sent`,
+whatever page is showing, so the inbox badge cannot be fooled by paging.
 
 ## Serving the UI
 

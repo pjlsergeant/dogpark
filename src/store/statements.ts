@@ -119,6 +119,20 @@ export interface StreamRow {
   kind: string;
 }
 
+/** Everything the escalation list statements bind. */
+export interface EscalationBounds {
+  state: string | null;
+  dueAt: string | null;
+  afterAt: string | null;
+  /** Only read when `afterAt` is not null, but a named parameter binds either way. */
+  afterId: string;
+  limit: number;
+}
+
+const ESCALATION_COLUMNS =
+  'SELECT * FROM escalation WHERE (@state IS NULL OR notification_state = @state) ' +
+  '   AND (@dueAt IS NULL OR next_attempt_at IS NULL OR next_attempt_at <= @dueAt) ';
+
 const READ_LOG_COLUMNS =
   'SELECT rowid AS row_id, id, agent_id, read_at, kind, params_json, cursor, item_count ' +
   '  FROM read_log WHERE ';
@@ -517,13 +531,22 @@ export function prepareStatements(db: Db) {
     getEscalation: prepare<{ id: string }, EscalationRow>(
       'SELECT * FROM escalation WHERE id = @id',
     ),
-    listEscalations: prepare<
-      { state: string | null; dueAt: string | null; limit: number },
-      EscalationRow
-    >(
-      'SELECT * FROM escalation WHERE (@state IS NULL OR notification_state = @state) ' +
-        'AND (@dueAt IS NULL OR next_attempt_at IS NULL OR next_attempt_at <= @dueAt) ' +
-        'ORDER BY created_at, id LIMIT @limit',
+    // Keyset over (created_at, id) in either direction, like the read log; the
+    // notifier walks oldest-first, the inbox newest-first.
+    escalationsOldest: prepare<EscalationBounds, EscalationRow>(
+      ESCALATION_COLUMNS +
+        '   AND (@afterAt IS NULL OR created_at > @afterAt ' +
+        '        OR (created_at = @afterAt AND id > @afterId)) ' +
+        ' ORDER BY created_at, id LIMIT @limit',
+    ),
+    escalationsNewest: prepare<EscalationBounds, EscalationRow>(
+      ESCALATION_COLUMNS +
+        '   AND (@afterAt IS NULL OR created_at < @afterAt ' +
+        '        OR (created_at = @afterAt AND id < @afterId)) ' +
+        ' ORDER BY created_at DESC, id DESC LIMIT @limit',
+    ),
+    countUndelivered: prepare<[], { n: number }>(
+      "SELECT COUNT(*) AS n FROM escalation WHERE notification_state != 'sent'",
     ),
     markEscalation: prepare<
       {

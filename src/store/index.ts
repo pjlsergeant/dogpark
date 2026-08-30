@@ -24,7 +24,7 @@ export { splitKey } from './ids.js';
 export { MAX_PAGE_LIMIT } from './limits.js';
 export { migrate, MIGRATIONS } from './migrate.js';
 export type { Migration, MigrateResult } from './migrate.js';
-export type { ReadLogCursor } from './cursors.js';
+export type { EscalationCursor, ReadLogCursor } from './cursors.js';
 export type * from './records.js';
 
 /**

@@ -21,8 +21,9 @@ function escalationQueue(store: Store): EscalationQueue {
       const due = store.listEscalations({
         state: 'pending',
         dueAt: new Date(now).toISOString() as Timestamp,
+        order: 'oldest',
         limit,
-      });
+      }).escalations;
       return due.map((record): PendingEscalation => {
         const conversation = store.getConversation(record.conversation);
         const space = conversation === undefined ? undefined : store.getSpace(conversation.space);

@@ -210,11 +210,7 @@ export interface SearchResult {
 // Paging
 // ---------------------------------------------------------------------------
 
-/**
- * `/reads` answers `{ reads, nextCursor, hasMore }`. `/escalations` and
- * `/search` answer bare arrays capped at the page size, with no cursor to
- * continue from: a single page, presented as if it were the whole list.
- */
+/** One page of a keyset-paged list; `nextCursor` continues it, `hasMore` says whether to. */
 export interface Page<T> {
   readonly items: readonly T[];
   readonly nextCursor: string | null;
@@ -225,6 +221,17 @@ export interface ReadLogFilter {
   readonly agent?: AgentId | undefined;
   readonly after?: string | undefined;
   readonly limit?: number | undefined;
+}
+
+export interface EscalationFilter {
+  readonly order?: 'oldest' | 'newest' | undefined;
+  readonly after?: string | undefined;
+  readonly limit?: number | undefined;
+}
+
+/** The inbox page, with the badge's count taken over the whole table. */
+export interface EscalationPage extends Page<Escalation> {
+  readonly undelivered: number;
 }
 
 export interface SearchQuery {

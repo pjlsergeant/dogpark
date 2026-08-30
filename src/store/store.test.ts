@@ -15,6 +15,7 @@ import type {
   StreamItem,
   Timestamp,
 } from '../types.js';
+import type { EscalationCursor } from './index.js';
 import { StoreError } from './errors.js';
 import {
   newAttachmentId,
@@ -739,7 +740,7 @@ describe('idempotency', () => {
     expect(first.created).toBe(true);
     expect(second.created).toBe(false);
     expect(second.escalation.id).toBe(first.escalation.id);
-    expect(h.store.listEscalations()).toHaveLength(1);
+    expect(h.store.listEscalations().escalations).toHaveLength(1);
 
     expectStoreError(
       () => h.store.recordEscalation({ ...request, reason: 'different reason' }),
@@ -1302,7 +1303,7 @@ describe('escalations', () => {
     });
 
     expect(escalation.notificationState).toBe('pending');
-    expect(h.store.listEscalations({ state: 'pending' })).toHaveLength(1);
+    expect(h.store.listEscalations({ state: 'pending' }).escalations).toHaveLength(1);
 
     h.advance(30);
     const failed = h.store.markEscalationNotification(escalation.id, 'failed', {
@@ -1311,11 +1312,61 @@ describe('escalations', () => {
     });
     expect(failed.attempts).toBe(1);
     expect(failed.lastError).toBe('connect ECONNREFUSED');
-    expect(h.store.listEscalations({ state: 'pending' })).toHaveLength(0);
+    expect(h.store.listEscalations({ state: 'pending' }).escalations).toHaveLength(0);
 
     const sent = h.store.markEscalationNotification(escalation.id, 'sent');
     expect(sent.attempts).toBe(2);
     expect(sent.notificationState).toBe('sent');
+  });
+
+  it('pages newest first for the inbox and oldest first for the notifier, without a gap', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const conversation = h.store.resolveOrCreateConversation(space, 'notes').id;
+    const raise = (n: number): string => {
+      h.advance(1);
+      return h.store.recordEscalation({
+        agent,
+        conversation,
+        reason: `problem ${n}`,
+        idempotencyKey: key(`e${n}`),
+      }).escalation.id;
+    };
+    const ids = [raise(1), raise(2), raise(3)];
+
+    const newest = h.store.listEscalations({ order: 'newest', limit: 2 });
+    expect(newest.escalations.map((e) => e.id)).toEqual([ids[2], ids[1]]);
+    expect(newest.hasMore).toBe(true);
+    const older = h.store.listEscalations({
+      order: 'newest',
+      limit: 2,
+      after: newest.nextCursor ?? undefined,
+    });
+    expect(older.escalations.map((e) => e.id)).toEqual([ids[0]]);
+    expect(older.hasMore).toBe(false);
+    // An empty page keeps the position it was given.
+    const end = h.store.listEscalations({ order: 'newest', after: older.nextCursor ?? undefined });
+    expect(end.escalations).toHaveLength(0);
+    expect(end.nextCursor).toBe(older.nextCursor);
+
+    const oldest = h.store.listEscalations({ order: 'oldest', limit: 2 });
+    expect(oldest.escalations.map((e) => e.id)).toEqual([ids[0], ids[1]]);
+    expect(
+      h.store.listEscalations({ order: 'oldest', after: oldest.nextCursor ?? undefined })
+        .escalations,
+    ).toHaveLength(1);
+
+    expect(h.store.countUndeliveredEscalations()).toBe(3);
+    h.store.markEscalationNotification(ids[1] ?? '', 'sent');
+    expect(h.store.countUndeliveredEscalations()).toBe(2);
+  });
+
+  it('refuses a cursor it cannot read', () => {
+    const h = harness();
+    expectStoreError(
+      () => h.store.listEscalations({ after: 'nope' as unknown as EscalationCursor }),
+      'invalid_request',
+    );
   });
 
   it('refuses an escalation about a conversation the agent cannot see', () => {

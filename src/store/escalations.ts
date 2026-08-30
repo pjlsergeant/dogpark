@@ -2,6 +2,7 @@
 import type { AgentId, ConversationId, SpaceId, Timestamp } from '../types.js';
 import type { StoreContext } from './context.js';
 import { invalid, notFound } from './errors.js';
+import { decodeEscalationCursor, encodeEscalationCursor } from './cursors.js';
 import { constantTimeEquals, requestHash } from './hash.js';
 import { newId } from './ids.js';
 import { clampLimit } from './limits.js';
@@ -12,12 +13,18 @@ import type {
   RecordEscalationInput,
   Store,
 } from './records.js';
-import type { EscalationRow } from './statements.js';
-import { assertNonEmpty } from './text.js';
+import type { EscalationBounds, EscalationRow } from './statements.js';
+import { assertNonEmpty, normalizeTimestamp } from './text.js';
 
 export function escalationStore(
   ctx: StoreContext,
-): Pick<Store, 'recordEscalation' | 'listEscalations' | 'markEscalationNotification'> {
+): Pick<
+  Store,
+  | 'recordEscalation'
+  | 'listEscalations'
+  | 'countUndeliveredEscalations'
+  | 'markEscalationNotification'
+> {
   const { db, st, now, isCurrentMember } = ctx;
 
   function toEscalation(row: EscalationRow): EscalationRecord {
@@ -108,13 +115,37 @@ export function escalationStore(
     },
 
     listEscalations(filter) {
-      return st.listEscalations
-        .all({
-          state: filter?.state ?? null,
-          dueAt: filter?.dueAt ?? null,
-          limit: clampLimit(filter?.limit),
-        })
-        .map(toEscalation);
+      const limit = clampLimit(filter?.limit);
+      const order = filter?.order ?? 'oldest';
+      if (order !== 'oldest' && order !== 'newest') {
+        throw invalid("order must be 'oldest' or 'newest'");
+      }
+      const after = filter?.after === undefined ? undefined : decodeEscalationCursor(filter.after);
+      const bounds: EscalationBounds = {
+        state: filter?.state ?? null,
+        dueAt: filter?.dueAt === undefined ? null : normalizeTimestamp('dueAt', filter.dueAt),
+        afterAt: after?.createdAt ?? null,
+        afterId: after?.id ?? '',
+        // One more than asked for, so `hasMore` is observed and not guessed.
+        limit: limit + 1,
+      };
+      const statement = order === 'oldest' ? st.escalationsOldest : st.escalationsNewest;
+      const rows = statement.all(bounds);
+      const hasMore = rows.length > limit;
+      const page = rows.slice(0, limit);
+      const last = page.at(-1);
+      return {
+        escalations: page.map(toEscalation),
+        nextCursor:
+          last === undefined
+            ? (filter?.after ?? null)
+            : encodeEscalationCursor({ createdAt: last.created_at, id: last.id }),
+        hasMore,
+      };
+    },
+
+    countUndeliveredEscalations() {
+      return st.countUndelivered.get()?.n ?? 0;
     },
 
     markEscalationNotification(escalation, state, opts) {

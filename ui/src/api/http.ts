@@ -12,6 +12,7 @@ import type {
   Conversation,
   ConversationSummary,
   Escalation,
+  EscalationFilter,
   HumanPostRequest,
   HumanPostResult,
   IssuedKey,
@@ -275,8 +276,14 @@ export function createHttpApi(): DogparkAdminApi {
         'reads',
       );
     },
-    async listEscalations() {
-      return asPage<Escalation>(await request('GET', '/escalations'));
+    async listEscalations(filter?: EscalationFilter) {
+      const raw = await request('GET', '/escalations', {
+        query: { order: filter?.order, after: filter?.after, limit: filter?.limit },
+      });
+      return {
+        ...toPage<Escalation>(raw, 'escalations'),
+        undelivered: (raw as { undelivered: number }).undelivered,
+      };
     },
     async search(query: SearchQuery) {
       return asPage<SearchResult>(

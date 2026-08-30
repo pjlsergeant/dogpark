@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { ReadLogCursor } from '../store/index.js';
+import type { EscalationCursor, ReadLogCursor } from '../store/index.js';
 import type {
   AgentId,
   ConversationId,
@@ -100,6 +100,8 @@ export const ReadLogQuery = z.strictObject({
 });
 
 export const EscalationsQuery = z.strictObject({
+  order: z.enum(['oldest', 'newest']).optional(),
+  after: z.string().optional(),
   limit: z.coerce.number().int().positive().optional(),
 });
 
@@ -161,3 +163,4 @@ export const asTimestamp = (value: string): Timestamp => value as Timestamp;
  * store's to say, and it says `invalid_request`.
  */
 export const asReadLogCursor = (value: string): ReadLogCursor => value as ReadLogCursor;
+export const asEscalationCursor = (value: string): EscalationCursor => value as EscalationCursor;
