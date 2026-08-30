@@ -52,5 +52,4 @@ at `/agent-guide.md`, so the guide always matches the server it came from.
 | [CONTEXT.md](CONTEXT.md)                      | Definitions of "space" and "conversation", so the docs use them consistently |
 | [original-vision.md](docs/original-vision.md) | The notes this grew from; out of date since ADR-0007                         |
 
-The agent protocol itself is stated in [src/types.ts](src/types.ts), with the
-semantics of every field in doc comments.
+The agent protocol itself is stated in [src/types.ts](src/types.ts).
