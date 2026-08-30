@@ -10,7 +10,7 @@ import type { Store } from './records.js';
 export function sessionStore(
   ctx: StoreContext,
 ): Pick<Store, 'createSession' | 'verifySession' | 'deleteSession' | 'deleteExpiredSessions'> {
-  const { st, clock, now } = ctx;
+  const { st, now } = ctx;
 
   return {
     createSession(ttlSeconds) {
@@ -20,7 +20,9 @@ export function sessionStore(
       const id = newId();
       const token = randomBytes(32).toString('base64url');
       const createdAt = now();
-      const expiresAt = new Date(clock().getTime() + ttlSeconds * 1000).toISOString() as Timestamp;
+      const expiresAt = new Date(
+        Date.parse(createdAt) + ttlSeconds * 1000,
+      ).toISOString() as Timestamp;
       st.insertSession.run({ id, hash: sha256(token), at: createdAt, expires: expiresAt });
       return { id, token, createdAt, expiresAt };
     },

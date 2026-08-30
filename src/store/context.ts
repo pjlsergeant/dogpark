@@ -1,6 +1,7 @@
 /**
  * What every domain module is built over: the connection, the prepared
- * statements, the clock, and the lookups more than one of them shares.
+ * statements, the clock as a timestamp, and the lookups more than one of them
+ * shares.
  */
 import type { Database as Db } from 'better-sqlite3';
 import type { AgentId, Conversation, ConversationId, Space, SpaceId, Timestamp } from '../types.js';
@@ -11,7 +12,6 @@ import type { AgentRow, ConversationRow, SpaceRow, Statements } from './statemen
 export interface StoreContext {
   readonly db: Db;
   readonly st: Statements;
-  readonly clock: () => Date;
   readonly now: () => Timestamp;
   /** There is no user record, so the human's name comes from configuration. */
   readonly humanDisplayName: string;
@@ -26,7 +26,6 @@ export interface StoreContext {
 export function createContext(
   db: Db,
   options: {
-    readonly clock: () => Date;
     readonly now: () => Timestamp;
     readonly humanDisplayName: string;
   },
@@ -71,7 +70,6 @@ export function createContext(
   return {
     db,
     st,
-    clock: options.clock,
     now: options.now,
     humanDisplayName: options.humanDisplayName,
     nextSeq,

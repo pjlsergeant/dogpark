@@ -10,9 +10,10 @@ import { SNIPPET_CLOSE, SNIPPET_OPEN } from './text.js';
  * What the store uses of a prepared statement. Its own type rather than the
  * library's, whose exported `Statement` resolves to an unexported namespace
  * type that a declaration file cannot name. `P` is the bound parameters:
- * `[]` for none, otherwise one named-parameter object.
+ * `[]` for none, otherwise one named-parameter object — `object` rather than
+ * a `Record`, which an interface would not satisfy.
  */
-export interface Prepared<P extends Record<string, unknown> | [], R> {
+export interface Prepared<P extends object | [], R> {
   get(...params: P extends [] ? [] : [P]): R | undefined;
   all(...params: P extends [] ? [] : [P]): R[];
   run(...params: P extends [] ? [] : [P]): { readonly changes: number };
@@ -95,18 +96,15 @@ export interface ReadLogRow {
   item_count: number;
 }
 
-/**
- * Everything the read-log statements bind apart from the agent. A type, not
- * an interface, so it satisfies `Prepared`'s named-parameter constraint.
- */
-export type ReadLogBounds = {
+/** Everything the read-log statements bind apart from the agent. */
+export interface ReadLogBounds {
   since: string | null;
   until: string | null;
   afterAt: string | null;
   /** Only read when `afterAt` is not null, but a named parameter binds either way. */
   afterRow: number;
   limit: number;
-};
+}
 
 export interface ConversationSummaryRow extends ConversationRow {
   message_count: number;
@@ -142,7 +140,7 @@ export function prepareStatements(db: Db) {
   // The library's conditional `Statement` type is not assignable to `Prepared`
   // for a still-generic `P`, though every instantiation is; the cast is the
   // one place the two meet.
-  const prepare = <P extends Record<string, unknown> | [], R>(sql: string): Prepared<P, R> =>
+  const prepare = <P extends object | [], R>(sql: string): Prepared<P, R> =>
     db.prepare<P, R>(sql) as unknown as Prepared<P, R>;
 
   return {

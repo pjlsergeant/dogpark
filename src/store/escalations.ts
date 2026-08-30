@@ -1,10 +1,10 @@
 /** Escalations, carrying their own notification retry state. */
 import type { AgentId, ConversationId, SpaceId, Timestamp } from '../types.js';
 import type { StoreContext } from './context.js';
-import { constantTimeEquals, requestHash } from './hash.js';
-import { clampLimit } from './limits.js';
 import { invalid, notFound } from './errors.js';
+import { constantTimeEquals, requestHash } from './hash.js';
 import { newId } from './ids.js';
+import { clampLimit } from './limits.js';
 import type {
   EscalationOutcome,
   EscalationRecord,

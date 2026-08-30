@@ -18,7 +18,7 @@ import { RESERVED_SEQUENCE } from './text.js';
 
 export { StoreError } from './errors.js';
 export { RESERVED_SEQUENCE } from './text.js';
-/** The two pieces of key handling the HTTP layer shares with the store. */
+// The two pieces of key handling the HTTP layer shares with the store.
 export { constantTimeEquals } from './hash.js';
 export { splitKey } from './ids.js';
 export { MAX_PAGE_LIMIT } from './limits.js';
@@ -50,12 +50,21 @@ export function openStore(options: StoreOptions): Store {
 
   const clock = options.now ?? (() => new Date());
   const now = (): Timestamp => clock().toISOString() as Timestamp;
+  const humanDisplayName = options.humanDisplayName;
 
   // Before the statements are prepared: they name the tables.
   const schema = migrate(db, undefined, now);
-  const ctx = createContext(db, { clock, now, humanDisplayName: options.humanDisplayName });
+  const ctx = createContext(db, { now, humanDisplayName });
   const resolveConversation = conversationResolver(ctx);
 
+  const base = {
+    database: db,
+    schema,
+    reservedSequence: RESERVED_SEQUENCE,
+    close() {
+      db.close();
+    },
+  };
   const agents = agentStore(ctx);
   const spaces = spaceStore(ctx);
   const conversations = conversationStore(ctx, resolveConversation);
@@ -63,15 +72,10 @@ export function openStore(options: StoreOptions): Store {
   const readLog = readLogStore(ctx);
   const escalations = escalationStore(ctx);
   const sessions = sessionStore(ctx);
-  assertDisjoint(agents, spaces, conversations, messages, readLog, escalations, sessions);
+  assertDisjoint(base, agents, spaces, conversations, messages, readLog, escalations, sessions);
 
   return {
-    database: db,
-    schema,
-    reservedSequence: RESERVED_SEQUENCE,
-    close() {
-      db.close();
-    },
+    ...base,
     ...agents,
     ...spaces,
     ...conversations,
