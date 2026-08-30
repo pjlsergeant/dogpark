@@ -201,36 +201,14 @@ function SpaceReader({
 }
 
 /**
- * One thread.
+ * One thread, newest page first.
  *
- * Paging is the awkward part, and the shape of the awkwardness is the API's:
- * `GET /conversations/:id/messages` takes `since`, `until` and `after`, and
- * `after` walks *forwards* from the start of the range. There is no "the last
- * N messages", so a reader that always started at the beginning would make
- * the human page through a year to reach today.
- *
- * So the reader opens on a time window and widens on request, which `since`
- * expresses exactly. A window with nothing in it widens itself once, because
- * that is what anyone would do next.
+ * `order=newest` pages backwards from the end and returns each page
+ * newest-first, so the reader opens on today and walks back on request. Each
+ * page is reversed into reading order and older pages go on the front.
  */
-type Window = '14d' | '90d' | 'all';
-
-const WINDOWS: readonly {
-  readonly id: Window;
-  readonly label: string;
-  readonly days: number | null;
-}[] = [
-  { id: '14d', label: 'Last 14 days', days: 14 },
-  { id: '90d', label: 'Last 90 days', days: 90 },
-  { id: 'all', label: 'Everything', days: null },
-];
-
-function sinceFor(window: Window): string | undefined {
-  const days = WINDOWS.find((w) => w.id === window)?.days ?? null;
-  return days === null ? undefined : new Date(Date.now() - days * 86_400_000).toISOString();
-}
-
 interface Loaded {
+  /** Oldest first, as rendered. */
   readonly messages: readonly Message[];
   readonly nextCursor: string | null;
   readonly hasMore: boolean;
@@ -252,45 +230,42 @@ function Thread({
   onPosted: () => void;
 }): ReactNode {
   const api = useApi();
-  const [window_, setWindow] = useState<Window>('14d');
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
-  const [widened, setWidened] = useState(false);
   const bottom = useRef<HTMLDivElement>(null);
 
-  const load = useCallback(
-    async (choice: Window) => {
-      setBusy(true);
-      setError(null);
-      try {
-        const since = sinceFor(choice);
-        const page = await api.readConversation(conversation, since === undefined ? {} : { since });
-        setLoaded({
-          messages: page.messages,
-          nextCursor: page.nextCursor,
-          hasMore: page.hasMore,
-          pages: 1,
-        });
-      } catch (cause) {
-        setError(toApiError(cause));
-      } finally {
-        setBusy(false);
-      }
-    },
-    [api, conversation],
-  );
+  const load = useCallback(async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const page = await api.readConversation(conversation, { order: 'newest' });
+      setLoaded({
+        messages: [...page.messages].reverse(),
+        nextCursor: page.nextCursor,
+        hasMore: page.hasMore,
+        pages: 1,
+      });
+    } catch (cause) {
+      setError(toApiError(cause));
+    } finally {
+      setBusy(false);
+    }
+  }, [api, conversation]);
 
-  const loadMore = useCallback(async () => {
+  const loadOlder = useCallback(async () => {
     if (loaded === null || loaded.nextCursor === null) return;
     setBusy(true);
     try {
-      const page = await api.readConversation(conversation, { after: loaded.nextCursor });
+      const page = await api.readConversation(conversation, {
+        order: 'newest',
+        after: loaded.nextCursor,
+      });
       setLoaded((current) =>
         current === null
           ? current
           : {
-              messages: [...current.messages, ...page.messages],
+              messages: [...[...page.messages].reverse(), ...current.messages],
               nextCursor: page.nextCursor,
               hasMore: page.hasMore,
               pages: current.pages + 1,
@@ -304,30 +279,22 @@ function Thread({
   }, [api, conversation, loaded]);
 
   useEffect(() => {
-    void load(window_);
-  }, [load, window_]);
+    void load();
+  }, [load]);
 
-  // An empty window is almost always the wrong window. Widen once, say so.
-  useEffect(() => {
-    if (widened || window_ !== '14d') return;
-    if (loaded !== null && loaded.messages.length === 0 && !loaded.hasMore) {
-      setWidened(true);
-      setWindow('all');
-    }
-  }, [loaded, widened, window_]);
-
-  // Poll while the tab is in front, but only when the view is one page and
-  // caught up: re-reading would otherwise throw away pages already pulled.
+  // Poll while the tab is in front. Only with one page showing: the newest
+  // page is always the current one, but a reload would drop older pages
+  // already pulled.
   useEffect(() => {
     const timer = globalThis.setInterval(() => {
       if (document.visibilityState !== 'visible') return;
       setLoaded((current) => {
-        if (current !== null && current.pages === 1 && !current.hasMore) void load(window_);
+        if (current !== null && current.pages === 1) void load();
         return current;
       });
     }, POLL_MS);
     return () => globalThis.clearInterval(timer);
-  }, [load, window_]);
+  }, [load]);
 
   const messages = loaded?.messages ?? [];
   const count = messages.length;
@@ -352,24 +319,7 @@ function Thread({
       <header className="thread-head">
         <h1>{heading}</h1>
         <div className="row">
-          <label className="visually-hidden" htmlFor="thread-window">
-            How far back
-          </label>
-          <select
-            id="thread-window"
-            value={window_}
-            onChange={(event) => {
-              setWidened(true);
-              setWindow(event.target.value as Window);
-            }}
-          >
-            {WINDOWS.map((each) => (
-              <option key={each.id} value={each.id}>
-                {each.label}
-              </option>
-            ))}
-          </select>
-          <button type="button" className="btn btn-quiet" onClick={() => void load(window_)}>
+          <button type="button" className="btn btn-quiet" onClick={() => void load()}>
             Refresh
           </button>
         </div>
@@ -377,12 +327,15 @@ function Thread({
 
       <div className="thread-body">
         {busy && loaded === null && <Loading what="messages" />}
-        {error !== null && <Failure error={error} onRetry={() => void load(window_)} />}
-        {loaded !== null && count === 0 && (
-          <Empty>Nothing in this window. Widen it, or say something.</Empty>
-        )}
-        {widened && window_ === 'all' && count > 0 && (
-          <p className="muted small">Nothing in the last 14 days, so this is the whole thread.</p>
+        {error !== null && <Failure error={error} onRetry={() => void load()} />}
+        {loaded !== null && count === 0 && <Empty>Nothing here yet. Say something.</Empty>}
+
+        {loaded?.hasMore === true && (
+          <div className="load-more">
+            <button type="button" className="btn" onClick={() => void loadOlder()} disabled={busy}>
+              {busy ? 'Loading...' : 'Load older messages'}
+            </button>
+          </div>
         )}
 
         {messages.map((each, index) => {
@@ -396,16 +349,6 @@ function Thread({
           );
         })}
 
-        {loaded?.hasMore === true && (
-          <div className="load-more">
-            <button type="button" className="btn" onClick={() => void loadMore()} disabled={busy}>
-              {busy ? 'Loading...' : 'Load newer messages'}
-            </button>
-            <span className="muted small">
-              This conversation pages forwards from the start of the window.
-            </span>
-          </div>
-        )}
         <div ref={bottom} />
       </div>
 
@@ -413,7 +356,7 @@ function Thread({
         space={space}
         conversation={conversation}
         onPosted={() => {
-          void load(window_);
+          void load();
           onPosted();
         }}
       />

@@ -249,6 +249,7 @@ export function createHttpApi(): DogparkAdminApi {
           since: query?.since,
           until: query?.until,
           after: query?.after,
+          order: query?.order,
         },
       })) as Record<string, unknown> | null;
       const page = toPage<Message>(raw, 'messages');
