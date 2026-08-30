@@ -161,13 +161,15 @@ async function main(): Promise<void> {
         removed += batch.removed;
         if (batch.done) break;
         resume = batch.resume;
-        // A sweep is resumable by construction and the next one is an hour
-        // away, so shutdown does not wait for the rest of this one — and no
-        // batch runs against the database the shutdown is about to close.
-        if (closing) break;
         // Back to the event loop between batches: a backlog of months is a
         // long sweep, and a long sweep must not be a stalled server.
         await new Promise((done) => setImmediate(done));
+        // Checked after the yield, not before it: a signal can land while the
+        // driver is parked, and everything from here to the next batch is
+        // synchronous, so this is the last word before the database is
+        // touched. A sweep is resumable by construction and the next one is
+        // an hour away, so shutdown does not wait for the rest of this one.
+        if (closing) break;
       }
       // Once a sweep, not once a batch: what the operator wants is the total.
       if (removed > 0) {
