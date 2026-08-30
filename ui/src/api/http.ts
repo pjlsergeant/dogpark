@@ -75,11 +75,6 @@ function toPage<T>(raw: unknown, key: string): Page<T> {
   };
 }
 
-/** A bare array: one page, capped at the server's page size, with no cursor. */
-function asPage<T>(raw: unknown): Page<T> {
-  return { items: raw as T[], nextCursor: null, hasMore: false };
-}
-
 export function createHttpApi(): DogparkAdminApi {
   let csrfToken: string | null = null;
 
@@ -286,8 +281,11 @@ export function createHttpApi(): DogparkAdminApi {
       };
     },
     async search(query: SearchQuery) {
-      return asPage<SearchResult>(
-        await request('GET', '/search', { query: { q: query.q, space: query.space } }),
+      return toPage<SearchResult>(
+        await request('GET', '/search', {
+          query: { q: query.q, space: query.space, order: query.order, after: query.after },
+        }),
+        'results',
       );
     },
 

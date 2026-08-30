@@ -1524,9 +1524,13 @@ describe('the HTTP surface', () => {
         url: '/api/admin/search?q=figures',
         headers: { cookie: session.cookie },
       });
-      const hits = found.json() as { message: { body: string }; space: { id: string } }[];
+      const { results: hits, hasMore } = found.json() as {
+        results: { message: { body: string }; space: { id: string } }[];
+        hasMore: boolean;
+      };
       expect(hits).toHaveLength(1);
       expect(hits[0]?.space.id).toBe(space);
+      expect(hasMore).toBe(false);
     });
 
     it('pages the inbox newest first with a cursor, and counts the undelivered whole', async () => {

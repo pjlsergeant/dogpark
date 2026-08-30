@@ -7,7 +7,7 @@
  * the reader and the read log are things you send yourself later.
  */
 import { useSyncExternalStore } from 'react';
-import type { AgentId, ConversationId, MessageId, SpaceId } from '../api/index.js';
+import type { AgentId, ConversationId, MessageId, SearchOrder, SpaceId } from '../api/index.js';
 
 export type Route =
   | { readonly name: 'spaces' }
@@ -21,7 +21,12 @@ export type Route =
     }
   | { readonly name: 'reads'; readonly agent?: AgentId | undefined }
   | { readonly name: 'escalations' }
-  | { readonly name: 'search'; readonly q: string; readonly space?: SpaceId | undefined };
+  | {
+      readonly name: 'search';
+      readonly q: string;
+      readonly space?: SpaceId | undefined;
+      readonly order?: SearchOrder | undefined;
+    };
 
 function subscribe(callback: () => void): () => void {
   window.addEventListener('hashchange', callback);
@@ -68,10 +73,12 @@ export function parseRoute(hash: string): Route {
       return { name: 'escalations' };
     case 'search': {
       const space = query.get('space');
+      const order = query.get('order');
       return {
         name: 'search',
         q: query.get('q') ?? '',
         space: space === null ? undefined : (space as SpaceId),
+        order: order === 'newest' ? 'newest' : undefined,
       };
     }
     case 'spaces':
@@ -95,9 +102,10 @@ export const href = {
   reads: (agent?: AgentId): string =>
     agent === undefined ? '#/reads' : `#/reads?agent=${encodeURIComponent(agent)}`,
   escalations: (): string => '#/escalations',
-  search: (q: string, space?: SpaceId): string => {
+  search: (q: string, space?: SpaceId, order?: SearchOrder): string => {
     const params = new URLSearchParams({ q });
     if (space !== undefined) params.set('space', space);
+    if (order === 'newest') params.set('order', order);
     return `#/search?${params.toString()}`;
   },
 };

@@ -15,7 +15,7 @@ import type {
   StreamItem,
   Timestamp,
 } from '../types.js';
-import type { EscalationCursor } from './index.js';
+import type { EscalationCursor, SearchCursor } from './index.js';
 import { StoreError } from './errors.js';
 import {
   newAttachmentId,
@@ -938,7 +938,7 @@ describe('bodies are canonical', () => {
     const posted = post(h, agent, space, 'notes', 'ping @bob about the figures');
     expect(posted.body).not.toContain(RESERVED_SEQUENCE);
 
-    const hits = h.store.searchMessages('figures');
+    const { hits } = h.store.searchMessages('figures');
     expect(hits).toHaveLength(1);
     expect(hits[0]?.snippet).not.toContain(RESERVED_SEQUENCE);
     expect(hits[0]?.snippet).toContain('@bob');
@@ -946,7 +946,7 @@ describe('bodies are canonical', () => {
 
     // The token is still searchable by the bare id, and the highlighted id
     // renders as the highlighted name rather than a bracketed id.
-    const byId = h.store.searchMessages(bob);
+    const { hits: byId } = h.store.searchMessages(bob);
     expect(byId).toHaveLength(1);
     expect(byId[0]?.snippet).toBe('ping @[bob] about the figures');
     expect(byId[0]?.snippet).not.toContain(RESERVED_SEQUENCE);
@@ -977,12 +977,12 @@ describe('bodies are canonical', () => {
     h.store.grantMembership(bob, space);
     post(h, agent, space, 'notes', 'ping @bob about invoices');
 
-    expect(h.store.searchMessages(`"${bob}"`)).toHaveLength(1);
-    expect(h.store.searchMessages('invoices')).toHaveLength(1);
+    expect(h.store.searchMessages(`"${bob}"`).hits).toHaveLength(1);
+    expect(h.store.searchMessages('invoices').hits).toHaveLength(1);
 
     h.store.renameAgent(bob, 'robert');
-    expect(h.store.searchMessages(`"${bob}"`)).toHaveLength(1);
-    expect(h.store.searchMessages('robert')).toHaveLength(0);
+    expect(h.store.searchMessages(`"${bob}"`).hits).toHaveLength(1);
+    expect(h.store.searchMessages('robert').hits).toHaveLength(0);
   });
 });
 
@@ -1805,6 +1805,55 @@ describe('attachments carry their space', () => {
   });
 });
 
+describe('search pages', () => {
+  it('continues relevance order from a cursor without repeating or skipping a hit', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const ids = ['alpha', 'alpha beta', 'alpha alpha', 'beta alpha', 'alpha gamma'].map(
+      (body, i) => {
+        h.advance(1);
+        return post(h, agent, space, `t${i}`, body).id;
+      },
+    );
+    const first = h.store.searchMessages('alpha', { limit: 2 });
+    expect(first.hits).toHaveLength(2);
+    expect(first.hasMore).toBe(true);
+    const second = h.store.searchMessages('alpha', {
+      limit: 2,
+      after: first.nextCursor ?? undefined,
+    });
+    const third = h.store.searchMessages('alpha', {
+      limit: 2,
+      after: second.nextCursor ?? undefined,
+    });
+    const seen = [...first.hits, ...second.hits, ...third.hits].map((hit) => hit.message.id);
+    expect(new Set(seen).size).toBe(5);
+    expect([...seen].sort()).toEqual([...ids].sort());
+    expect(third.hasMore).toBe(false);
+    // The whole list in one page is the pages concatenated: same order.
+    expect(h.store.searchMessages('alpha').hits.map((hit) => hit.message.id)).toEqual(seen);
+  });
+
+  it('pages newest first on the sequence when asked', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const ids = [1, 2, 3].map((n) => post(h, agent, space, `t${n}`, `alpha ${n}`).id);
+    const first = h.store.searchMessages('alpha', { order: 'newest', limit: 2 });
+    expect(first.hits.map((hit) => hit.message.id)).toEqual([ids[2], ids[1]]);
+    const rest = h.store.searchMessages('alpha', {
+      order: 'newest',
+      limit: 2,
+      after: first.nextCursor ?? undefined,
+    });
+    expect(rest.hits.map((hit) => hit.message.id)).toEqual([ids[0]]);
+    expect(rest.hasMore).toBe(false);
+    expectStoreError(
+      () => h.store.searchMessages('alpha', { after: 'nope' as unknown as SearchCursor }),
+      'invalid_request',
+    );
+  });
+});
+
 describe('search', () => {
   it('reports a malformed query as an invalid request, not a database fault', () => {
     const h = harness();
@@ -1824,8 +1873,8 @@ describe('search', () => {
 
     // The quoted phrase is honoured as a phrase, and the unbalanced quote is
     // refused rather than dropped — which would have turned it into this.
-    expect(h.store.searchMessages('"hello world"')).toHaveLength(1);
-    expect(h.store.searchMessages('"world hello"')).toHaveLength(0);
+    expect(h.store.searchMessages('"hello world"').hits).toHaveLength(1);
+    expect(h.store.searchMessages('"world hello"').hits).toHaveLength(0);
     expectStoreError(() => h.store.searchMessages('"hello world'), 'invalid_request');
   });
 });

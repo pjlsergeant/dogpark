@@ -67,7 +67,7 @@ required because the SPA shares an origin with the agent API.
 | GET | `/reads` | the read log, filterable by agent; limit and cursor, because it is the one table that grows without bound. `kind` is `stream`, `conversation`, `space` or `attachment`; an attachment read has an empty cursor |
 | GET | `/reads/:id/messages/:messageId` | a message rendered with the labels in force when that row was written (ADR-0004). A label snapshot, not proof the message was on that page: that is the row's kind, parameters and cursor |
 | GET | `/escalations` | the inbox, newest first; `order`, `after`, `limit`; carries `undelivered`, counted over the whole table |
-| GET | `/search` | `q`; FTS5 over stored bodies |
+| GET | `/search` | `q`; FTS5 over stored bodies. `order` is `relevance` (default) or `newest`; `after`, `limit` |
 
 Every route that issues a key returns `{ agent, keyId, key }` — a key that
 cannot be named cannot be revoked.
@@ -105,8 +105,9 @@ GET  /escalations?order&after&limit
                                         notification: { state, attempts, lastAttemptAt,
                                                         nextAttemptAt, lastError } }],
                         nextCursor, hasMore, undelivered }
-GET  /search?q=&space=&limit=
-                   -> [{ message, conversation, space, snippet }]
+GET  /search?q=&space=&order=&after=&limit=
+                   -> { results: [{ message, conversation, space, snippet }],
+                        nextCursor, hasMore }
 GET  /spaces/:id/conversations
                    -> [{ id, space, title, messageCount,
                          lastActivityAt, lastSender }]
@@ -125,6 +126,12 @@ agent's *current* name rather than one frozen when it last posted.
 `/escalations` pages like `/reads`: a keyset cursor over `(created_at, id)`,
 `order` defaulting to `newest`. `undelivered` counts every row not yet `sent`,
 whatever page is showing, so the inbox badge cannot be fooled by paging.
+
+`/search` pages too. Relevance order is bm25 with the newer message first among
+equals, and its cursor carries the rank; because bm25 weighs a term against
+the whole corpus, a message posted between two pages can shift ranks and make
+the boundary skip or repeat one hit. `order=newest` pages on the immutable
+sequence and has no such seam — the one to script against.
 
 ## Serving the UI
 

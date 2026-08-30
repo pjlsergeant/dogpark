@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { EscalationCursor, ReadLogCursor } from '../store/index.js';
+import type { EscalationCursor, ReadLogCursor, SearchCursor } from '../store/index.js';
 import type {
   AgentId,
   ConversationId,
@@ -108,6 +108,8 @@ export const EscalationsQuery = z.strictObject({
 export const SearchQuery = z.strictObject({
   q: z.string().min(1),
   space: Id.optional(),
+  order: z.enum(['relevance', 'newest']).optional(),
+  after: z.string().optional(),
   limit: z.coerce.number().int().positive().optional(),
 });
 
@@ -164,3 +166,4 @@ export const asTimestamp = (value: string): Timestamp => value as Timestamp;
  */
 export const asReadLogCursor = (value: string): ReadLogCursor => value as ReadLogCursor;
 export const asEscalationCursor = (value: string): EscalationCursor => value as EscalationCursor;
+export const asSearchCursor = (value: string): SearchCursor => value as SearchCursor;

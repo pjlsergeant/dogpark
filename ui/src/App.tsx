@@ -207,7 +207,7 @@ function Screen(): ReactNode {
     case 'escalations':
       return <EscalationsScreen />;
     case 'search':
-      return <SearchScreen q={route.q} space={route.space} />;
+      return <SearchScreen q={route.q} space={route.space} order={route.order} />;
   }
 }
 

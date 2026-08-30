@@ -1,11 +1,15 @@
 /** Full text over stored bodies; every result links into the reader at its message. */
 import { useEffect, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
-import type { SearchResult, SpaceId } from '../api/index.js';
+import type { Page, SearchOrder, SearchResult, SpaceId } from '../api/index.js';
 import { useApi } from '../app/api-context.js';
 import { useAsync } from '../app/useAsync.js';
+import { usePages } from '../app/usePages.js';
 import { href, navigate } from '../app/router.js';
 import { Empty, Failure, Loading, Time } from '../components/bits.js';
+import { LoadMore } from '../components/LoadMore.js';
+
+const NONE: Page<SearchResult> = { items: [], nextCursor: null, hasMore: false };
 
 function excerpt(result: SearchResult): string {
   if (result.snippet !== '') return result.snippet;
@@ -13,23 +17,29 @@ function excerpt(result: SearchResult): string {
   return body.length > 240 ? `${body.slice(0, 240)}...` : body;
 }
 
-export function SearchScreen({ q, space }: { q: string; space?: SpaceId | undefined }): ReactNode {
+export function SearchScreen({
+  q,
+  space,
+  order,
+}: {
+  q: string;
+  space?: SpaceId | undefined;
+  order?: SearchOrder | undefined;
+}): ReactNode {
   const api = useApi();
   const [draft, setDraft] = useState(q);
   const spaces = useAsync(() => api.listSpaces(), [api]);
-  const results = useAsync(
-    () => (q.trim() === '' ? Promise.resolve(null) : api.search({ q, space })),
-    [api, q, space],
+  const pages = usePages<SearchResult, Page<SearchResult>>(
+    (after) => (q.trim() === '' ? Promise.resolve(NONE) : api.search({ q, space, order, after })),
+    [api, q, space, order],
   );
 
   useEffect(() => setDraft(q), [q]);
 
   function submit(event: FormEvent): void {
     event.preventDefault();
-    navigate(href.search(draft, space));
+    navigate(href.search(draft, space, order));
   }
-
-  const items = results.state.data?.items ?? [];
 
   return (
     <section className="screen">
@@ -64,6 +74,7 @@ export function SearchScreen({ q, space }: { q: string; space?: SpaceId | undefi
               href.search(
                 draft,
                 event.target.value === '' ? undefined : (event.target.value as SpaceId),
+                order,
               ),
             )
           }
@@ -75,24 +86,37 @@ export function SearchScreen({ q, space }: { q: string; space?: SpaceId | undefi
             </option>
           ))}
         </select>
+        <label className="visually-hidden" htmlFor="search-order">
+          Order
+        </label>
+        <select
+          id="search-order"
+          value={order ?? 'relevance'}
+          onChange={(event) =>
+            navigate(
+              href.search(draft, space, event.target.value === 'newest' ? 'newest' : undefined),
+            )
+          }
+        >
+          <option value="relevance">Most relevant</option>
+          <option value="newest">Newest first</option>
+        </select>
         <button type="submit" className="btn btn-primary">
           Search
         </button>
       </form>
 
-      {results.state.error !== null && (
-        <Failure error={results.state.error} onRetry={results.reload} />
-      )}
+      {pages.first.error !== null && <Failure error={pages.first.error} onRetry={pages.refresh} />}
       {q.trim() === '' && <Empty>Type something to search for.</Empty>}
-      {q.trim() !== '' && results.state.status === 'loading' && results.state.data === null && (
+      {q.trim() !== '' && pages.first.status === 'loading' && pages.first.data === null && (
         <Loading what="results" />
       )}
-      {q.trim() !== '' && results.state.data !== null && items.length === 0 && (
+      {q.trim() !== '' && pages.first.data !== null && pages.items.length === 0 && (
         <Empty>Nothing matched.</Empty>
       )}
 
       <ul className="results">
-        {items.map((result) => (
+        {pages.items.map((result) => (
           <li key={result.message.id} className="result">
             <a
               className="result-link"
@@ -111,6 +135,8 @@ export function SearchScreen({ q, space }: { q: string; space?: SpaceId | undefi
           </li>
         ))}
       </ul>
+
+      <LoadMore pages={pages} label="More results" />
     </section>
   );
 }

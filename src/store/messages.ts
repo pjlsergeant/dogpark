@@ -17,7 +17,14 @@ import type {
 } from '../types.js';
 import type { ConversationResolver } from './conversations.js';
 import type { StoreContext } from './context.js';
-import { decodeCursor, decodeQueryCursor, encodeCursor, encodeQueryCursor } from './cursors.js';
+import {
+  decodeCursor,
+  decodeQueryCursor,
+  decodeSearchCursor,
+  encodeCursor,
+  encodeQueryCursor,
+  encodeSearchCursor,
+} from './cursors.js';
 import { invalid, notFound } from './errors.js';
 import { constantTimeEquals, requestHash } from './hash.js';
 import { newId } from './ids.js';
@@ -31,7 +38,7 @@ import type {
   Store,
 } from './records.js';
 import { createRenderer } from './render.js';
-import type { ConversationRow, MessageRow } from './statements.js';
+import type { ConversationRow, MessageRow, SearchBounds } from './statements.js';
 import {
   assertNoReservedSequence,
   assertNonEmpty,
@@ -459,9 +466,21 @@ export function messageStore(
       assertNoReservedSequence('query', query);
       const cache = newRenderCache();
       const limit = clampLimit(opts?.limit);
+      const order = opts?.order ?? 'relevance';
+      if (order !== 'relevance' && order !== 'newest') {
+        throw invalid("order must be 'relevance' or 'newest'");
+      }
+      const after = opts?.after === undefined ? undefined : decodeSearchCursor(opts.after);
+      const bounds: SearchBounds = {
+        query,
+        space: opts?.space ?? null,
+        afterSeq: after?.seq ?? null,
+        afterRank: after?.rank ?? 0,
+        limit: limit + 1,
+      };
       let rows;
       try {
-        rows = st.search.all({ query, space: opts?.space ?? null, limit });
+        rows = (order === 'relevance' ? st.searchByRank : st.searchNewest).all(bounds);
       } catch (error) {
         // FTS5 parses the query itself and rejects bad syntax as a plain
         // SQLITE_ERROR — a typo surfacing as an internal fault. The query is
@@ -473,17 +492,27 @@ export function messageStore(
         }
         throw error;
       }
-      return rows.map((row) => ({
-        message: toMessage(row, cache),
-        // A snippet is a fragment of the stored body, so it is rendered like
-        // the body: references become names, and the marker never leaves.
-        snippet: renderSnippet(
-          row.snippet,
-          (agent) => mentionName(cache, row.space_id, agent),
-          SNIPPET_OPEN,
-          SNIPPET_CLOSE,
-        ),
-      }));
+      const hasMore = rows.length > limit;
+      const page = rows.slice(0, limit);
+      const last = page.at(-1);
+      return {
+        hits: page.map((row) => ({
+          message: toMessage(row, cache),
+          // A snippet is a fragment of the stored body, so it is rendered like
+          // the body: references become names, and the marker never leaves.
+          snippet: renderSnippet(
+            row.snippet,
+            (agent) => mentionName(cache, row.space_id, agent),
+            SNIPPET_OPEN,
+            SNIPPET_CLOSE,
+          ),
+        })),
+        nextCursor:
+          last === undefined
+            ? (opts?.after ?? null)
+            : encodeSearchCursor({ seq: last.seq, rank: order === 'relevance' ? last.rank : 0 }),
+        hasMore,
+      };
     },
 
     getAttachment(attachment) {

@@ -119,6 +119,23 @@ export interface StreamRow {
   kind: string;
 }
 
+/** Everything the search statements bind. `afterRank` is read only in relevance order. */
+export interface SearchBounds {
+  query: string;
+  space: string | null;
+  afterSeq: number | null;
+  afterRank: number;
+  limit: number;
+}
+
+export type SearchRow = MessageRow & { snippet: string; rank: number };
+
+const SEARCH_COLUMNS =
+  'SELECT m.*, message_fts.rank AS rank, ' +
+  `       snippet(message_fts, 0, '${SNIPPET_OPEN}', '${SNIPPET_CLOSE}', '…', 24) AS snippet ` +
+  '  FROM message_fts JOIN message m ON m.seq = message_fts.rowid ' +
+  ' WHERE message_fts MATCH @query AND (@space IS NULL OR m.space_id = @space) ';
+
 /** Everything the escalation list statements bind. */
 export interface EscalationBounds {
   state: string | null;
@@ -462,14 +479,19 @@ export function prepareStatements(db: Db) {
         ' GROUP BY c.id ' +
         ' ORDER BY last_seq DESC, c.created_at DESC, c.id',
     ),
-    search: prepare<
-      { query: string; space: string | null; limit: number },
-      MessageRow & { snippet: string }
-    >(
-      `SELECT m.*, snippet(message_fts, 0, '${SNIPPET_OPEN}', '${SNIPPET_CLOSE}', '…', 24) AS snippet ` +
-        'FROM message_fts JOIN message m ON m.seq = message_fts.rowid ' +
-        'WHERE message_fts MATCH @query AND (@space IS NULL OR m.space_id = @space) ' +
-        'ORDER BY rank LIMIT @limit',
+    // Relevance is bm25 `rank` (lower is better), with seq breaking ties so
+    // the order is total and a keyset cursor can continue it. FTS5 allows
+    // `rank` in WHERE, which is what makes the continuation a single query.
+    searchByRank: prepare<SearchBounds, SearchRow>(
+      SEARCH_COLUMNS +
+        '   AND (@afterSeq IS NULL OR rank > @afterRank ' +
+        '        OR (rank = @afterRank AND m.seq < @afterSeq)) ' +
+        ' ORDER BY rank, m.seq DESC LIMIT @limit',
+    ),
+    searchNewest: prepare<SearchBounds, SearchRow>(
+      SEARCH_COLUMNS +
+        '   AND (@afterSeq IS NULL OR m.seq < @afterSeq) ' +
+        ' ORDER BY m.seq DESC LIMIT @limit',
     ),
 
     getIdempotency: prepare<

@@ -234,7 +234,11 @@ export interface EscalationPage extends Page<Escalation> {
   readonly undelivered: number;
 }
 
+export type SearchOrder = 'relevance' | 'newest';
+
 export interface SearchQuery {
   readonly q: string;
   readonly space?: SpaceId | undefined;
+  readonly order?: SearchOrder | undefined;
+  readonly after?: string | undefined;
 }

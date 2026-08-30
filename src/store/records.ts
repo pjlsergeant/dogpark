@@ -24,7 +24,7 @@ import type {
   StreamPage,
   Timestamp,
 } from '../types.js';
-import type { EscalationCursor, ReadLogCursor } from './cursors.js';
+import type { EscalationCursor, ReadLogCursor, SearchCursor } from './cursors.js';
 import type { MigrateResult } from './migrate.js';
 
 /**
@@ -238,6 +238,24 @@ export interface SearchHit {
   readonly snippet: string;
 }
 
+/**
+ * `relevance` is bm25 with the newer message first among equals; `newest` is
+ * the sequence. A cursor is a position in that order and continues it.
+ */
+export interface SearchOptions {
+  readonly space?: SpaceId | undefined;
+  readonly order?: 'relevance' | 'newest' | undefined;
+  readonly after?: SearchCursor | undefined;
+  readonly limit?: number | undefined;
+}
+
+export interface SearchPage {
+  readonly hits: readonly SearchHit[];
+  /** As the other pages: the last hit's position, kept when the page is empty. */
+  readonly nextCursor: SearchCursor | null;
+  readonly hasMore: boolean;
+}
+
 export interface StoreOptions {
   /** Path to the SQLite file. Parent directories are created. */
   readonly file: string;
@@ -329,13 +347,13 @@ export interface Store {
     range?: Range | undefined,
     limit?: number | undefined,
   ): MessagePage;
-  searchMessages(
-    query: string,
-    options?: {
-      readonly space?: SpaceId | undefined;
-      readonly limit?: number | undefined;
-    },
-  ): readonly SearchHit[];
+  /**
+   * Relevance paging is honest but not stable across writes: bm25 weighs a
+   * term against the whole corpus, so a message posted between two pages can
+   * shift every rank and make the boundary skip or repeat one hit. `newest`
+   * pages on the immutable sequence and has no such seam.
+   */
+  searchMessages(query: string, options?: SearchOptions): SearchPage;
   /**
    * Metadata only; the bytes live on the volume. Carries the space as well as
    * the message, because a file's visibility is its message's and the caller

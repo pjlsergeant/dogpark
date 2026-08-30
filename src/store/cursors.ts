@@ -119,3 +119,38 @@ export function decodeEscalationCursor(cursor: EscalationCursor): EscalationPosi
   const { key, at } = decodeKeyed(ESCALATION_TAG, 'escalation', cursor);
   return { createdAt: at, id: key };
 }
+
+/**
+ * A position in one search's results. Relevance order is `(rank, seq)`; the
+ * rank travels as the shortest decimal that reads back to the same double,
+ * so the equality half of the keyset test binds the value FTS5 computed.
+ * Newest order uses the seq alone and carries a rank of 0.
+ */
+export type SearchCursor = string & { readonly __brand: 'SearchCursor' };
+
+const SEARCH_TAG = 'dgf1';
+
+export interface SearchPosition {
+  readonly seq: number;
+  readonly rank: number;
+}
+
+export function encodeSearchCursor(position: SearchPosition): SearchCursor {
+  return Buffer.from(`${SEARCH_TAG}:${position.seq}:${position.rank}`, 'utf8').toString(
+    'base64url',
+  ) as SearchCursor;
+}
+
+export function decodeSearchCursor(cursor: SearchCursor): SearchPosition {
+  const text = Buffer.from(cursor, 'base64url').toString('utf8');
+  const [found, digits, rankText, ...rest] = text.split(':');
+  if (found !== SEARCH_TAG || rest.length > 0 || digits === undefined || !/^\d+$/.test(digits)) {
+    throw invalid('not a valid search cursor');
+  }
+  const seq = Number(digits);
+  const rank = Number(rankText);
+  if (!Number.isSafeInteger(seq) || rankText === undefined || !Number.isFinite(rank)) {
+    throw invalid('not a valid search cursor');
+  }
+  return { seq, rank };
+}

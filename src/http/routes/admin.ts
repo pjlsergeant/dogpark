@@ -22,6 +22,7 @@ import {
   asEscalationCursor,
   asMessageId,
   asReadLogCursor,
+  asSearchCursor,
   asSpaceId,
   asTimestamp,
   EscalationsQuery,
@@ -320,12 +321,17 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
       // human's typo, not a server fault — so nothing is caught here.
       guarded.get('/search', async (request) => {
         const query = parse(SearchQuery, request.query, 'query');
-        return ctx.store
-          .searchMessages(query.q, {
-            ...(query.space === undefined ? {} : { space: asSpaceId(query.space) }),
-            limit: ctx.pageLimit(query.limit),
-          })
-          .map((hit) => searchRow(ctx.store, hit));
+        const page = ctx.store.searchMessages(query.q, {
+          ...(query.space === undefined ? {} : { space: asSpaceId(query.space) }),
+          ...(query.order === undefined ? {} : { order: query.order }),
+          ...(query.after === undefined ? {} : { after: asSearchCursor(query.after) }),
+          limit: ctx.pageLimit(query.limit),
+        });
+        return {
+          results: page.hits.map((hit) => searchRow(ctx.store, hit)),
+          nextCursor: page.nextCursor,
+          hasMore: page.hasMore,
+        };
       });
     });
   };
