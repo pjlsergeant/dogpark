@@ -48,6 +48,9 @@ export function assertNonEmpty(field: string, value: string): void {
   if (value.trim().length === 0) throw invalid(`${field} must not be empty`);
 }
 
+/** `YYYY-MM-DD`, optionally `THH:MM[:SS[.fraction]]` with `Z` or an offset. */
+const ISO_8601 = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2}))?$/;
+
 /**
  * Timestamps are compared as text in SQL, so every one that reaches the
  * database — stored or supplied as a range bound — goes through here first. A
@@ -55,6 +58,11 @@ export function assertNonEmpty(field: string, value: string): void {
  * `2026-08-30T10:35:00.000Z`, quietly making an inclusive `since` exclusive.
  */
 export function normalizeTimestamp(field: string, value: string): Timestamp {
+  // The shape first, then the calendar. `Date.parse` alone would accept
+  // `08/30/2026` and `August 30, 2026` — locale-dependent forms the contract
+  // never offered, which can land on a different instant than the caller
+  // meant. A date alone is ISO-8601 and reads as midnight UTC.
+  if (!ISO_8601.test(value)) throw invalid(`${field} is not an ISO-8601 timestamp`);
   const ms = Date.parse(value);
   if (Number.isNaN(ms)) throw invalid(`${field} is not a valid ISO-8601 timestamp`);
   return new Date(ms).toISOString() as Timestamp;
