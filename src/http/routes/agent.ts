@@ -3,9 +3,8 @@ import type { ReadStreamArgs } from '../../store/index.js';
 import type { AttachmentId, Identity } from '../../types.js';
 import { authenticateAgent, requireAgent } from '../auth.js';
 import type { AppContext } from '../context.js';
-import { assertBodyFits, collectPost } from '../post.js';
+import { submitPost } from '../post.js';
 import {
-  asAgentId,
   asConversationId,
   asIdempotencyKey,
   asSpaceId,
@@ -17,7 +16,6 @@ import {
   rangeFromQuery,
   readFromQuery,
   StreamQuery,
-  toTarget,
 } from '../validation.js';
 import { sendAttachment } from './attachment.js';
 
@@ -112,26 +110,7 @@ export function agentRoutes(ctx: AppContext): FastifyPluginAsync {
 
     app.post('/messages', async (request) => {
       const self = requireAgent(request).agent;
-      const collected = await collectPost(ctx, request, PostBody);
-      const { payload } = collected;
-      try {
-        assertBodyFits(payload.body, ctx.limits.maxMessageBytes);
-        const result = ctx.store.postMessage({
-          sender: { kind: 'agent', id: self.id },
-          target: toTarget(payload.target),
-          body: payload.body,
-          ...(collected.attachments.length === 0 ? {} : { attachments: collected.attachments }),
-          idempotencyKey: asIdempotencyKey(payload.idempotencyKey),
-        });
-        // A replay committed nothing, so the files just written belong to no
-        // message. Remove them rather than leaving litter behind a retry.
-        if (!result.created) await collected.discard();
-        else ctx.writes.notify();
-        return { message: result.message, conversation: result.conversation };
-      } catch (error) {
-        await collected.discard();
-        throw error;
-      }
+      return submitPost(ctx, request, PostBody, { kind: 'agent', id: self.id });
     });
 
     app.get('/attachments/:id', async (request, reply) => {
@@ -144,7 +123,7 @@ export function agentRoutes(ctx: AppContext): FastifyPluginAsync {
       const self = requireAgent(request).agent;
       const payload = parse(EscalateBody, request.body, 'request body');
       ctx.store.recordEscalation({
-        agent: asAgentId(self.id),
+        agent: self.id,
         conversation: asConversationId(payload.conversation),
         reason: payload.reason,
         idempotencyKey: asIdempotencyKey(payload.idempotencyKey),

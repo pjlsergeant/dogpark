@@ -1,30 +1,69 @@
 import type { FastifyRequest } from 'fastify';
 import type { z } from 'zod';
-import type { AttachmentInput } from '../store/index.js';
+import type { AttachmentInput, Reader } from '../store/index.js';
 import { newAttachmentId } from '../store/index.js';
-import type { AttachmentId } from '../types.js';
+import type { AttachmentId, Conversation, Message } from '../types.js';
 import type { AppContext } from './context.js';
 import { invalid, tooLarge } from './errors.js';
-import { parse } from './validation.js';
+import { asIdempotencyKey, HumanPostBody, parse, toTarget } from './validation.js';
 
-export interface CollectedPost<T> {
+/** What both post bodies parse to; the agent's differs only in requiring the key. */
+type PostPayload = z.infer<typeof HumanPostBody>;
+
+/**
+ * The write behind both post routes: collect the body and any files, size
+ * the body, post, and either wake the long polls or — for a replay, which
+ * committed nothing — remove the files just written, since they belong to no
+ * message. A failure anywhere removes them too.
+ */
+export async function submitPost<T extends PostPayload>(
+  ctx: AppContext,
+  request: FastifyRequest,
+  schema: z.ZodType<T>,
+  sender: Reader,
+): Promise<{ readonly message: Message; readonly conversation: Conversation }> {
+  const collected = await collectPost(ctx, request, schema);
+  const { payload } = collected;
+  try {
+    const bytes = Buffer.byteLength(payload.body, 'utf8');
+    if (bytes > ctx.limits.maxMessageBytes) {
+      throw tooLarge(
+        `body is ${bytes} bytes, over maxMessageBytes (${ctx.limits.maxMessageBytes})`,
+      );
+    }
+    const result = ctx.store.postMessage({
+      sender,
+      target: toTarget(payload.target),
+      body: payload.body,
+      ...(collected.attachments.length === 0 ? {} : { attachments: collected.attachments }),
+      ...(payload.idempotencyKey === undefined
+        ? {}
+        : { idempotencyKey: asIdempotencyKey(payload.idempotencyKey) }),
+    });
+    if (!result.created) await collected.discard();
+    else ctx.writes.notify();
+    return { message: result.message, conversation: result.conversation };
+  } catch (error) {
+    await collected.discard();
+    throw error;
+  }
+}
+
+interface CollectedPost<T> {
   readonly payload: T;
   readonly attachments: readonly AttachmentInput[];
-  /** Removes the files written for this request. For a write that failed. */
+  /** Removes the files written for this request. */
   discard(): Promise<void>;
 }
 
 /**
  * A post arrives either as JSON or as multipart: one `request` part holding
- * the JSON, then one part per file.
- *
- * Files are written to the volume as they stream, before the message row is
- * committed, so a crash leaves an unreferenced file rather than a message
- * pointing at nothing (docs/architecture.md). The size limit is enforced
- * mid-stream: a declared Content-Length is the client's claim, and a chunked
- * upload makes no claim at all.
+ * the JSON, then one part per file. Files stream to the volume as they arrive
+ * (`AttachmentInput.id`); the size limit is enforced mid-stream, since a
+ * declared Content-Length is the client's claim and a chunked upload makes
+ * none.
  */
-export async function collectPost<T>(
+async function collectPost<T>(
   ctx: AppContext,
   request: FastifyRequest,
   schema: z.ZodType<T>,
@@ -56,8 +95,6 @@ export async function collectPost<T>(
       // strand bytes on the volume for a request that was never valid.
       if (raw === undefined) throw invalid('the request part must come before any files');
 
-      // Minted through the store's own export rather than by reaching past it
-      // into `store/ids.js`: the alphabet and the length are the store's.
       const id = newAttachmentId();
       const file = await ctx.files.write(id, part.file, ctx.limits.maxAttachmentBytes);
       written.push(id);
@@ -68,10 +105,6 @@ export async function collectPost<T>(
         filename: part.filename === '' ? 'attachment' : part.filename,
         contentType: part.mimetype,
         sizeBytes: file.sizeBytes,
-        // Hashed while streaming to the volume, never by reading it back. It
-        // is what makes a retry identify the file rather than the client's
-        // description of it: without it, re-posting a *different* file under
-        // the same name, type and size replays the original message.
         contentDigest: file.contentDigest,
       });
     }
@@ -90,13 +123,6 @@ export async function collectPost<T>(
   } catch (error) {
     await discard();
     throw error;
-  }
-}
-
-export function assertBodyFits(body: string, maxMessageBytes: number): void {
-  const bytes = Buffer.byteLength(body, 'utf8');
-  if (bytes > maxMessageBytes) {
-    throw tooLarge(`body is ${bytes} bytes, over maxMessageBytes (${maxMessageBytes})`);
   }
 }
 

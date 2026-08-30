@@ -1,11 +1,11 @@
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { AgentRecord } from '../../store/index.js';
-import type { Agent, AttachmentId } from '../../types.js';
+import type { Agent, AttachmentId, MessageId } from '../../types.js';
 import { authenticateHuman, csrfTokenFor, requireSession, SESSION_COOKIE } from '../auth.js';
 import type { AppContext } from '../context.js';
 import { notFound, unauthenticated } from '../errors.js';
 import { verifyPassword } from '../password.js';
-import { assertBodyFits, collectPost } from '../post.js';
+import { submitPost } from '../post.js';
 import {
   adminAgent,
   bare,
@@ -19,7 +19,6 @@ import {
 import {
   asAgentId,
   asConversationId,
-  asIdempotencyKey,
   asReadLogCursor,
   asSpaceId,
   asTimestamp,
@@ -34,7 +33,6 @@ import {
   ReadLogQuery,
   SearchQuery,
   TitleBody,
-  toTarget,
 } from '../validation.js';
 import { sendAttachment } from './attachment.js';
 
@@ -212,8 +210,7 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
 
       guarded.post('/agents/:id/unarchive', async (request) => {
         const { id } = request.params as { id: string };
-        // The store deliberately issues no key here: a hashed one cannot be
-        // shown again, so the fresh key is a separate, visible step.
+        // A hashed key cannot be re-shown, so the role comes back with a new one.
         const record = ctx.store.unarchiveAgent(asAgentId(id));
         const issued = ctx.store.issueKey(record.id);
         return { agent: bare(record), keyId: issued.id, key: issued.key };
@@ -245,30 +242,7 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
         );
       });
 
-      guarded.post('/messages', async (request) => {
-        const collected = await collectPost(ctx, request, HumanPostBody);
-        const { payload } = collected;
-        try {
-          assertBodyFits(payload.body, ctx.limits.maxMessageBytes);
-          const result = ctx.store.postMessage({
-            sender: HUMAN,
-            target: toTarget(payload.target),
-            body: payload.body,
-            ...(collected.attachments.length === 0 ? {} : { attachments: collected.attachments }),
-            ...(payload.idempotencyKey === undefined
-              ? {}
-              : { idempotencyKey: asIdempotencyKey(payload.idempotencyKey) }),
-          });
-          // A replay committed nothing, so the files just written belong to no
-          // message. Remove them rather than leaving litter behind a retry.
-          if (!result.created) await collected.discard();
-          else ctx.writes.notify();
-          return { message: result.message, conversation: result.conversation };
-        } catch (error) {
-          await collected.discard();
-          throw error;
-        }
-      });
+      guarded.post('/messages', async (request) => submitPost(ctx, request, HumanPostBody, HUMAN));
 
       guarded.get('/attachments/:id', async (request, reply) => {
         const { id } = request.params as { id: string };
@@ -304,6 +278,18 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
           nextCursor: page.nextCursor,
           hasMore: page.hasMore,
         };
+      });
+
+      /**
+       * One message with the labels in force when a read-log row was written
+       * (`Store.renderAsOfRead`): the wording that went out, given that the
+       * message was on that page. Both ids unknown alike is `not_found`.
+       */
+      guarded.get('/reads/:id/messages/:messageId', async (request) => {
+        const { id, messageId } = request.params as { id: string; messageId: string };
+        const rendered = ctx.store.renderAsOfRead(messageId as MessageId, id);
+        if (rendered === undefined) throw notFound('read');
+        return rendered;
       });
 
       guarded.get('/escalations', async (request) => {

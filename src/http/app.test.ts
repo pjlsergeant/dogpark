@@ -683,7 +683,7 @@ describe('the HTTP surface', () => {
       expect(attachmentFiles(h)).toHaveLength(1);
     });
 
-    it('does the same for the human, whose idempotency is the HTTP layer\u2019s', async () => {
+    it('does the same for the human, whose key is scoped in the store like an agent\u2019s', async () => {
       const session = await login(h);
       const upload = (bytes: string): Promise<LightMyRequestResponse> => {
         const form = multipart([
@@ -1034,6 +1034,53 @@ describe('the HTTP surface', () => {
       expect(rows[0]?.kind).toBe('space');
       // As supplied, not as normalised: the log says what the agent asked for.
       expect(rows[0]?.parameters.range.since).toBe('2020-01-01T00:00:00Z');
+    });
+
+    it('renders a message as it read at the time of a given row', async () => {
+      const session = await login(h);
+      h.store.postMessage({
+        sender: { kind: 'human' },
+        target: { conversation },
+        body: 'the figures',
+      });
+      const handed = (
+        await asAgent(alpha.key, {
+          method: 'GET',
+          url: `/api/agent/conversations/${conversation}/messages`,
+        }).then((r) => r.json() as { messages: { id: string; conversationTitle: string }[] })
+      ).messages[0];
+      const row = (
+        (
+          await h.app.inject({
+            method: 'GET',
+            url: `/api/admin/reads?agent=${alpha.id}&limit=1`,
+            headers: { cookie: session.cookie },
+          })
+        ).json() as { reads: { id: string }[] }
+      ).reads[0];
+      await h.app.inject({
+        method: 'PATCH',
+        url: `/api/admin/conversations/${conversation}`,
+        headers: { cookie: session.cookie, 'x-csrf-token': session.csrf },
+        payload: { title: 'renamed since' },
+      });
+
+      const asRead = await h.app.inject({
+        method: 'GET',
+        url: `/api/admin/reads/${row?.id ?? ''}/messages/${handed?.id ?? ''}`,
+        headers: { cookie: session.cookie },
+      });
+      expect(asRead.statusCode).toBe(200);
+      expect((asRead.json() as { conversationTitle: string }).conversationTitle).toBe(
+        handed?.conversationTitle,
+      );
+
+      const unknown = await h.app.inject({
+        method: 'GET',
+        url: `/api/admin/reads/nope/messages/${handed?.id ?? ''}`,
+        headers: { cookie: session.cookie },
+      });
+      expect(unknown.statusCode).toBe(404);
     });
   });
 
