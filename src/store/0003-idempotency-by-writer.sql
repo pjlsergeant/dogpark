@@ -7,14 +7,25 @@
 -- every key on restart and stored rendered results the store deliberately
 -- does not (ADR-0014).
 --
--- `writer` holds an agent id or the literal `:human`. The two cannot collide,
--- and not merely because ids are sixteen characters long: `:` is outside the
--- id alphabet entirely, so no id — including one a hand-written row put in the
--- agent table, which this schema does not constrain — can ever equal it.
+-- `writer` holds an agent id or the literal `:human`. No id the application
+-- mints can equal the sentinel — `:` is outside the id alphabet — but
+-- `agent.id` is unconstrained TEXT, so a hand-written row could be. That case
+-- is refused rather than argued away: the assert below stops this migration
+-- from copying such an agent's keys into the namespace the human is about to
+-- use, and `writerOf` in index.ts refuses to mint the sentinel for an agent
+-- after it. A direct write into the new table is beyond what any schema can
+-- police — whoever can write the database can write anything into it.
 --
 -- The foreign key goes with the rename, because the human has nothing to
 -- reference. Nothing deletes an agent (archiving is not retirement, ADR-0013),
 -- so no row is orphaned by losing it.
+
+-- Plain-SQL assert: inserting NULL into a NOT NULL column aborts the
+-- migration's transaction if an agent already holds the sentinel id.
+CREATE TEMP TABLE no_sentinel_agent (checked INTEGER NOT NULL);
+INSERT INTO no_sentinel_agent
+  SELECT CASE WHEN EXISTS (SELECT 1 FROM agent WHERE id = ':human') THEN NULL ELSE 0 END;
+DROP TABLE no_sentinel_agent;
 CREATE TABLE idempotency_by_writer (
   writer TEXT NOT NULL,
   key TEXT NOT NULL,

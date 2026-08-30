@@ -641,6 +641,29 @@ describe('idempotency', () => {
     expect(byHuman.message.id).not.toBe(byImpostor.message.id);
   });
 
+  it('refuses to write a key for an agent hand-named as the sentinel', () => {
+    const h = harness();
+    const space = h.store.createSpace('acme').id;
+    h.store.database
+      .prepare(
+        "INSERT INTO agent (id, display_name, created_at, archived) VALUES (':human', 'impostor', 'then', 0)",
+      )
+      .run();
+    const impostor = ':human' as AgentId;
+    h.store.grantMembership(impostor, space);
+
+    expectStoreError(
+      () =>
+        h.store.postMessage({
+          sender: { kind: 'agent', id: impostor },
+          target: { space, title: 'notes' },
+          body: 'reaching for the human keys',
+          idempotencyKey: key('reserved'),
+        }),
+      'invalid_request',
+    );
+  });
+
   it('rejects a replayed human key that carries a different request', () => {
     const h = harness();
     const { space } = scene(h);

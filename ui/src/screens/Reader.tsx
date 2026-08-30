@@ -342,9 +342,13 @@ function Thread({
   const messages = loaded?.messages ?? [];
   const count = messages.length;
   const onFirstPage = loaded?.pages === 1;
+  // The newest message's id, not the count: a full page replaced by a full
+  // page — the human posting into a thread longer than one page — changes
+  // what is newest without changing how many are shown.
+  const newestId = messages.at(-1)?.id;
 
   useEffect(() => {
-    if (count === 0) return;
+    if (newestId === undefined) return;
     if (highlight !== undefined) {
       const target = document.getElementById(`m-${highlight}`);
       if (target !== null) {
@@ -353,7 +357,7 @@ function Thread({
       }
     }
     if (onFirstPage) bottom.current?.scrollIntoView({ block: 'end' });
-  }, [count, highlight, onFirstPage]);
+  }, [newestId, highlight, onFirstPage]);
 
   const heading = title ?? messages[0]?.conversationTitle ?? 'Conversation';
 

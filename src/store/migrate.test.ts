@@ -68,6 +68,32 @@ describe('migrations', () => {
     }
   });
 
+  it('refuses to migrate an agent that holds the reserved writer id', () => {
+    const path = file();
+    const db = new Database(path);
+    try {
+      migrate(
+        db,
+        MIGRATIONS.filter((m) => m.version <= 2),
+      );
+      // agent.id is unconstrained TEXT, so only a hand-written row can carry
+      // the sentinel — and copying its keys into the human's namespace would
+      // make them indistinguishable ever after. The migration must refuse.
+      db.prepare(
+        "INSERT INTO agent (id, display_name, created_at, archived) VALUES (':human', 'impostor', 'then', 0)",
+      ).run();
+
+      expect(() => migrate(db)).toThrow(/migration 3/);
+      // The refusal rolled back: the database is still at version 2, intact.
+      const version = db.prepare('SELECT MAX(version) AS v FROM schema_version').get() as {
+        v: number;
+      };
+      expect(version.v).toBe(2);
+    } finally {
+      db.close();
+    }
+  });
+
   it('records what it applied in a version table', () => {
     const db = new Database(file());
     try {
