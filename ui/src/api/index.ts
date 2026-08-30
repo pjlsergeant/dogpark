@@ -11,7 +11,7 @@ import { createHttpApi } from './http.js';
 export type { DogparkAdminApi } from './api.js';
 export * from './types.js';
 
-export const usingMock = import.meta.env['VITE_DOGPARK_MOCK'] === '1';
+export const usingMock = import.meta.env.VITE_DOGPARK_MOCK === '1';
 
 export async function createApi(): Promise<DogparkAdminApi> {
   if (usingMock) {

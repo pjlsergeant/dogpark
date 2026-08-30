@@ -13,12 +13,15 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && cp src/store/*.sql dist/store/",
+    "build:ui": "vite build --config ui/vite.config.ts",
+    "dev:ui": "vite --config ui/vite.config.ts --mode mock",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "start": "node dist/server.js"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^9.6.0",

@@ -42,3 +42,44 @@ correctness accident rather than a design.
 
 An opaque wrapper around the sequence number. Not signed: forging one only
 seeks, which `ReadFrom` already permits, so a signature would protect nothing.
+
+## Storage layer
+
+### Interval containment is tested in sequence space, not against clocks
+
+Membership intervals store the sequence numbers of their grant and revoke
+events alongside timestamps, and "was this message written while the agent had
+access" compares sequences. Two events in the same millisecond would otherwise
+be ambiguous, and the stream's ordering is the sequence anyway.
+
+A grant and the `space_access_granted` event that announces it are the same
+point, which settles a question the design left open: a message written in the
+same instant as a grant is delivered only if it is strictly after the grant.
+
+### Mentions are scoped again at render time
+
+A mention token is `@<agent-id>` and resolves to a name only if that agent has
+*ever* been a member of the message's space.
+
+Scoping only at write time would have been a hole: an agent could hand-write
+`@<foreign-id>` into a body, and read it back rendered with a stranger's name —
+learning that the agent exists and what it is called, which ADR-0003 exists to
+prevent. "Ever" rather than "currently", so a message keeps naming someone
+after they leave.
+
+### Idempotency stores identifiers, not rendered results
+
+A replay re-renders from the stored message id, so a replayed write shows the
+*current* title and names rather than a frozen copy — consistent with labels
+being rendered on read. Validation happens before the idempotency lookup, so a
+rejected write is rejected identically whether or not the key has been seen.
+
+### Space names are unique
+
+Nothing required it. Duplicates are a footgun for a single human, and it is
+easy to relax later.
+
+### `npm run build` copies the schema
+
+`tsc` alone does not emit `.sql`, so a compiled build threw at import. The
+build script copies it.

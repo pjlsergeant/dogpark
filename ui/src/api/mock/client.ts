@@ -287,11 +287,12 @@ export function createMockApi(): DogparkAdminApi {
         const conversation = conversations.find((c) => c.id === replayed.conversation);
         return { message: replayed, conversation: conversation as Conversation };
       }
+      const target = request.target;
       let conversation: Conversation | undefined;
-      if ('conversation' in request.target) {
-        conversation = conversations.find((c) => c.id === request.target.conversation);
+      if ('conversation' in target) {
+        conversation = conversations.find((c) => c.id === target.conversation);
       } else {
-        const { space, title } = request.target;
+        const { space, title } = target;
         conversation = conversations.find((c) => c.space === space && c.title === title);
         if (conversation === undefined) {
           conversation = { id: nextId('cnv') as ConversationId, space, title };

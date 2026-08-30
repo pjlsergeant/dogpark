@@ -341,14 +341,18 @@ export interface DogparkApi {
   /**
    * Everything in one space over a range, across its conversations.
    *
-   * A query, not a stream position: it does not advance the cursor and is not
-   * recorded as a read event. This is what a reporting agent wants — one that
-   * never posts and is not addressed, but needs "everything in this space
-   * this week" without walking two hundred conversations.
+   * A query, not a stream position: it does not advance the cursor, though it
+   * is recorded in the read log like any other read. This is what a reporting
+   * agent wants — one that never posts and is not addressed, but needs
+   * "everything in this space this week" without walking two hundred
+   * conversations.
    */
   readSpace(space: SpaceId, range?: Range): Promise<MessagePage>;
 
-  /** Agents sharing at least one space with the caller. Never a global directory. */
+  /**
+   * The caller and every agent sharing a space with it. Never a global
+   * directory: an agent cannot discover that an unrelated agent exists.
+   */
   listAgents(space?: SpaceId): Promise<readonly Agent[]>;
 
   /**

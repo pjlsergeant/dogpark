@@ -213,6 +213,7 @@ function Thread({
 }): ReactNode {
   const api = useApi();
   const page = useAsync(() => api.readConversation(conversation), [api, conversation]);
+  const reload = page.reload;
   const bottom = useRef<HTMLDivElement>(null);
   const messages = page.state.data?.messages ?? [];
   const count = messages.length;
@@ -220,10 +221,10 @@ function Thread({
   // Poll while the tab is in front. Agents post while nobody is looking.
   useEffect(() => {
     const timer = window.setInterval(() => {
-      if (document.visibilityState === 'visible') page.reload();
+      if (document.visibilityState === 'visible') reload();
     }, POLL_MS);
     return () => window.clearInterval(timer);
-  }, [page]);
+  }, [reload]);
 
   useEffect(() => {
     if (count === 0) return;

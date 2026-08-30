@@ -6,6 +6,7 @@
  * not something that can be forgotten. Anything unrecognised falls through as
  * literal text, which is the safe direction to fail in.
  */
+import { Fragment } from 'react';
 import type { ReactNode } from 'react';
 
 /**
@@ -222,10 +223,11 @@ export function renderInline(source: string, depth = 0): ReactNode[] {
 /** Inline markdown with hard line breaks preserved, as a paragraph wants. */
 export function renderInlineWithBreaks(source: string): ReactNode[] {
   const lines = source.split('\n');
+  if (lines.length === 1) return renderInline(source);
   const out: ReactNode[] = [];
   lines.forEach((line, i) => {
     if (i > 0) out.push(<br key={`br-${i}`} />);
-    out.push(<span key={`ln-${i}`}>{renderInline(line)}</span>);
+    out.push(<Fragment key={`ln-${i}`}>{renderInline(line)}</Fragment>);
   });
   return out;
 }
