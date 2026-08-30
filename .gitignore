@@ -8,10 +8,7 @@ dist/
 
 .DS_Store
 
-# Reviewer scratch: byre-codereview agents fetch pages and sources into the
-# working tree despite being read-only about the repo itself.
-/b.html
-/b.txt
-/p.html
-/p.txt
-/s.py
+# Crash dumps: a core from this process can hold session tokens and message
+# bodies, and is 2.6GB of it.
+core
+core.*
