@@ -9,6 +9,10 @@ here that turns out to be load-bearing should graduate to an ADR.
 
 * `src/store/` — SQLite: schema, migrations, and the domain queries. The one
   query outside it is `/health`'s `SELECT 1`, through `Store.database`.
+  `index.ts` holds the `Store` interface and composes one module per domain
+  (`agents`, `spaces`, `conversations`, `messages`, `reads`, `escalations`,
+  `sessions`) over `context.ts` — the connection, the prepared statements in
+  `statements.ts`, the clock, and the lookups they all share.
 * `src/http/` — Fastify: agent routes, admin routes, auth, static assets.
 * `src/notify/` — the webhook queue.
 * `ui/` — the Vite/React SPA, built into `dist/ui` and served by Fastify.
