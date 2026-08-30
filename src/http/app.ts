@@ -129,13 +129,21 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   );
 
   await app.register(fastifyCookie);
+  /**
+   * The file count is refused by `collectPost`, not here: the plugin's own
+   * limit fires while the previous file is still streaming to disk and tears
+   * the request down under it, which surfaces as a premature-close stream
+   * error — a 500 — rather than a refusal. One more than Dogpark accepts, so
+   * the part that breaks the limit is seen and refused as `too_large` before
+   * a byte of it is written. The plugin's count stays as a backstop.
+   */
   await app.register(fastifyMultipart, {
     limits: {
       fileSize: limits.maxAttachmentBytes,
       fieldSize: limits.maxMessageBytes + 8192,
-      files: 20,
+      files: limits.maxAttachmentsPerMessage + 1,
       fields: 10,
-      parts: 40,
+      parts: limits.maxAttachmentsPerMessage + 20,
     },
   });
 

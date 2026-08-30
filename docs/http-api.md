@@ -29,8 +29,10 @@ capped so one call cannot amplify into the database, the UI and a webhook
 payload.
 
 `POST /messages` is multipart when it carries attachments: one `request` part
-holding the JSON, then one part per file. Files are written first and the
-message row commits last, so a crash leaves an unreferenced file rather than a
+holding the JSON, then one part per file — at most
+`Limits.maxAttachmentsPerMessage` (20) of them, the twenty-first refused as
+`too_large` before it is written. Files are written first and the message row
+commits last, so a crash leaves an unreferenced file rather than a
 message pointing at nothing.
 
 ## Admin API — `/api/admin/*`

@@ -27,10 +27,18 @@ export interface AppContext {
   readonly now: () => Date;
 }
 
+/**
+ * Not configurable: nothing in the scenarios wants more, and a message is a
+ * message, not a bucket. Advertised in `Limits` so an agent learns it from
+ * `identity()` rather than from a refused twenty-first file.
+ */
+export const MAX_ATTACHMENTS_PER_MESSAGE = 20;
+
 export function limitsFrom(config: Config): Limits {
   return {
     maxMessageBytes: config.DOGPARK_MAX_MESSAGE_BYTES,
     maxAttachmentBytes: config.DOGPARK_MAX_ATTACHMENT_BYTES,
+    maxAttachmentsPerMessage: MAX_ATTACHMENTS_PER_MESSAGE,
     requestsPerMinute: config.DOGPARK_REQUESTS_PER_MINUTE,
     maxPageSize: config.DOGPARK_MAX_PAGE_SIZE,
     maxWaitSeconds: config.DOGPARK_MAX_WAIT_SECONDS,

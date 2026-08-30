@@ -347,6 +347,35 @@ describe('the HTTP surface', () => {
       expect(probe.statusCode).toBe(404);
     });
 
+    it('refuses more than twenty files on one message as too_large, as the guide says', async () => {
+      const files = Array.from({ length: 21 }, (_, i) => ({
+        name: 'files',
+        filename: `part-${i}.txt`,
+        contentType: 'text/plain',
+        data: Buffer.from(`part ${i}`),
+      }));
+      const form = multipart([
+        {
+          name: 'request',
+          value: JSON.stringify({
+            target: { conversation },
+            body: 'too many',
+            idempotencyKey: 'twenty-one',
+          }),
+        },
+        ...files,
+      ]);
+      const response = await asAgent(alpha.key, {
+        method: 'POST',
+        url: '/api/agent/messages',
+        payload: form.body,
+        headers: { 'content-type': form.contentType },
+      });
+      expect(response.statusCode).toBe(413);
+      expect(response.json()).toMatchObject({ code: 'too_large' });
+      expect(attachmentFiles(h)).toEqual([]);
+    });
+
     it('hides an attachment on a message the agent cannot see', async () => {
       const form = multipart([
         {

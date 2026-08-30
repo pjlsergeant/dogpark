@@ -249,6 +249,8 @@ export interface Identity {
 export interface Limits {
   readonly maxMessageBytes: number;
   readonly maxAttachmentBytes: number;
+  /** Files on one message. Each is bounded by `maxAttachmentBytes` on its own. */
+  readonly maxAttachmentsPerMessage: number;
   readonly requestsPerMinute: number;
   /** Most items a single read returns, however much is waiting. */
   readonly maxPageSize: number;

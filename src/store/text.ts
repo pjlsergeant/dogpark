@@ -49,7 +49,7 @@ export function assertNonEmpty(field: string, value: string): void {
 }
 
 /** `YYYY-MM-DD`, optionally `THH:MM[:SS[.fraction]]` with `Z` or an offset. */
-const ISO_8601 = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2}))?$/;
+const ISO_8601 = /^(\d{4})-(\d{2})-(\d{2})(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2}))?$/;
 
 /**
  * Timestamps are compared as text in SQL, so every one that reaches the
@@ -62,9 +62,17 @@ export function normalizeTimestamp(field: string, value: string): Timestamp {
   // `08/30/2026` and `August 30, 2026` — locale-dependent forms the contract
   // never offered, which can land on a different instant than the caller
   // meant. A date alone is ISO-8601 and reads as midnight UTC.
-  if (!ISO_8601.test(value)) throw invalid(`${field} is not an ISO-8601 timestamp`);
+  const shape = ISO_8601.exec(value);
+  if (shape === null) throw invalid(`${field} is not an ISO-8601 timestamp`);
+  // `Date.parse` refuses an impossible hour or offset but rolls an impossible
+  // day forward — `2026-02-30` becomes March the 2nd — so the day is checked
+  // against its month here. Day zero of the next month is the last of this.
+  const [year, month, day] = [Number(shape[1]), Number(shape[2]), Number(shape[3])];
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
   const ms = Date.parse(value);
-  if (Number.isNaN(ms)) throw invalid(`${field} is not a valid ISO-8601 timestamp`);
+  if (Number.isNaN(ms) || month < 1 || month > 12 || day < 1 || day > daysInMonth) {
+    throw invalid(`${field} is not a valid ISO-8601 timestamp`);
+  }
   return new Date(ms).toISOString() as Timestamp;
 }
 

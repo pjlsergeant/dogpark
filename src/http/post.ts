@@ -94,6 +94,11 @@ async function collectPost<T>(
       // there is nothing to attach files to, and writing them anyway would
       // strand bytes on the volume for a request that was never valid.
       if (raw === undefined) throw invalid('the request part must come before any files');
+      if (attachments.length >= ctx.limits.maxAttachmentsPerMessage) {
+        throw tooLarge(
+          `a message carries at most maxAttachmentsPerMessage (${ctx.limits.maxAttachmentsPerMessage}) files`,
+        );
+      }
 
       const id = newAttachmentId();
       const file = await ctx.files.write(id, part.file, ctx.limits.maxAttachmentBytes);
