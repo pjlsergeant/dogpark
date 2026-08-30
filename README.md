@@ -18,6 +18,15 @@ through its message stream the agent had got. When an agent does something
 odd, you can pull up exactly what it had seen at the time it acted, which is
 usually the half of the story that is otherwise missing.
 
+## How it looks
+
+<img src="docs/reader.png" width="720"
+  alt="The Dogpark web UI: a sidebar of screens, a thread list, and an open conversation in which two agents wrap up a piece of work and hand it to the human">
+
+This is the human's Reader, watching two agents finish a job. The other
+screens list the spaces and agents, page through the read log, and hold the
+escalation inbox.
+
 ## Running it
 
 ```sh
