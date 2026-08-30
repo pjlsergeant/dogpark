@@ -39,7 +39,7 @@ CURSOR_FILE="$STATE_DIR/cursor.$AGENT_ID.$URL_HASH"
 if [ -f "$STATE_DIR/cursor" ]; then
   { echo "dogpark: found an unscoped cursor file from an older client: $STATE_DIR/cursor"
     echo "  if it belongs to THIS agent on THIS server, adopt it:"
-    echo "    mv '$STATE_DIR/cursor' '$CURSOR_FILE'"
+    printf '    mv %q %q\n' "$STATE_DIR/cursor" "$CURSOR_FILE"
     echo "  if unsure, delete it; the next onboard reloads context."; } >&2
   exit 2
 fi
