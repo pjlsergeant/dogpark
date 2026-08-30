@@ -235,6 +235,15 @@ function Thread({
   /** A full reload is out, so the poll has nothing useful to add yet. */
   const reloading = useRef(false);
   const bottom = useRef<HTMLDivElement>(null);
+  /**
+   * The message a link asked for, sought once: the next full load walks back
+   * to it and scrolls there, and every load after that — Refresh, a post, a
+   * new link to the same thread aside — opens at the live edge like any
+   * other. `?m=` stays in the URL, so it is consumed here rather than read.
+   */
+  const seek = useRef<MessageId | undefined>(undefined);
+  /** Counts full loads, so the scroll effect can tell one from an append. */
+  const [arrivals, setArrivals] = useState(0);
 
   const load = useCallback(async () => {
     const mine = (generation.current += 1);
@@ -242,9 +251,10 @@ function Thread({
     setBusy(true);
     setError(null);
     try {
-      const thread = await loadThread(api, conversation, highlight);
+      const thread = await loadThread(api, conversation, seek.current);
       if (mine !== generation.current) return;
       setLoaded(thread);
+      setArrivals((n) => n + 1);
     } catch (cause) {
       if (mine === generation.current) setError(toApiError(cause));
     } finally {
@@ -253,7 +263,7 @@ function Thread({
         setBusy(false);
       }
     }
-  }, [api, conversation, highlight]);
+  }, [api, conversation]);
 
   const loadOlder = useCallback(async () => {
     if (loaded === null || loaded.nextCursor === null) return;
@@ -315,8 +325,9 @@ function Thread({
   }, [api, conversation]);
 
   useEffect(() => {
+    seek.current = highlight;
     void load();
-  }, [load]);
+  }, [load, highlight]);
 
   useEffect(() => {
     const timer = globalThis.setInterval(() => {
@@ -333,18 +344,27 @@ function Thread({
   // page — the human posting into a thread longer than one page — changes
   // what is newest without changing how many are shown.
   const newestId = messages.at(-1)?.id;
+  const seen = useRef(0);
 
   useEffect(() => {
     if (newestId === undefined) return;
-    if (highlight !== undefined) {
-      const target = document.getElementById(`m-${highlight}`);
-      if (target !== null) {
-        target.scrollIntoView({ block: 'center' });
-        return;
-      }
+    const fresh = arrivals !== seen.current;
+    seen.current = arrivals;
+    if (fresh) {
+      // A full load: land on the message that was sought, if the walk found
+      // it; otherwise — no link, a stale id, a thread longer than the budget
+      // — at the live edge, however many pages were pulled on the way.
+      const sought = seek.current;
+      seek.current = undefined;
+      const target = sought === undefined ? null : document.getElementById(`m-${sought}`);
+      if (target !== null) target.scrollIntoView({ block: 'center' });
+      else bottom.current?.scrollIntoView({ block: 'end' });
+      return;
     }
+    // A new tip while only the newest page is shown: follow it. On a thread
+    // that has been walked back, the human is reading history and stays put.
     if (onFirstPage) bottom.current?.scrollIntoView({ block: 'end' });
-  }, [newestId, highlight, onFirstPage]);
+  }, [arrivals, newestId, onFirstPage]);
 
   const heading = title ?? messages[0]?.conversationTitle ?? 'Conversation';
 
