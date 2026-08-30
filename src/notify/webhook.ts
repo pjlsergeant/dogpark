@@ -1,0 +1,105 @@
+/**
+ * Escalation notification.
+ *
+ * An escalation is recorded first and notified second, so the API call means
+ * "recorded" rather than "someone was told" (docs/architecture.md). This drains
+ * the recorded ones, retrying with backoff, so a crash between recording and
+ * sending loses nothing and a webhook outage delays rather than drops.
+ */
+
+export interface PendingEscalation {
+  readonly id: string;
+  readonly agentName: string;
+  readonly spaceName: string;
+  readonly conversationTitle: string;
+  readonly reason: string;
+  readonly raisedAt: string;
+  /** How many sends have already been tried and failed. */
+  readonly attempts: number;
+}
+
+/** What the notifier needs from storage, and no more. */
+export interface EscalationQueue {
+  claimDue(now: number, limit: number): PendingEscalation[];
+  markSent(id: string): void;
+  markFailed(id: string, attempts: number, nextAttemptAt: number): void;
+  markGivenUp(id: string): void;
+}
+
+export interface NotifierOptions {
+  readonly webhookUrl?: string | undefined;
+  /** Give up after this many failures; the escalation stays visible in the UI. */
+  readonly maxAttempts?: number;
+  readonly now?: () => number;
+  readonly fetch?: typeof globalThis.fetch;
+}
+
+const MINUTE = 60_000;
+
+/** Exponential with a ceiling: 1m, 2m, 4m … capped at an hour. */
+export function backoffMs(attempts: number): number {
+  return Math.min(2 ** attempts * MINUTE, 60 * MINUTE);
+}
+
+export function formatMessage(e: PendingEscalation): string {
+  return [
+    `*${e.agentName}* raised something in *${e.spaceName}*`,
+    `> ${e.reason.replace(/\n/g, '\n> ')}`,
+    `_${e.conversationTitle} — ${e.raisedAt}_`,
+  ].join('\n');
+}
+
+export class Notifier {
+  #queue: EscalationQueue;
+  #url: string | undefined;
+  #maxAttempts: number;
+  #now: () => number;
+  #fetch: typeof globalThis.fetch;
+  #timer: NodeJS.Timeout | undefined;
+
+  constructor(queue: EscalationQueue, options: NotifierOptions = {}) {
+    this.#queue = queue;
+    this.#url = options.webhookUrl;
+    this.#maxAttempts = options.maxAttempts ?? 8;
+    this.#now = options.now ?? Date.now;
+    this.#fetch = options.fetch ?? globalThis.fetch;
+  }
+
+  /**
+   * Drain what is due. Returns how many were sent, so a caller can loop while
+   * there is work. Without a webhook configured this does nothing at all and
+   * escalations simply accumulate in the UI, which is a legitimate deployment.
+   */
+  async drain(limit = 20): Promise<number> {
+    if (!this.#url) return 0;
+    const due = this.#queue.claimDue(this.#now(), limit);
+    let sent = 0;
+
+    for (const e of due) {
+      try {
+        const res = await this.#fetch(this.#url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: formatMessage(e) }),
+        });
+        if (!res.ok) throw new Error(`webhook responded ${res.status}`);
+        this.#queue.markSent(e.id);
+        sent++;
+      } catch {
+        const attempts = e.attempts + 1;
+        if (attempts >= this.#maxAttempts) this.#queue.markGivenUp(e.id);
+        else this.#queue.markFailed(e.id, attempts, this.#now() + backoffMs(attempts));
+      }
+    }
+    return sent;
+  }
+
+  start(intervalMs = 10_000): void {
+    this.#timer ??= setInterval(() => void this.drain(), intervalMs).unref();
+  }
+
+  stop(): void {
+    if (this.#timer) clearInterval(this.#timer);
+    this.#timer = undefined;
+  }
+}
