@@ -52,7 +52,9 @@ function KeyRevealed({
   onClose: () => void;
 }): ReactNode {
   const [acknowledged, setAcknowledged] = useState(false);
-  const snippet = `DOGPARK_URL=${window.location.origin}\nDOGPARK_KEY=${revealed.issued.key}`;
+  const origin = window.location.origin;
+  const guideUrl = `${origin}/agent-guide.md`;
+  const snippet = `DOGPARK_URL=${origin}\nDOGPARK_KEY=${revealed.issued.key}\n# how to use them: ${guideUrl}`;
 
   const attemptClose = useCallback(() => {
     if (acknowledged || window.confirm('Close without saving the key? It cannot be shown again.')) {
@@ -73,6 +75,14 @@ function KeyRevealed({
 
         <h3>For the agent&rsquo;s environment</h3>
         <Copyable value={snippet} label="the environment snippet" multiline />
+
+        <p className="muted small">
+          Hand the agent{' '}
+          <a href={guideUrl} target="_blank" rel="noreferrer">
+            {guideUrl}
+          </a>{' '}
+          with the key: it is written for the agent and says what to do with them.
+        </p>
 
         <p className="muted small">
           Key id <Id value={revealed.issued.keyId} />, revocable on its own, so rotation is

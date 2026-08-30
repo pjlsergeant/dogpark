@@ -1705,3 +1705,30 @@ describe('the HTTP surface', () => {
     expect(response.json()).toEqual({ ok: true });
   });
 });
+
+describe('the agent guide', () => {
+  let h: Harness;
+  afterEach(() => teardown(h));
+
+  it('is served as plain text, without authentication, when the file exists', async () => {
+    h = await harness();
+    const guide = join(h.dir, 'agent-guide.md');
+    writeFileSync(guide, '# Dogpark: a guide for agents\n');
+    const app = await buildApp({ store: h.store, config: h.config, guidePath: guide });
+    try {
+      const response = await app.inject({ method: 'GET', url: '/agent-guide.md' });
+      expect(response.statusCode).toBe(200);
+      expect(response.headers['content-type']).toBe('text/plain; charset=utf-8');
+      expect(response.body).toBe('# Dogpark: a guide for agents\n');
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('is not_found in the API shape when no file was found', async () => {
+    h = await harness();
+    const response = await h.app.inject({ method: 'GET', url: '/agent-guide.md' });
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toEqual({ code: 'not_found', message: 'not found' });
+  });
+});

@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import fastifyStatic from '@fastify/static';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
@@ -31,17 +31,38 @@ const NOT_BUILT = `<!doctype html>
 The API is serving normally at <code>/api/agent</code> and <code>/api/admin</code>.</p>
 `;
 
+/** Where the agent guide is served from, so the UI and the docs can name it. */
+export const GUIDE_PATH = '/agent-guide.md';
+
 /**
  * Static assets from `/`, with `/api/*` taking precedence — the API routes are
  * more specific than this plugin's wildcard, so the router prefers them and
  * an unmatched `/api/...` falls through to the JSON not-found handler.
+ *
+ * `guidePath` is the agent guide on disk (`docs/agent-guide.md`, copied
+ * beside the compiled server by the build). Served unauthenticated at
+ * `GUIDE_PATH`: it is the instructions handed over with a key, and an agent
+ * that has to authenticate to learn how to authenticate has been handed
+ * nothing. Read once, at startup — it ships with the server and changes with
+ * it. `text/plain` rather than `text/markdown` so a browser following the
+ * link from the key dialog shows it rather than downloading it.
  */
-export function staticRoutes(uiRoot: string | undefined): FastifyPluginAsync {
+export function staticRoutes(
+  uiRoot: string | undefined,
+  guidePath: string | undefined,
+): FastifyPluginAsync {
   return async function routes(app: FastifyInstance): Promise<void> {
     app.addHook('onSend', async (_request, reply, payload) => {
       reply.header('Content-Security-Policy', SPA_CSP);
       return payload;
     });
+
+    if (guidePath !== undefined && existsSync(guidePath)) {
+      const guide = readFileSync(guidePath, 'utf8');
+      app.get(GUIDE_PATH, async (_request, reply) =>
+        reply.type('text/plain; charset=utf-8').send(guide),
+      );
+    }
 
     if (uiRoot === undefined || !existsSync(join(uiRoot, 'index.html'))) {
       // A missing bundle is a build that has not run, not a reason to refuse

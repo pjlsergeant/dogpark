@@ -65,6 +65,15 @@ function findUiRoot(): string | undefined {
   return candidates.find((path) => existsSync(path));
 }
 
+/** `dist/agent-guide.md` beside the compiled server, or the source under `docs/`. */
+function findGuide(): string | undefined {
+  const candidates = [
+    fileURLToPath(new URL('./agent-guide.md', import.meta.url)),
+    resolve(process.cwd(), 'docs/agent-guide.md'),
+  ];
+  return candidates.find((path) => existsSync(path));
+}
+
 async function main(): Promise<void> {
   const [command, ...rest] = process.argv.slice(2);
   if (command === 'hash-password') {
@@ -105,10 +114,12 @@ async function main(): Promise<void> {
     humanDisplayName: config.DOGPARK_DISPLAY_NAME,
   });
   const uiRoot = findUiRoot();
+  const guidePath = findGuide();
   const app = await buildApp({
     store,
     config,
     ...(uiRoot === undefined ? {} : { uiRoot }),
+    ...(guidePath === undefined ? {} : { guidePath }),
     logger: true,
   });
   app.log.info(

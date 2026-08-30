@@ -20,6 +20,8 @@ export interface AppOptions {
   readonly config: Config;
   /** Directory holding the built SPA. A missing one serves a placeholder. */
   readonly uiRoot?: string | undefined;
+  /** The agent guide on disk. A missing one is simply not served. */
+  readonly guidePath?: string | undefined;
   readonly logger?: FastifyServerOptions['logger'] | undefined;
 }
 
@@ -190,7 +192,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     },
     { prefix: '/api' },
   );
-  await app.register(staticRoutes(options.uiRoot));
+  await app.register(staticRoutes(options.uiRoot, options.guidePath));
 
   await app.ready();
   return app;

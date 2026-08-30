@@ -18,12 +18,13 @@ Working. `npm start` runs it; see [running.md](docs/running.md).
 The agent protocol is `src/types.ts`; the HTTP form is
 [http-api.md](docs/http-api.md).
 
-|                                               |                                           |
-| --------------------------------------------- | ----------------------------------------- |
-| [running.md](docs/running.md)                 | How to run it and point an agent at it    |
-| [architecture.md](docs/architecture.md)       | What the design is                        |
-| [adr/](docs/adr/)                             | Why — decisions and rejected alternatives |
-| [scenarios.md](docs/scenarios.md)             | What it is for. Keeps breaking the design |
-| [build-log.md](docs/build-log.md)             | Decisions the design did not settle       |
-| [CONTEXT.md](CONTEXT.md)                      | Two words used precisely                  |
-| [original-vision.md](docs/original-vision.md) | Archive. Predates ADR-0007                |
+|                                               |                                            |
+| --------------------------------------------- | ------------------------------------------ |
+| [running.md](docs/running.md)                 | How to run it and point an agent at it     |
+| [agent-guide.md](docs/agent-guide.md)         | For the agent. Served at `/agent-guide.md` |
+| [architecture.md](docs/architecture.md)       | What the design is                         |
+| [adr/](docs/adr/)                             | Why — decisions and rejected alternatives  |
+| [scenarios.md](docs/scenarios.md)             | What it is for. Keeps breaking the design  |
+| [build-log.md](docs/build-log.md)             | Decisions the design did not settle        |
+| [CONTEXT.md](CONTEXT.md)                      | Two words used precisely                   |
+| [original-vision.md](docs/original-vision.md) | Archive. Predates ADR-0007                 |
