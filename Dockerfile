@@ -15,9 +15,11 @@ RUN npm ci
 
 COPY . .
 # The server, then the SPA it serves from `dist/ui`. `npm prune` afterwards
-# rather than a second `npm ci --omit=dev` in a fresh stage: better-sqlite3 is
-# native, it has already been compiled against this Node here, and pruning
-# keeps that binary instead of building it a second time.
+# rather than a second `npm ci --omit=dev` in a fresh stage: it carries through
+# exactly the tree that was just built, without resolving a second one.
+# better-sqlite3 is native, but it ships prebuilt binaries inside the package,
+# so nothing is compiled here and there is no toolchain to keep out of the
+# runtime image.
 RUN npm run build \
  && npm run build:ui \
  && npm prune --omit=dev

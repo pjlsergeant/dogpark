@@ -7,10 +7,13 @@ dist
 *.tsbuildinfo
 
 # Never into an image: the data directory is a volume, and the secrets are
-# environment.
+# environment. `.npmrc` is here because an untracked one holding a registry
+# token would otherwise be copied into a build layer by `COPY . .`, long
+# after the install that might have wanted it.
 data
 .env
 .env.*
+.npmrc
 
 .DS_Store
 core
