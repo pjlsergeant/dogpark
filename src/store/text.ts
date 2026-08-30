@@ -61,15 +61,27 @@ export function normalizeTimestamp(field: string, value: string): Timestamp {
 }
 
 // A mention is bounded on the left so an email address is not one, and on the
-// right by the name class itself. Both directions use the same boundaries, so
-// what the encoder produces is exactly what the renderer finds.
+// right by the name class itself.
 const MENTION_RE = /(?<![A-Za-z0-9._-])@([A-Za-z0-9][A-Za-z0-9._-]{0,63})/g;
-const REFERENCE_RE = new RegExp(`(?<![A-Za-z0-9._-])@(${ID_PATTERN})(?![0-9a-hjkmnp-tv-z])`, 'g');
 
-/** The stored form of a mention. Tokenised by FTS5 as the bare id. */
+/**
+ * The stored form of a mention: `@`, the reserved sequence, the id.
+ *
+ * The reserved sequence is the one thing no submitted text can carry — it is
+ * rejected at every entry point, human included — so a marked token can only
+ * have come from this encoder. Literal text that happens to spell an agent id
+ * (`@<id>`, or `@<id>i`) is stored as typed and stays literal for ever, rather
+ * than becoming a mention the moment that agent is a member. The encoding is
+ * injective, so a stored body says exactly what was resolved at write time.
+ *
+ * Still tokenised by FTS5 as the bare id: `@` and a control character are both
+ * separators to the unicode61 tokeniser.
+ */
 export function referenceToken(agent: AgentId): string {
-  return `@${agent}`;
+  return `@${RESERVED_SEQUENCE}${agent}`;
 }
+
+const REFERENCE_RE = new RegExp(`@${RESERVED_SEQUENCE}(${ID_PATTERN})`, 'g');
 
 /**
  * Resolves `@name` to `@<agent-id>` at write time, so the stored body is a
@@ -102,18 +114,20 @@ export function encodeMentions(
 
 /**
  * Renders a stored body back to current names. `resolve` returns undefined for
- * anything that is not an agent this reader's message may name, and the token
- * is then left exactly as stored — it was literal text that happened to look
- * like a reference.
+ * an agent this reader's message may not name, and the reference is then
+ * rendered as its bare id — the marker never reaches output.
+ *
+ * The final strip is for fragments: an FTS5 snippet can cut a stored body at a
+ * token boundary and leave a marker with no id behind it. Output rendering is
+ * the one place stripping is right; input is rejected, never stripped.
  */
 export function renderMentions(
   body: string,
   resolve: (agent: AgentId) => string | undefined,
 ): string {
-  return body.replace(REFERENCE_RE, (whole, id: string) => {
-    const name = resolve(id as AgentId);
-    return name === undefined ? whole : `@${name}`;
-  });
+  return body
+    .replace(REFERENCE_RE, (_whole, id: string) => `@${resolve(id as AgentId) ?? id}`)
+    .replaceAll(RESERVED_SEQUENCE, '');
 }
 
 /**

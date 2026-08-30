@@ -16,7 +16,7 @@ import type {
 } from '../types.js';
 import { StoreError } from './errors.js';
 import { newAttachmentId, openStore, type Store, type ReadLogCursor } from './index.js';
-import { RESERVED_SEQUENCE } from './text.js';
+import { referenceToken, RESERVED_SEQUENCE } from './text.js';
 
 // ---------------------------------------------------------------------------
 // Harness: a real on-disk database per test, and a clock the test can move so
@@ -853,7 +853,7 @@ describe('bodies are canonical', () => {
       .prepare('SELECT body FROM message WHERE id = ?')
       .get(posted.id) as { body: string };
 
-    expect(stored.body).toBe(`ping @${bob} please`);
+    expect(stored.body).toBe(`ping ${referenceToken(bob)} please`);
     expect(posted.body).toBe('ping @bob please');
     expect(posted.mentions).toEqual([bob]);
 
@@ -897,6 +897,47 @@ describe('bodies are canonical', () => {
     const posted = post(h, agent, space, 'notes', `ping @${stranger}`);
     expect(posted.body).toBe(`ping @${stranger}`);
     expect(posted.mentions).toEqual([]);
+  });
+
+  it('keeps literal text that spells an agent id literal, for ever', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const bob = h.store.createAgent('bob').id;
+    h.store.grantMembership(bob, space);
+
+    // Hand-written ids — bare, and with a trailing letter the old boundary
+    // let through — are what the author typed, not references. Bob being in
+    // the space changes nothing: the encoding is decided at write time.
+    const posted = post(h, agent, space, 'notes', `see @${bob} and @${bob}i`);
+    const stored = h.store.database
+      .prepare('SELECT body FROM message WHERE id = ?')
+      .get(posted.id) as { body: string };
+    expect(stored.body).toBe(`see @${bob} and @${bob}i`);
+    expect(posted.body).toBe(`see @${bob} and @${bob}i`);
+    expect(posted.mentions).toEqual([]);
+
+    h.store.renameAgent(bob, 'robert');
+    const reread = h.store.readSpace({ kind: 'agent', id: agent }, space).messages[0];
+    expect(reread?.body).toBe(`see @${bob} and @${bob}i`);
+  });
+
+  it('never lets the reference marker reach a rendered body or snippet', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const bob = h.store.createAgent('bob').id;
+    h.store.grantMembership(bob, space);
+
+    const posted = post(h, agent, space, 'notes', 'ping @bob about the figures');
+    expect(posted.body).not.toContain(RESERVED_SEQUENCE);
+
+    const hits = h.store.searchMessages('figures');
+    expect(hits).toHaveLength(1);
+    expect(hits[0]?.snippet).not.toContain(RESERVED_SEQUENCE);
+    expect(hits[0]?.snippet).toContain('@bob');
+    expect(hits[0]?.message.body).toBe('ping @bob about the figures');
+
+    // The token is still searchable by the bare id.
+    expect(h.store.searchMessages(bob)).toHaveLength(1);
   });
 
   it('keeps punctuation next to a mention', () => {

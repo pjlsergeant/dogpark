@@ -19,6 +19,14 @@ reads of one message can render different names if an agent was renamed
 between them. The message has not changed; its rendering has. Anything that
 hashes or compares body text uses the canonical form.
 
+**A reference is marked, so it cannot be spelled by hand.** The stored form is
+`@`, the reserved sequence (ADR-0010), then the id. No submitted text can carry
+that sequence, so a marked token can only have come from the encoder: literal
+text that happens to spell an agent's id stays literal, and never turns into a
+mention later when that agent joins the space. The encoding is injective — a
+stored body says exactly what was resolved when it was written — and the
+marker is dropped on render, so it never reaches a reader.
+
 **Names have no spaces**, so `@name` needs no delimiters to parse. They must be
 unique at any moment, so a mention resolves unambiguously — but not forever,
 because nothing stores them.

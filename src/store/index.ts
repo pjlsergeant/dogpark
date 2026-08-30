@@ -387,8 +387,6 @@ interface StreamRow {
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 1000;
 
-
-
 const READ_LOG_COLUMNS =
   'SELECT rowid AS row_id, id, agent_id, read_at, kind, params_json, cursor, item_count ' +
   '  FROM read_log WHERE ';
@@ -1324,7 +1322,9 @@ export function openStore(options: StoreOptions): Store {
 
     // Validate before anything else, including before the idempotency lookup:
     // a rejected write should be rejected identically whether or not its key
-    // has been seen, and the reserved sequence must never reach a stored row.
+    // has been seen, and the reserved sequence must never reach a stored row
+    // from input — the only one a row carries is the encoder's own mention
+    // marker (text.ts), which is what makes that marker unforgeable.
     assertNoReservedSequence('body', input.body);
     if ('title' in input.target) assertNonEmpty('title', input.target.title);
     for (const attachment of input.attachments ?? []) {
@@ -2007,7 +2007,12 @@ export function openStore(options: StoreOptions): Store {
         }
         throw error;
       }
-      return rows.map((row) => ({ message: toMessage(row, cache), snippet: row.snippet }));
+      return rows.map((row) => ({
+        message: toMessage(row, cache),
+        // A snippet is a fragment of the stored body, so it is rendered like
+        // the body: references become names, and the marker never leaves.
+        snippet: renderMentions(row.snippet, (agent) => mentionName(cache, row.space_id, agent)),
+      }));
     },
 
     getAttachment(attachment) {
