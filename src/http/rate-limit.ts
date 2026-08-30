@@ -88,6 +88,9 @@ export function createRateLimiter(perMinute: number, now: () => number = Date.no
     peek(key) {
       const at = now();
       // Asking creates nothing: a key never charged is a key never stored.
+      // It does sweep — for the failed-auth limiter, every request asks and
+      // only failures spend, so this is the path ordinary traffic takes.
+      sweep(at);
       return verdict(prune(key, at), at);
     },
 

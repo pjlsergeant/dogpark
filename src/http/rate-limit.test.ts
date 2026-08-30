@@ -30,7 +30,17 @@ describe('the rate limiter forgets what it no longer needs', () => {
     for (let i = 0; i < 1000; i += 1) limiter.record(`ip:10.0.${Math.floor(i / 256)}.${i % 256}`);
     expect(limiter.size()).toBe(1000);
     c.advance(60_001);
-    // One unrelated request is enough: the sweep rides on ordinary traffic.
+    // One unrelated request is enough: the sweep rides on ordinary traffic —
+    // and for the failed-auth limiter ordinary traffic only ever asks.
+    expect(limiter.peek('id:someone-valid').allowed).toBe(true);
+    expect(limiter.size()).toBe(0);
+  });
+
+  it('sweeps from the spending paths as well', () => {
+    const c = clock();
+    const limiter = createRateLimiter(5, c.now);
+    for (let i = 0; i < 100; i += 1) limiter.record(`k${i}`);
+    c.advance(60_001);
     limiter.check('agent');
     expect(limiter.size()).toBe(1);
   });
