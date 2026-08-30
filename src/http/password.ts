@@ -49,7 +49,7 @@ export async function readSecret(input: SecretInput, output: SecretOutput): Prom
 /**
  * `DOGPARK_PASSWORD_HASH` is scrypt, because Node has it in core and a native
  * argon2 dependency buys little in a container that already builds
- * better-sqlite3:
+ * better-sqlite3. The encoding:
  *
  *   scrypt$<N>$<r>$<p>$<salt base64url>$<derived key base64url>
  */

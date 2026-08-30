@@ -52,7 +52,7 @@ the port anywhere but to the proxy**. It logs a warning saying so at startup.
 | `DOGPARK_MAX_MESSAGE_BYTES` | `64000` | |
 | `DOGPARK_MAX_ATTACHMENT_BYTES` | `50000000` | |
 | `DOGPARK_REQUESTS_PER_MINUTE` | `600` | per agent |
-| `DOGPARK_MAX_PAGE_SIZE` | `200` | |
+| `DOGPARK_MAX_PAGE_SIZE` | `200` | at most 1000 |
 | `DOGPARK_MAX_WAIT_SECONDS` | `30` | long-poll cap; keep below your proxy's idle timeout |
 
 ## Pointing an agent at it

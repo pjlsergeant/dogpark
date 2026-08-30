@@ -38,6 +38,7 @@ import {
 } from './cursors.js';
 import { invalid, notFound, StoreError } from './errors.js';
 import { constantTimeEquals, KEY_PREFIX, newId, splitKey } from './ids.js';
+import { MAX_PAGE_LIMIT } from './limits.js';
 import { migrate } from './migrate.js';
 import type { MigrateResult } from './migrate.js';
 import {
@@ -56,6 +57,7 @@ export { StoreError } from './errors.js';
 export { RESERVED_SEQUENCE } from './text.js';
 /** The two pieces of key handling the HTTP layer shares with the store. */
 export { constantTimeEquals, splitKey } from './ids.js';
+export { MAX_PAGE_LIMIT } from './limits.js';
 export { migrate, MIGRATIONS } from './migrate.js';
 export type { Migration, MigrateResult } from './migrate.js';
 export type { ReadLogCursor } from './cursors.js';
@@ -409,11 +411,10 @@ function requestHash(value: unknown): string {
   return sha256(JSON.stringify(value));
 }
 
-/** The HTTP layer caps against `Limits.maxPageSize`; the store only validates. */
-function limitOrDefault(limit: number | undefined): number {
+function clampLimit(limit: number | undefined): number {
   if (limit === undefined) return DEFAULT_LIMIT;
   if (!Number.isInteger(limit) || limit < 1) throw invalid('limit must be a positive integer');
-  return limit;
+  return Math.min(limit, MAX_PAGE_LIMIT);
 }
 
 // ---------------------------------------------------------------------------
@@ -1625,7 +1626,7 @@ export function openStore(options: StoreOptions): Store {
 
   const readStreamTx = db.transaction((agent: AgentId, args: ReadStreamArgs): StreamPage => {
     requireAgentRow(agent);
-    const limit = limitOrDefault(args.limit);
+    const limit = clampLimit(args.limit);
     // Read the tip first and bound the query by it, so "everything up to here
     // was considered" is true of exactly the rows the query could have seen.
     const currentTip = tip();
@@ -1686,6 +1687,11 @@ export function openStore(options: StoreOptions): Store {
    */
   function planQuery(range: Range | undefined, limit: number | undefined): QueryPlan {
     const order = range?.order ?? 'oldest';
+    // The HTTP layer validates this against `Range`, but the store is also
+    // called directly, and a typo would otherwise silently read backwards.
+    if (order !== 'oldest' && order !== 'newest') {
+      throw invalid("order must be 'oldest' or 'newest'");
+    }
     return {
       order,
       after:
@@ -1699,7 +1705,7 @@ export function openStore(options: StoreOptions): Store {
             : tip() + 1,
       since: range?.since === undefined ? null : normalizeTimestamp('since', range.since),
       until: range?.until === undefined ? null : normalizeTimestamp('until', range.until),
-      limit: limitOrDefault(limit),
+      limit: clampLimit(limit),
     };
   }
 
@@ -2048,7 +2054,7 @@ export function openStore(options: StoreOptions): Store {
       // searching for its id — and a rename touches no index.
       assertNoReservedSequence('query', query);
       const cache = newRenderCache();
-      const limit = limitOrDefault(opts?.limit);
+      const limit = clampLimit(opts?.limit);
       let rows;
       try {
         rows = st.search.all({ query, space: opts?.space ?? null, limit });
@@ -2098,7 +2104,7 @@ export function openStore(options: StoreOptions): Store {
         .all({
           state: filter?.state ?? null,
           dueAt: filter?.dueAt ?? null,
-          limit: limitOrDefault(filter?.limit),
+          limit: clampLimit(filter?.limit),
         })
         .map(toEscalation);
     },
@@ -2119,7 +2125,7 @@ export function openStore(options: StoreOptions): Store {
     },
 
     readReadLog(filter) {
-      const limit = limitOrDefault(filter?.limit);
+      const limit = clampLimit(filter?.limit);
       const after = filter?.after === undefined ? undefined : decodeReadLogCursor(filter.after);
       const bounds: ReadLogBounds = {
         since: filter?.since === undefined ? null : normalizeTimestamp('since', filter.since),

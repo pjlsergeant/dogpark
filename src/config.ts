@@ -1,5 +1,6 @@
 import { isIP } from 'node:net';
 import { z } from 'zod';
+import { MAX_PAGE_LIMIT } from './store/limits.js';
 import { assertValidName } from './store/text.js';
 
 /**
@@ -76,7 +77,8 @@ const Schema = z.object({
   DOGPARK_MAX_MESSAGE_BYTES: z.coerce.number().int().positive().default(64_000),
   DOGPARK_MAX_ATTACHMENT_BYTES: z.coerce.number().int().positive().default(50_000_000),
   DOGPARK_REQUESTS_PER_MINUTE: z.coerce.number().int().positive().default(600),
-  DOGPARK_MAX_PAGE_SIZE: z.coerce.number().int().positive().default(200),
+  /** Bounded by the store's own ceiling, so the advertised limit is the honoured one. */
+  DOGPARK_MAX_PAGE_SIZE: z.coerce.number().int().positive().max(MAX_PAGE_LIMIT).default(200),
   /** Must sit below the reverse proxy's idle timeout. */
   DOGPARK_MAX_WAIT_SECONDS: z.coerce.number().int().nonnegative().default(30),
 });

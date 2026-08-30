@@ -1591,6 +1591,18 @@ describe('reading backwards', () => {
   });
 });
 
+describe('a query refuses what its type would have caught', () => {
+  it('rejects an order it does not know rather than reading backwards', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    expectStoreError(
+      () =>
+        h.store.readSpace({ kind: 'agent', id: agent }, space, { order: 'sideways' as 'newest' }),
+      'invalid_request',
+    );
+  });
+});
+
 describe('the read log is paged', () => {
   function reads(h: Harness, agent: AgentId, space: SpaceId, count: number): void {
     for (let i = 0; i < count; i += 1) {
