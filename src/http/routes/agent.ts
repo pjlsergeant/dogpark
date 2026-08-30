@@ -64,7 +64,7 @@ export function agentRoutes(ctx: AppContext): FastifyPluginAsync {
       };
       reply.raw.on('close', onClose);
       try {
-        await ctx.writes.wait(waitSeconds * 1000, gone.signal);
+        await ctx.writes.agent.wait(waitSeconds * 1000, gone.signal);
       } finally {
         reply.raw.off('close', onClose);
       }
@@ -122,12 +122,17 @@ export function agentRoutes(ctx: AppContext): FastifyPluginAsync {
     app.post('/escalations', async (request, reply) => {
       const self = requireAgent(request);
       const payload = parse(EscalateBody, request.body, 'request body');
-      ctx.store.recordEscalation({
+      const outcome = ctx.store.recordEscalation({
         agent: self.id,
         conversation: asConversationId(payload.conversation),
         reason: payload.reason,
         idempotencyKey: asIdempotencyKey(payload.idempotencyKey),
       });
+      // The human's screens hear about it now; agent streams never do — an
+      // escalation is invisible to agents, and waking their polls for it
+      // would write read-log rows for reads nobody wanted. A replay recorded
+      // nothing, so it wakes nobody.
+      if (outcome.created) ctx.writes.adminOnly();
       // Recorded, not delivered: notification drains separately and durably,
       // and its outcome is the human's to see, not the agent's.
       return reply.code(204).send();

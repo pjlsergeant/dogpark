@@ -1777,18 +1777,29 @@ describe("the human's long poll and space counts", () => {
     csrf: string;
     get: (url: string) => Promise<LightMyRequestResponse>;
     post: (url: string, payload: Record<string, unknown>) => Promise<LightMyRequestResponse>;
+    send: (
+      method: 'POST' | 'PATCH' | 'PUT' | 'DELETE',
+      url: string,
+      payload?: Record<string, unknown>,
+    ) => Promise<LightMyRequestResponse>;
   }> => {
     const session = await login(h);
+    const send = (
+      method: 'POST' | 'PATCH' | 'PUT' | 'DELETE',
+      url: string,
+      payload?: Record<string, unknown>,
+    ): Promise<LightMyRequestResponse> =>
+      h.app.inject({
+        method,
+        url,
+        headers: { cookie: session.cookie, 'x-csrf-token': session.csrf },
+        ...(payload === undefined ? {} : { payload }),
+      });
     return {
       ...session,
       get: (url) => h.app.inject({ method: 'GET', url, headers: { cookie: session.cookie } }),
-      post: (url, payload) =>
-        h.app.inject({
-          method: 'POST',
-          url,
-          headers: { cookie: session.cookie, 'x-csrf-token': session.csrf },
-          payload,
-        }),
+      post: (url, payload) => send('POST', url, payload),
+      send,
     };
   };
 
@@ -1805,9 +1816,10 @@ describe("the human's long poll and space counts", () => {
   it('holds until a write, then reports the version it moved to', async () => {
     const me = await human();
     const space = (await me.post('/api/admin/spaces', { name: 'acme' })).json() as { id: string };
-    // Creating a space is not a write agents are woken for.
+    // Creating the space is itself a change the UI shows, so the version has
+    // already moved once.
     const before = versionOf(await me.get('/api/admin/changes'));
-    expect(before).toMatch(/:0$/);
+    expect(before).toMatch(/:1$/);
 
     const waiting = me.get(`/api/admin/changes?after=${before}&waitSeconds=2`);
     await new Promise((resolve) => setTimeout(resolve, 50));
@@ -1817,8 +1829,114 @@ describe("the human's long poll and space counts", () => {
       body: 'anyone here?',
     });
     const woke = await waiting;
-    expect(versionOf(woke)).toBe(before.replace(/:0$/, ':1'));
+    expect(versionOf(woke)).toBe(before.replace(/:1$/, ':2'));
     expect(Date.now() - started).toBeLessThan(1500);
+  });
+
+  it('moves on every mutation the UI shows, not only the ones agents wake for', async () => {
+    const me = await human();
+    let last = versionOf(await me.get('/api/admin/changes'));
+    const moved = async (): Promise<void> => {
+      const now = versionOf(await me.get('/api/admin/changes'));
+      expect(now).not.toBe(last);
+      last = now;
+    };
+    const held = async (): Promise<void> => {
+      expect(versionOf(await me.get('/api/admin/changes'))).toBe(last);
+    };
+
+    const space = (await me.post('/api/admin/spaces', { name: 'acme' })).json() as { id: string };
+    await moved();
+    await me.send('PATCH', `/api/admin/spaces/${space.id}`, { name: 'acme-renamed' });
+    await moved();
+
+    const created = (await me.post('/api/admin/agents', { name: 'watcher' })).json() as {
+      agent: { id: string };
+      keyId: string;
+      key: string;
+    };
+    await moved();
+    await me.send('PATCH', `/api/admin/agents/${created.agent.id}`, { name: 'lookout' });
+    await moved();
+
+    const issued = (await me.post(`/api/admin/agents/${created.agent.id}/keys`, {})).json() as {
+      keyId: string;
+    };
+    await moved();
+    await me.send('DELETE', `/api/admin/agents/${created.agent.id}/keys/${issued.keyId}`);
+    await moved();
+
+    await me.send('PUT', `/api/admin/spaces/${space.id}/members/${created.agent.id}`);
+    await moved();
+
+    const posted = (
+      await me.post('/api/admin/messages', {
+        target: { space: space.id, title: 'watch this' },
+        body: 'a thread to rename',
+      })
+    ).json() as { conversation: { id: string } };
+    await moved();
+    await me.send('PATCH', `/api/admin/conversations/${posted.conversation.id}`, {
+      title: 'watched',
+    });
+    await moved();
+
+    const escalate = (): Promise<LightMyRequestResponse> =>
+      h.app.inject({
+        method: 'POST',
+        url: '/api/agent/escalations',
+        headers: { authorization: `Bearer ${created.key}` },
+        payload: {
+          conversation: posted.conversation.id,
+          reason: 'checking the wiring',
+          idempotencyKey: 'esc-1',
+        },
+      });
+    expect((await escalate()).statusCode).toBe(204);
+    await moved();
+    // A replayed escalation recorded nothing, so it is not a change.
+    expect((await escalate()).statusCode).toBe(204);
+    await held();
+
+    await me.send('POST', `/api/admin/agents/${created.agent.id}/archive`);
+    await moved();
+    await me.send('POST', `/api/admin/agents/${created.agent.id}/unarchive`);
+    await moved();
+  });
+
+  it('does not wake an agent stream poll for a write only the UI shows', async () => {
+    // The reason the signal is split: waking an agent's poll hands it an
+    // empty page and spends a read-log row on a read nobody wanted. A rename
+    // changes what the UI shows, but puts nothing on any agent's stream.
+    const me = await human();
+    const record = h.store.createAgent('bystander');
+    const key = h.store.issueKey(record.id).key;
+    const space = h.store.createSpace('quiet');
+    h.store.grantMembership(record.id, space.id);
+
+    const tip = await h.app.inject({
+      method: 'GET',
+      url: '/api/agent/stream?tip=true',
+      headers: { authorization: `Bearer ${key}` },
+    });
+    const cursor = (tip.json() as { nextCursor: string }).nextCursor;
+
+    const started = Date.now();
+    const waiting = h.app.inject({
+      method: 'GET',
+      url: `/api/agent/stream?after=${encodeURIComponent(cursor)}&waitSeconds=2`,
+      headers: { authorization: `Bearer ${key}` },
+    });
+    setTimeout(() => {
+      void me.send('PATCH', `/api/admin/spaces/${space.id}`, { name: 'renamed-under-them' });
+    }, 50);
+
+    const response = await waiting;
+    const elapsed = Date.now() - started;
+    expect(response.statusCode).toBe(200);
+    expect((response.json() as { items: unknown[] }).items).toEqual([]);
+    // Timed out rather than woken: the rename reached the UI signal only.
+    expect(elapsed).toBeGreaterThanOrEqual(1500);
   });
 
   it('times out to the unchanged version when nothing is written', async () => {

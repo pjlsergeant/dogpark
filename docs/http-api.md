@@ -47,7 +47,7 @@ required because the SPA shares an origin with the agent API.
 | POST | `/session` | password in, cookie + CSRF token out |
 | GET | `/session` | the CSRF token again after a reload, which the cookie survives but the page does not |
 | DELETE | `/session` | invalidates server-side |
-| GET | `/changes` | `after`, `waitSeconds`: `{ version }` (opaque), returned once something has been written since `after` — a post, a membership change — or when the wait runs out. The UI holds one open instead of polling on a timer |
+| GET | `/changes` | `after`, `waitSeconds`: `{ version }` (opaque), returned once something has been written since `after` — a post, a membership change, a rename, a roster or key change, an escalation — or when the wait runs out. The UI holds one open instead of polling on a timer. Its signal is a superset of the agent stream's: agents wake only for writes that land on their stream, so a rename or an escalation never spends their read-log rows |
 | GET | `/spaces` | each with `conversationCount`, `messageCount` and `lastActivityAt` |
 | POST | `/spaces` | `{ name }` |
 | PATCH | `/spaces/:id` | `{ name }` |

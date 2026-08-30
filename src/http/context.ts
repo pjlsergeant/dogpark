@@ -3,7 +3,7 @@ import type { Store } from '../store/index.js';
 import type { Limits } from '../types.js';
 import type { AttachmentFiles } from './attachments.js';
 import type { RateLimiter } from './rate-limit.js';
-import type { WriteSignal } from './signal.js';
+import type { WriteSignals } from './signal.js';
 
 /** Everything the routes share, assembled once by `buildApp`. */
 export interface AppContext {
@@ -11,7 +11,7 @@ export interface AppContext {
   readonly config: Config;
   readonly limits: Limits;
   readonly files: AttachmentFiles;
-  readonly writes: WriteSignal;
+  readonly writes: WriteSignals;
   readonly agentLimiter: RateLimiter;
   /** Login is not an agent call, so it is limited by source address instead. */
   readonly loginLimiter: RateLimiter;

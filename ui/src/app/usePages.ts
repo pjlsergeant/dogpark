@@ -22,6 +22,13 @@ export interface Pages<T, P extends Page<T>> {
   readonly hasMore: boolean;
   /** A first page or a further one is in flight; nothing more should be asked for. */
   readonly busy: boolean;
+  /**
+   * Later pages have been loaded. A refresh discards them, so a screen that
+   * refreshes itself on a change signal should hold off while this is true —
+   * the same rule the Reader's poll keys on — and leave it to the person's
+   * own Refresh.
+   */
+  readonly paged: boolean;
   readonly loadMore: () => void;
   readonly moreFailed: boolean;
   readonly refresh: () => void;
@@ -110,6 +117,7 @@ export function usePages<T, P extends Page<T>>(
     items: [...(data?.items ?? []), ...(tail?.items ?? [])],
     hasMore: hasMore && nextCursor !== null,
     busy,
+    paged: tail !== null,
     loadMore,
     moreFailed,
     refresh,

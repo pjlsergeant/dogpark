@@ -41,7 +41,7 @@ export async function submitPost<T extends PostPayload>(
         : { idempotencyKey: asIdempotencyKey(payload.idempotencyKey) }),
     });
     if (!result.created) await collected.discard();
-    else ctx.writes.notify();
+    else ctx.writes.agentVisible();
     return { message: result.message, conversation: result.conversation };
   } catch (error) {
     await collected.discard();

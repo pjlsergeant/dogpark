@@ -117,19 +117,20 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
       guarded.get('/spaces', async () => ctx.store.listSpaceSummaries());
 
       /**
-       * The human's long poll. A version that moves on every write agents are
-       * woken for — a post, a membership change — so the UI can hold one of
-       * these open and refresh what it shows when it returns, rather than
-       * asking on a timer. `after` is the version last seen: a write that
-       * landed between two requests answers the next one at once, and a
-       * restart reads as a change (the version carries a per-process epoch),
-       * which it may as well be. Without `after` or a wait it simply reports
-       * the version.
+       * The human's long poll. A version that moves on every mutation the
+       * UI can show — posts and membership like the agent stream, but also
+       * renames, roster and key changes, and escalations, which agents are
+       * never woken for — so the UI can hold one of these open and refresh
+       * what it shows when it returns, rather than asking on a timer.
+       * `after` is the version last seen: a write that landed between two
+       * requests answers the next one at once, and a restart reads as a
+       * change (the version carries a per-process epoch), which it may as
+       * well be. Without `after` or a wait it simply reports the version.
        */
       guarded.get('/changes', async (request, reply) => {
         const query = parse(ChangesQuery, request.query, 'query');
         const waitSeconds = Math.min(query.waitSeconds ?? 0, ctx.limits.maxWaitSeconds);
-        const current = ctx.writes.version;
+        const current = ctx.writes.admin.version;
         if (query.after === undefined || query.after !== current || waitSeconds === 0) {
           return { version: current };
         }
@@ -139,22 +140,26 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
         };
         reply.raw.on('close', onClose);
         try {
-          await ctx.writes.wait(waitSeconds * 1000, gone.signal);
+          await ctx.writes.admin.wait(waitSeconds * 1000, gone.signal);
         } finally {
           reply.raw.off('close', onClose);
         }
-        return { version: ctx.writes.version };
+        return { version: ctx.writes.admin.version };
       });
 
       guarded.post('/spaces', async (request, reply) => {
         const { name } = parse(NameBody, request.body, 'request body');
-        return reply.code(201).send(ctx.store.createSpace(name));
+        const space = ctx.store.createSpace(name);
+        ctx.writes.adminOnly();
+        return reply.code(201).send(space);
       });
 
       guarded.patch('/spaces/:id', async (request) => {
         const { id } = request.params as { id: string };
         const { name } = parse(NameBody, request.body, 'request body');
-        return ctx.store.renameSpace(asSpaceId(id), name);
+        const space = ctx.store.renameSpace(asSpaceId(id), name);
+        ctx.writes.adminOnly();
+        return space;
       });
 
       // Titles are mutable and references are what get stored (ADR-0014), so
@@ -162,7 +167,9 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
       guarded.patch('/conversations/:id', async (request) => {
         const { id } = request.params as { id: string };
         const { title } = parse(TitleBody, request.body, 'request body');
-        return ctx.store.renameConversation(asConversationId(id), title);
+        const conversation = ctx.store.renameConversation(asConversationId(id), title);
+        ctx.writes.adminOnly();
+        return conversation;
       });
 
       guarded.get('/spaces/:id/members', async (request) => {
@@ -175,13 +182,14 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
         const { id, agentId } = request.params as { id: string; agentId: string };
         // A grant appends a system event to the agent's stream, so anyone
         // waiting on one should hear about it now rather than at their timeout.
-        if (ctx.store.grantMembership(asAgentId(agentId), asSpaceId(id))) ctx.writes.notify();
+        if (ctx.store.grantMembership(asAgentId(agentId), asSpaceId(id))) ctx.writes.agentVisible();
         return reply.code(204).send();
       });
 
       guarded.delete('/spaces/:id/members/:agentId', async (request, reply) => {
         const { id, agentId } = request.params as { id: string; agentId: string };
-        if (ctx.store.revokeMembership(asAgentId(agentId), asSpaceId(id))) ctx.writes.notify();
+        if (ctx.store.revokeMembership(asAgentId(agentId), asSpaceId(id)))
+          ctx.writes.agentVisible();
         return reply.code(204).send();
       });
 
@@ -200,6 +208,7 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
         const { name } = parse(NameBody, request.body, 'request body');
         const record = ctx.store.createAgent(name);
         const issued = ctx.store.issueKey(record.id);
+        ctx.writes.adminOnly();
         // The only time the key exists. Nothing stores it; only its hash.
         return reply.code(201).send({ agent: bare(record), keyId: issued.id, key: issued.key });
       });
@@ -207,7 +216,9 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
       guarded.patch('/agents/:id', async (request) => {
         const { id } = request.params as { id: string };
         const { name } = parse(NameBody, request.body, 'request body');
-        return withKeys(ctx.store.renameAgent(asAgentId(id), name));
+        const renamed = withKeys(ctx.store.renameAgent(asAgentId(id), name));
+        ctx.writes.adminOnly();
+        return renamed;
       });
 
       guarded.get('/agents/:id/keys', async (request) => {
@@ -223,6 +234,7 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
         const { label } = parse(KeyBody, request.body ?? {}, 'request body');
         const record = agentOr404(id);
         const issued = ctx.store.issueKey(record.id, label);
+        ctx.writes.adminOnly();
         return reply.code(201).send({ keyId: issued.id, key: issued.key, agent: bare(record) });
       });
 
@@ -234,12 +246,15 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
         const key = ctx.store.listKeys(record.id).find((candidate) => candidate.id === keyId);
         if (key === undefined) throw notFound('key');
         ctx.store.revokeKey(keyId);
+        ctx.writes.adminOnly();
         return reply.code(204).send();
       });
 
       guarded.post('/agents/:id/archive', async (request) => {
         const { id } = request.params as { id: string };
-        return withKeys(ctx.store.archiveAgent(asAgentId(id)));
+        const archived = withKeys(ctx.store.archiveAgent(asAgentId(id)));
+        ctx.writes.adminOnly();
+        return archived;
       });
 
       guarded.post('/agents/:id/unarchive', async (request) => {
@@ -247,6 +262,7 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
         // A hashed key cannot be re-shown, so the agent comes back with a new one.
         const record = ctx.store.unarchiveAgent(asAgentId(id));
         const issued = ctx.store.issueKey(record.id);
+        ctx.writes.adminOnly();
         return { agent: bare(record), keyId: issued.id, key: issued.key };
       });
 

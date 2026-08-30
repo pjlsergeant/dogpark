@@ -9,6 +9,7 @@
 import type { ReactNode } from 'react';
 import type { Escalation, EscalationPage, NotificationState } from '../api/index.js';
 import { useApi } from '../app/api-context.js';
+import { useOnChange } from '../app/changes.js';
 import { useAsync } from '../app/useAsync.js';
 import { usePages } from '../app/usePages.js';
 import { href } from '../app/router.js';
@@ -89,6 +90,12 @@ export function EscalationsScreen(): ReactNode {
     [api],
   );
   const spaces = useAsync(() => api.listSpaces(), [api]);
+  // A new escalation arrives at the top, so follow the change signal — but
+  // not once older pages are loaded, where a refresh would throw them away
+  // mid-read. Deep in the backlog, Refresh is the person's own gesture.
+  useOnChange(() => {
+    if (!pages.paged) pages.refresh();
+  });
   // Counted server-side over every row, not over the page on screen.
   const undelivered = pages.first.data?.undelivered ?? 0;
   const nameOf = (id: string): string =>

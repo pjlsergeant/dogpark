@@ -2,7 +2,8 @@
  * One long poll for the whole app.
  *
  * `GET /changes` is held open until something is written — a post, a
- * membership change — and every screen showing something a write can move
+ * membership change, a rename, a roster or key change, an escalation — and
+ * every screen showing something a write can move
  * refreshes itself when it returns. One request rather than one per screen,
  * and none while the tab is in the background, where there is nothing to keep
  * fresh; on coming back the version last seen is sent, so anything written

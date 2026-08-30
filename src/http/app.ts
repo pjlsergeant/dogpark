@@ -12,7 +12,7 @@ import { assertUsablePasswordHash } from './password.js';
 import { createRateLimiter } from './rate-limit.js';
 import { adminRoutes } from './routes/admin.js';
 import { agentRoutes } from './routes/agent.js';
-import { WriteSignal } from './signal.js';
+import { WriteSignals } from './signal.js';
 import { staticRoutes } from './static.js';
 
 export interface AppOptions {
@@ -54,7 +54,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     config,
     limits,
     files: createAttachmentFiles(attachmentRoot(config.DOGPARK_DATA_DIR)),
-    writes: new WriteSignal(),
+    writes: new WriteSignals(),
     agentLimiter: createRateLimiter(limits.requestsPerMinute),
     loginLimiter: createRateLimiter(LOGINS_PER_MINUTE),
     failedAuthLimiter: createRateLimiter(FAILED_AUTHS_PER_MINUTE),
@@ -154,7 +154,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
    * it takes to read one, rather than in `maxWaitSeconds`.
    */
   app.addHook('preClose', async () => {
-    ctx.writes.notify();
+    ctx.writes.agentVisible();
   });
 
   const health = store.database.prepare<[], { ok: number }>('SELECT 1 AS ok');

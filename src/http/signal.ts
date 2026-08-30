@@ -51,3 +51,35 @@ export class WriteSignal {
     });
   }
 }
+
+/**
+ * The two audiences a write can wake, and which writes wake them.
+ *
+ * Agent stream polls must wake only for writes that put something on the
+ * stream: waking one for anything else hands it an empty page and writes a
+ * read-log row for a read the agent never wanted — the reason escalations
+ * were originally kept off the signal entirely. The admin UI shows
+ * everything, so its `/changes` poll wakes on every mutation. The two
+ * methods keep that superset relationship in one place: a call site says
+ * who can see the write, not which signals to poke.
+ */
+export class WriteSignals {
+  /** What agent stream long-polls wait on. */
+  readonly agent = new WriteSignal();
+  /** What the admin UI's `/changes` long-poll waits on. */
+  readonly admin = new WriteSignal();
+
+  /** A write that lands on agent streams — a post, a membership change. */
+  agentVisible(): void {
+    this.agent.notify();
+    this.admin.notify();
+  }
+
+  /**
+   * A write only the human's screens show: a space or agent created or
+   * renamed, a thread retitled, a key issued or revoked, an escalation.
+   */
+  adminOnly(): void {
+    this.admin.notify();
+  }
+}
