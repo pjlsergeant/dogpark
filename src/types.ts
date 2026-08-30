@@ -233,7 +233,8 @@ export interface Identity {
    * a response lost in transit still advances it. Resuming from it is
    * therefore at-most-once. An agent that must not miss a page keeps its own
    * cursor and advances it only after processing (see `DogparkApi`). Absent
-   * until the agent has read anything.
+   * until the agent has read the stream: conversation, space and attachment
+   * reads are recorded but carry no stream position.
    */
   readonly lastReadCursor?: Cursor | undefined;
   /**
