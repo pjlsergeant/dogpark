@@ -6,7 +6,7 @@
  * cursor at the head means the agent is *here*, not that it was handed
  * everything behind here, so a seek has to be visibly a seek (ADR-0005).
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { AgentId, ReadLogEntry } from '../api/index.js';
 import { useApi } from '../app/api-context.js';
@@ -54,8 +54,16 @@ export function ReadLogScreen({ agent }: { agent?: AgentId | undefined }): React
   } | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [moreFailed, setMoreFailed] = useState(false);
+  /**
+   * Bumped whenever the first page is replaced — a filter change or a Refresh.
+   * A page that was already out when that happened belongs to a log this
+   * screen is no longer showing, so it discards itself instead of appending
+   * one agent's rows beneath another's.
+   */
+  const generation = useRef(0);
 
   useEffect(() => {
+    generation.current += 1;
     setTail(null);
     setMoreFailed(false);
   }, [agent]);
@@ -70,6 +78,7 @@ export function ReadLogScreen({ agent }: { agent?: AgentId | undefined }): React
   // newest-first, so a tail fetched from the old cursor either repeats rows or
   // skips the one the boundary moved past.
   const refresh = useCallback(() => {
+    generation.current += 1;
     setTail(null);
     setMoreFailed(false);
     reads.reload();
@@ -77,6 +86,7 @@ export function ReadLogScreen({ agent }: { agent?: AgentId | undefined }): React
 
   const loadMore = useCallback(async () => {
     if (nextCursor === null) return;
+    const mine = generation.current;
     setLoadingMore(true);
     setMoreFailed(false);
     try {
@@ -84,15 +94,16 @@ export function ReadLogScreen({ agent }: { agent?: AgentId | undefined }): React
         ...(agent === undefined ? {} : { agent }),
         after: nextCursor,
       });
+      if (mine !== generation.current) return;
       setTail((current) => ({
         items: [...(current?.items ?? []), ...page.items],
         nextCursor: page.nextCursor,
         hasMore: page.hasMore,
       }));
     } catch {
-      setMoreFailed(true);
+      if (mine === generation.current) setMoreFailed(true);
     } finally {
-      setLoadingMore(false);
+      if (mine === generation.current) setLoadingMore(false);
     }
   }, [api, agent, nextCursor]);
 

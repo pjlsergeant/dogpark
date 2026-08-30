@@ -152,7 +152,7 @@ export interface PostMessageInput {
   readonly target: PostTarget;
   readonly body: string;
   readonly attachments?: readonly AttachmentInput[] | undefined;
-  /** Scoped per agent, so the human cannot supply one. */
+  /** Scoped per writer: each agent, and the human (migration 0003). */
   readonly idempotencyKey?: IdempotencyKey | undefined;
 }
 

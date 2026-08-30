@@ -235,17 +235,25 @@ function Thread({
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
   const [renaming, setRenaming] = useState(false);
-  // A read is out. `pages` does not change until one lands, so without this the
-  // poll below can fire mid-`loadOlder` and overwrite the page it is fetching.
-  const inFlight = useRef(false);
+  /**
+   * Every full reload gets a number. A read that was already out when one
+   * happened lands into a thread that no longer exists as it knew it, so it
+   * discards itself rather than prepending a page relative to a first page
+   * that has been replaced.
+   */
+  const generation = useRef(0);
+  /** A full reload is out, so the poll has nothing useful to add yet. */
+  const reloading = useRef(false);
   const bottom = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
-    inFlight.current = true;
+    const mine = (generation.current += 1);
+    reloading.current = true;
     setBusy(true);
     setError(null);
     try {
       const page = await api.readConversation(conversation, { order: 'newest' });
+      if (mine !== generation.current) return;
       setLoaded({
         messages: [...page.messages].reverse(),
         nextCursor: page.nextCursor,
@@ -253,22 +261,25 @@ function Thread({
         pages: 1,
       });
     } catch (cause) {
-      setError(toApiError(cause));
+      if (mine === generation.current) setError(toApiError(cause));
     } finally {
-      inFlight.current = false;
-      setBusy(false);
+      if (mine === generation.current) {
+        reloading.current = false;
+        setBusy(false);
+      }
     }
   }, [api, conversation]);
 
   const loadOlder = useCallback(async () => {
     if (loaded === null || loaded.nextCursor === null) return;
-    inFlight.current = true;
+    const mine = generation.current;
     setBusy(true);
     try {
       const page = await api.readConversation(conversation, {
         order: 'newest',
         after: loaded.nextCursor,
       });
+      if (mine !== generation.current) return;
       setLoaded((current) =>
         current === null
           ? current
@@ -280,33 +291,53 @@ function Thread({
             },
       );
     } catch (cause) {
-      setError(toApiError(cause));
+      if (mine === generation.current) setError(toApiError(cause));
     } finally {
-      inFlight.current = false;
-      setBusy(false);
+      if (mine === generation.current) setBusy(false);
     }
   }, [api, conversation, loaded]);
+
+  /**
+   * What has arrived since the last look, added to the end.
+   *
+   * Deliberately not a reload. Replacing state with the newest page slides the
+   * window on a thread longer than one page — the oldest message on screen
+   * vanishes — and throws away any older pages already pulled. Appending does
+   * neither, so a long thread live-updates like a short one.
+   *
+   * If the newest page and what is held share nothing, more than a page has
+   * arrived and appending would leave a hole in the middle. That is left for a
+   * Refresh, which is honest about replacing everything.
+   */
+  const pollNewest = useCallback(async () => {
+    const mine = generation.current;
+    try {
+      const page = await api.readConversation(conversation, { order: 'newest' });
+      if (mine !== generation.current) return;
+      const newest = [...page.messages].reverse();
+      setLoaded((current) => {
+        if (current === null) return current;
+        const held = new Set(current.messages.map((m) => m.id));
+        const added = newest.filter((m) => !held.has(m.id));
+        if (added.length === 0 || added.length === newest.length) return current;
+        return { ...current, messages: [...current.messages, ...added] };
+      });
+    } catch {
+      // A poll that fails is a poll that fails; the next one will try again.
+    }
+  }, [api, conversation]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  // Poll while the tab is in front, and only when a wholesale replace is safe:
-  // one page showing, and no older ones behind it. `load()` refetches the
-  // newest page and replaces state, so with `hasMore` the window would slide —
-  // dropping the oldest message on screen — and with pages already prepended it
-  // would throw them away. `inFlight` covers the same replace racing a read
-  // that is already out.
   useEffect(() => {
     const timer = globalThis.setInterval(() => {
-      if (document.visibilityState !== 'visible' || inFlight.current) return;
-      setLoaded((current) => {
-        if (current !== null && current.pages === 1 && !current.hasMore) void load();
-        return current;
-      });
+      if (document.visibilityState !== 'visible' || reloading.current) return;
+      void pollNewest();
     }, POLL_MS);
     return () => globalThis.clearInterval(timer);
-  }, [load]);
+  }, [pollNewest]);
 
   const messages = loaded?.messages ?? [];
   const count = messages.length;

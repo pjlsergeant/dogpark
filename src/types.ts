@@ -54,7 +54,7 @@ export type Timestamp = string & { readonly __brand: 'Timestamp' };
 /**
  * Caller-supplied key making a write safe to retry. A replayed key returns the
  * original result; replaying one with a different request is rejected. Scoped
- * per agent.
+ * per writer, so one agent's key never collides with another's.
  */
 export type IdempotencyKey = string & { readonly __brand: 'IdempotencyKey' };
 
