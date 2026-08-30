@@ -25,7 +25,13 @@ set -euo pipefail
 DOGPARK_URL=${DOGPARK_URL%/}
 API="$DOGPARK_URL/api/agent"
 STATE_DIR=${DOGPARK_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/dogpark}
-CURSOR_FILE="$STATE_DIR/cursor"
+# the cursor is a position in ONE agent's stream on ONE server: scope the file
+# to both, or switching key or URL would silently resume from a foreign
+# position (a stream cursor encodes only a sequence number, and the server
+# applies it to whoever presents it).
+AGENT_ID=$(printf '%s' "$DOGPARK_KEY" | cut -d_ -f2)
+URL_HASH=$(printf '%s' "$DOGPARK_URL" | sha256sum | cut -c1-12)
+CURSOR_FILE="$STATE_DIR/cursor.$AGENT_ID.$URL_HASH"
 BACKFILL_N=${DOGPARK_BACKFILL:-50}
 mkdir -p "$STATE_DIR"
 for bin in curl jq; do command -v "$bin" >/dev/null || { echo "dogpark: needs '$bin' on PATH" >&2; exit 3; }; done
