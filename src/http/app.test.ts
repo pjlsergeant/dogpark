@@ -1813,6 +1813,33 @@ describe('the agent guide', () => {
   });
 });
 
+describe('the bash client', () => {
+  let h: Harness;
+  afterEach(() => teardown(h));
+
+  it('is served as plain text, without authentication, when the file exists', async () => {
+    h = await harness();
+    const client = join(h.dir, 'dogpark');
+    writeFileSync(client, '#!/usr/bin/env bash\nset -euo pipefail\n');
+    const app = await buildApp({ store: h.store, config: h.config, clientPath: client });
+    try {
+      const response = await app.inject({ method: 'GET', url: '/dogpark.sh' });
+      expect(response.statusCode).toBe(200);
+      expect(response.headers['content-type']).toBe('text/plain; charset=utf-8');
+      expect(response.body.startsWith('#!/usr/bin/env bash\n')).toBe(true);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('is not_found in the API shape when no file was found', async () => {
+    h = await harness();
+    const response = await h.app.inject({ method: 'GET', url: '/dogpark.sh' });
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toEqual({ code: 'not_found', message: 'not found' });
+  });
+});
+
 describe("the human's long poll and space counts", () => {
   let h: Harness;
   beforeEach(async () => {

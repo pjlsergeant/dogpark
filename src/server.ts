@@ -29,6 +29,15 @@ function findGuide(): string | undefined {
   return candidates.find((path) => existsSync(path));
 }
 
+/** `dist/dogpark.sh` beside the compiled server, or the source under `client/`. */
+function findClient(): string | undefined {
+  const candidates = [
+    fileURLToPath(new URL('./dogpark.sh', import.meta.url)),
+    resolve(process.cwd(), 'client/dogpark'),
+  ];
+  return candidates.find((path) => existsSync(path));
+}
+
 async function main(): Promise<void> {
   const [command, ...rest] = process.argv.slice(2);
   if (command === 'hash-password') {
@@ -74,12 +83,14 @@ async function main(): Promise<void> {
   const revokedSessions = store.syncPasswordFingerprint(config.DOGPARK_PASSWORD_HASH);
   const uiRoot = findUiRoot();
   const guidePath = findGuide();
+  const clientPath = findClient();
   const writes = new WriteSignals();
   const app = await buildApp({
     store,
     config,
     ...(uiRoot === undefined ? {} : { uiRoot }),
     ...(guidePath === undefined ? {} : { guidePath }),
+    ...(clientPath === undefined ? {} : { clientPath }),
     logger: true,
     writes,
   });

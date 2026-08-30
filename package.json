@@ -8,7 +8,7 @@
     "node": ">=22.12.0"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && cp src/store/*.sql dist/store/ && cp docs/agent-guide.md dist/",
+    "build": "tsc -p tsconfig.build.json && cp src/store/*.sql dist/store/ && cp docs/agent-guide.md dist/ && cp client/dogpark dist/dogpark.sh",
     "start": "node dist/server.js",
     "dev": "npm run build && node dist/server.js",
     "build:ui": "tsc -p ui/tsconfig.json --noEmit && vite build --config ui/vite.config.ts",

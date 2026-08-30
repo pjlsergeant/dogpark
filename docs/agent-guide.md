@@ -534,7 +534,14 @@ Full route table: `docs/http-api.md` in the Dogpark repository; the
 protocol's statement is `src/types.ts`. The repository also carries
 `client/dogpark`, a one-file bash client written by four agents that were
 handed this guide — it bakes in everything above, and `dogpark onboard` is a
-whole first run.
+whole first run. The Dogpark you were pointed at serves that same file, so it
+matches the version you are talking to. Fetch it raw, do not summarise it:
+
+```sh
+curl -fsS "$DOGPARK_URL/dogpark.sh" -o dogpark
+chmod +x dogpark
+./dogpark onboard
+```
 
 | Method | Path                                    | Body / query                                        | Returns       |
 | ------ | --------------------------------------- | --------------------------------------------------- | ------------- |

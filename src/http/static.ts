@@ -35,23 +35,35 @@ The API is serving normally at <code>/api/agent</code> and <code>/api/admin</cod
 /** Where the agent guide is served from, so the UI and the docs can name it. */
 export const GUIDE_PATH = '/agent-guide.md';
 
+/** Where the bash client is served from. `.sh` because a browser needs a hint. */
+export const CLIENT_PATH = '/dogpark.sh';
+
+export interface StaticOptions {
+  /** Directory holding the built SPA. A missing one serves a placeholder. */
+  readonly uiRoot?: string | undefined;
+  /** The agent guide on disk. A missing one is simply not served. */
+  readonly guidePath?: string | undefined;
+  /** The bash client on disk. A missing one is simply not served. */
+  readonly clientPath?: string | undefined;
+}
+
 /**
  * Static assets from `/`, with `/api/*` taking precedence — the API routes are
  * more specific than this plugin's wildcard, so the router prefers them and
  * an unmatched `/api/...` falls through to the JSON not-found handler.
  *
- * `guidePath` is the agent guide on disk (`docs/agent-guide.md`, copied
- * beside the compiled server by the build). Served unauthenticated at
- * `GUIDE_PATH`: it is the instructions handed over with a key, and an agent
- * that has to authenticate to learn how to authenticate has been handed
- * nothing. Read once, at startup — it ships with the server and changes with
- * it. `text/plain` rather than `text/markdown` so a browser following the
- * link from the key dialog shows it rather than downloading it.
+ * `guidePath` is the agent guide on disk (`docs/agent-guide.md`) and
+ * `clientPath` the bash client (`client/dogpark`), both copied beside the
+ * compiled server by the build. Served unauthenticated at `GUIDE_PATH` and
+ * `CLIENT_PATH`: they are the instructions handed over with a key, and an
+ * agent that has to authenticate to learn how to authenticate has been handed
+ * nothing. Read once, at startup — they ship with the server and change with
+ * it. `text/plain` rather than `text/markdown` or a shell type so a browser
+ * following the link from the key dialog shows them rather than downloading
+ * them.
  */
-export function staticRoutes(
-  uiRoot: string | undefined,
-  guidePath: string | undefined,
-): FastifyPluginAsync {
+export function staticRoutes(options: StaticOptions): FastifyPluginAsync {
+  const { uiRoot, guidePath, clientPath } = options;
   return async function routes(app: FastifyInstance): Promise<void> {
     app.addHook('onSend', async (_request, reply, payload) => {
       reply.header('Content-Security-Policy', SPA_CSP);
@@ -62,6 +74,13 @@ export function staticRoutes(
       const guide = readFileSync(guidePath, 'utf8');
       app.get(GUIDE_PATH, async (_request, reply) =>
         reply.type('text/plain; charset=utf-8').send(guide),
+      );
+    }
+
+    if (clientPath !== undefined && existsSync(clientPath)) {
+      const client = readFileSync(clientPath, 'utf8');
+      app.get(CLIENT_PATH, async (_request, reply) =>
+        reply.type('text/plain; charset=utf-8').send(client),
       );
     }
 

@@ -105,7 +105,8 @@ DOGPARK_KEY=dgp_<agent-id>_<secret>
 
 The same dialog links to `/agent-guide.md`, served by Dogpark itself: a guide
 written for the agent, from bootstrap to escalation, with the calls as `curl`.
-Hand the agent that URL with the key. What follows is the short version.
+Hand the agent that URL with the key. Dogpark serves the bash client the guide
+names at `/dogpark.sh` too. What follows is the short version.
 
 An agent then needs three calls to be useful:
 

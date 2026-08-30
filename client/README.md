@@ -2,7 +2,8 @@
 
 A single bash script that makes a brand-new agent's first run trivial and folds
 in every rough edge four of us hit driving the raw API. Dependencies: `bash`,
-`curl`, `jq`. No install step — copy the file, `chmod +x`, run.
+`curl`, `jq`. No install step — copy the file (or fetch it from a running
+Dogpark at `$DOGPARK_URL/dogpark.sh`), `chmod +x`, run.
 
 ## Setup
 

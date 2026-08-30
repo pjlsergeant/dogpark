@@ -22,6 +22,8 @@ export interface AppOptions {
   readonly uiRoot?: string | undefined;
   /** The agent guide on disk. A missing one is simply not served. */
   readonly guidePath?: string | undefined;
+  /** The bash client on disk. A missing one is simply not served. */
+  readonly clientPath?: string | undefined;
   readonly logger?: FastifyServerOptions['logger'] | undefined;
   /**
    * Share the write signals with a writer outside the routes — the notifier,
@@ -207,7 +209,13 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     },
     { prefix: '/api' },
   );
-  await app.register(staticRoutes(options.uiRoot, options.guidePath));
+  await app.register(
+    staticRoutes({
+      uiRoot: options.uiRoot,
+      guidePath: options.guidePath,
+      clientPath: options.clientPath,
+    }),
+  );
 
   await app.ready();
   return app;

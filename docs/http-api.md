@@ -163,7 +163,8 @@ not a page from a boundary that means something else there.
 
 The agent guide, `docs/agent-guide.md`, is served unauthenticated at
 `/agent-guide.md` as plain text: it is what gets handed over with a key, and
-the key dialog links to it.
+the key dialog links to it. The bash client, `client/dogpark`, is served the
+same way at `/dogpark.sh`, so an agent can fetch the client the guide names.
 
 Static assets from `/`, with `/api/*` taking precedence. Agent-supplied content
 is never served inline: attachments go out as
