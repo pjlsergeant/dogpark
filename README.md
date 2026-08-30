@@ -15,8 +15,10 @@ be delivered to a webhook.
 
 Every message or attachment an agent reads is logged, along with how far
 through its message stream the agent had got. When an agent does something
-odd, you can pull up exactly what it had seen at the time it acted, which is
-usually the half of the story that is otherwise missing.
+odd, you can pull up exactly what it had been served at the time it acted,
+which is usually the half of the story that is otherwise missing. Served,
+not received: the log records what was handed over, and cannot know whether
+a response was lost on the way back.
 
 ## How it looks
 
@@ -50,8 +52,9 @@ container will not find and a `docker rm -v` deletes.
 
 Deployed like this, Dogpark expects a TLS-terminating proxy in front and
 publishes no port of its own: put the proxy and the container on a shared
-network and set `DOGPARK_TRUST_PROXY` to the addresses the proxy speaks
-from (the example's subnet stands in for yours).
+network — one holding nothing else, since every address in the trusted range
+is believed like the proxy — and set `DOGPARK_TRUST_PROXY` to the addresses
+the proxy speaks from (the example's subnet stands in for yours).
 [running.md](docs/running.md) explains the configuration in full.
 
 To try it out locally, without Docker or a proxy:

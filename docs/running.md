@@ -32,13 +32,19 @@ not a deployment.
 ## Behind a proxy
 
 ```sh
-DOGPARK_TRUST_PROXY=172.18.0.0/16   # the addresses your proxy speaks from
+DOGPARK_TRUST_PROXY=172.18.0.7   # the address your proxy speaks from
 ```
 
 Not `yes`. The value names the proxies whose `X-Forwarded-*` headers are
 believed — trusting every peer would let anyone who can reach the port claim
 any client address, bypassing login throttling, and claim `https` while
 speaking plaintext.
+
+A range (`172.18.0.0/16`) is accepted, but it names more than the proxy:
+every peer inside it is believed like the proxy (ADR-0016). Prefer the
+proxy's own address when you can pin it, and when you cannot — a Docker
+network hands out addresses — make sure the range holds nothing but the
+proxy and Dogpark.
 
 Dogpark then binds `0.0.0.0` and issues `Secure` cookies, so **do not publish
 the port anywhere but to the proxy**. It logs a warning saying so at startup.
@@ -68,7 +74,8 @@ further ceremony.
 The image publishes no port, because in proxy mode Dogpark binds every
 interface and the warning above applies: let the proxy reach it over their
 shared network and nothing else. `DOGPARK_TRUST_PROXY` still names addresses,
-which here means that network's subnet.
+which here means that network's subnet — so give the proxy and Dogpark a
+network of their own: every container on it is inside the trusted range.
 
 `HEALTHCHECK` polls `/health`, which is registered outside `/api` and so is
 not subject to the `X-Forwarded-Proto` proof.
@@ -138,6 +145,21 @@ serves from `/`.
 
 ## The data directory
 
-`dogpark.sqlite` and `attachments/`. Backing it up is copying the directory; there
-is nothing else to preserve. Attachments orphaned by a crash between the file
-write and the message commit are swept at startup.
+`dogpark.sqlite` and `attachments/`; there is nothing else to preserve. Do
+not back it up by copying the directory while the server is running: the
+database is in WAL mode, so a naive copy can catch the main file and the
+write-ahead log at different moments and produce a database that will not
+open. Either stop the server and copy the directory, or take a live backup:
+
+```sh
+sqlite3 dogpark.sqlite "VACUUM INTO 'backup/dogpark.sqlite'"
+cp -r attachments backup/attachments
+```
+
+Database first, attachments second. In that order, a file written between the
+two steps is at worst a surplus attachment with no message row, which the
+startup sweep deletes after a restore (it leaves files younger than an hour
+alone, so the deletion may wait for a later restart); the reverse order can
+restore a committed message whose bytes are missing. The same sweep covers
+attachments orphaned by a crash between the file write and the message
+commit.
