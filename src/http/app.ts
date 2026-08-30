@@ -170,7 +170,11 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
         api.addHook('onRequest', async (request) => {
           if (request.protocol === 'https') return;
           const raw = request.headers['x-forwarded-proto'];
-          const claimed = String(raw ?? '').split(',')[0]?.trim().toLowerCase() ?? '';
+          const claimed =
+            String(raw ?? '')
+              .split(',')[0]
+              ?.trim()
+              .toLowerCase() ?? '';
           const seen =
             claimed === ''
               ? 'X-Forwarded-Proto: absent'
