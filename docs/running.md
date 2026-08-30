@@ -6,8 +6,10 @@
 npm install
 npm run build && npm run build:ui
 
-# Mint a password hash. It is printed once; put it in the environment.
-node dist/server.js hash-password 'your-password'
+# Mint a password hash. It prompts, with echo off, and prints the hash once;
+# put it in the environment. Never on the command line, where it would land
+# in your shell history — to script it, pipe: printf '%s' "$PW" | node dist/server.js hash-password
+node dist/server.js hash-password
 
 export DOGPARK_PASSWORD_HASH='scrypt$...'   # from above
 export DOGPARK_DISPLAY_NAME='pete'          # how your messages are attributed; a name like an agent's

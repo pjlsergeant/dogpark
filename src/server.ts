@@ -5,7 +5,7 @@ import type { Config } from './config.js';
 import { loadConfig } from './config.js';
 import { attachmentRoot, sweepUnreferenced } from './http/attachments.js';
 import { buildApp } from './http/app.js';
-import { hashPassword } from './http/password.js';
+import { hashPassword, readSecret } from './http/password.js';
 import type { EscalationQueue, PendingEscalation } from './notify/webhook.js';
 import { Notifier } from './notify/webhook.js';
 import type { Store } from './store/index.js';
@@ -96,9 +96,26 @@ function findUiRoot(): string | undefined {
 async function main(): Promise<void> {
   const [command, ...rest] = process.argv.slice(2);
   if (command === 'hash-password') {
-    const password = rest[0];
-    if (password === undefined) {
-      process.stderr.write('usage: node dist/server.js hash-password <password>\n');
+    // Never from argv: a command line is visible in process listings and
+    // lands in shell history, which is the wrong place for a secret.
+    if (rest.length > 0) {
+      process.stderr.write(
+        'usage: node dist/server.js hash-password\n' +
+          'The password is read from stdin, not the command line: run it alone to be ' +
+          'prompted, or pipe it in with printf \'%s\' "$PASSWORD" | ...\n',
+      );
+      process.exitCode = 2;
+      return;
+    }
+    let password: string;
+    try {
+      password = await readSecret(process.stdin, process.stderr);
+    } catch {
+      process.exitCode = 130;
+      return;
+    }
+    if (password === '') {
+      process.stderr.write('hash-password: no password was given\n');
       process.exitCode = 2;
       return;
     }

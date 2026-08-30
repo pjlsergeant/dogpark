@@ -1,6 +1,52 @@
 import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 
 /**
+ * What `readSecret` needs of stdin: the bytes, and — when it is a terminal —
+ * the switch that stops the terminal echoing them.
+ */
+export interface SecretInput extends AsyncIterable<Buffer | string> {
+  readonly isTTY?: boolean | undefined;
+  setRawMode?(mode: boolean): unknown;
+}
+
+export interface SecretOutput {
+  write(text: string): unknown;
+}
+
+/**
+ * A password read from stdin rather than argv, where it would be visible in
+ * process listings and land in shell history. Piped: everything up to a single
+ * trailing newline. A terminal: prompted for with echo off, ended by Enter,
+ * abandoned by Ctrl-C or Ctrl-D.
+ */
+export async function readSecret(input: SecretInput, output: SecretOutput): Promise<string> {
+  if (input.isTTY !== true) {
+    let text = '';
+    for await (const chunk of input) text += typeof chunk === 'string' ? chunk : chunk.toString();
+    return text.replace(/\r?\n$/, '');
+  }
+
+  output.write('Password: ');
+  input.setRawMode?.(true);
+  let text = '';
+  try {
+    for await (const chunk of input) {
+      const keys = typeof chunk === 'string' ? chunk : chunk.toString();
+      for (const key of keys) {
+        if (key === '\r' || key === '\n') return text;
+        if (key === '\u0003' || key === '\u0004') throw new Error('interrupted');
+        if (key === '\u007f' || key === '\b') text = text.slice(0, -1);
+        else text += key;
+      }
+    }
+    return text;
+  } finally {
+    input.setRawMode?.(false);
+    output.write('\n');
+  }
+}
+
+/**
  * The human's password, verified against `DOGPARK_PASSWORD_HASH`.
  *
  * The design says "a password hash from the environment" and stops there, so
@@ -10,7 +56,8 @@ import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
  *
  *   scrypt$<N>$<r>$<p>$<salt base64url>$<derived key base64url>
  *
- * Mint one with `node dist/server.js hash-password <password>`.
+ * Mint one with `node dist/server.js hash-password`, which reads the password
+ * from stdin.
  */
 const SCHEME = 'scrypt';
 const N = 16_384;
@@ -61,7 +108,7 @@ export function assertUsablePasswordHash(stored: string): void {
   if (parse(stored) === undefined) {
     throw new Error(
       'Dogpark cannot start: DOGPARK_PASSWORD_HASH is not a scrypt hash of the form ' +
-        'scrypt$N$r$p$salt$key. Mint one with `node dist/server.js hash-password <password>`.',
+        'scrypt$N$r$p$salt$key. Mint one with `node dist/server.js hash-password`.',
     );
   }
 }
