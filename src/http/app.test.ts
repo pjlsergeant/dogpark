@@ -940,6 +940,26 @@ describe('the HTTP surface', () => {
       expect(response.statusCode).toBe(400);
       expect(response.json()).toMatchObject({ code: 'invalid_request' });
     });
+
+    it('refuses a falsy tip instead of silently reading from the beginning', async () => {
+      // `tip=0` used to be dropped as falsy: alone it read the whole history,
+      // and beside `after` it slipped past the one-start-only check. Both
+      // answered a question nobody asked.
+      const alone = await asAgent(alpha.key, { method: 'GET', url: '/api/agent/stream?tip=0' });
+      expect(alone.statusCode).toBe(400);
+      expect((alone.json() as { message: string }).message).toContain('tip is a flag');
+
+      const cursor = (
+        (await asAgent(alpha.key, { method: 'GET', url: '/api/agent/stream?tip=1' })).json() as {
+          nextCursor: string;
+        }
+      ).nextCursor;
+      const beside = await asAgent(alpha.key, {
+        method: 'GET',
+        url: `/api/agent/stream?after=${encodeURIComponent(cursor)}&tip=false`,
+      });
+      expect(beside.statusCode).toBe(400);
+    });
   });
 
   // -------------------------------------------------------------------------

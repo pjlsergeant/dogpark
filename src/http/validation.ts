@@ -131,6 +131,13 @@ export function isTruthyFlag(value: string | undefined): boolean {
  * two of them is a request that means two things. Rejected rather than ranked.
  */
 export function readFromQuery(query: z.infer<typeof StreamQuery>): ReadFrom | undefined {
+  // A present-but-falsy tip is refused rather than dropped: silently reading
+  // from the beginning because someone wrote `tip=0`, or letting `tip=0`
+  // slip past the one-start-only check, is answering a question nobody asked
+  // (found by an agent driving the live API).
+  if (query.tip !== undefined && !isTruthyFlag(query.tip)) {
+    throw invalid('tip is a flag: give tip=1, or omit it');
+  }
   const tip = isTruthyFlag(query.tip);
   const given = [query.after !== undefined, query.since !== undefined, tip].filter(Boolean).length;
   if (given > 1) throw invalid('give at most one of after, since or tip');
