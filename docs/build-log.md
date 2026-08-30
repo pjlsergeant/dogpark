@@ -7,7 +7,8 @@ here that turns out to be load-bearing should graduate to an ADR.
 
 `src/types.ts` is the agent protocol, unchanged by implementation. Around it:
 
-* `src/store/` — SQLite: schema, migrations, and the queries. Owns all SQL.
+* `src/store/` — SQLite: schema, migrations, and the domain queries. The one
+  query outside it is `/health`'s `SELECT 1`, through `Store.database`.
 * `src/http/` — Fastify: agent routes, admin routes, auth, static assets.
 * `src/notify/` — the webhook queue.
 * `ui/` — the Vite/React SPA, built into `dist/ui` and served by Fastify.

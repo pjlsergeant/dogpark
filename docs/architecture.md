@@ -131,9 +131,10 @@ helps.
 ## The HTTP surface
 
 Both APIs share one listener and are told apart by how they authenticate:
-agents by bearer token, the human by a session cookie — `HttpOnly`, `Secure`,
-`SameSite=Lax`, with a fixed lifetime and a logout that invalidates it
-server-side, since sessions are rows.
+agents by bearer token, the human by a session cookie — `HttpOnly`,
+`SameSite=Lax`, `Secure` when a proxy is declared (ADR-0016), with a fixed
+lifetime and a logout that invalidates it server-side, since sessions are
+rows.
 
 Because the SPA is cookie-authenticated and shares an origin with the agent
 API, **admin routes carry CSRF protection**. Bearer-authenticated routes do

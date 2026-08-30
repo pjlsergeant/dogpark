@@ -24,5 +24,6 @@ The agent protocol is `src/types.ts`; the HTTP form is
 | [architecture.md](docs/architecture.md)       | What the design is                        |
 | [adr/](docs/adr/)                             | Why — decisions and rejected alternatives |
 | [scenarios.md](docs/scenarios.md)             | What it is for. Keeps breaking the design |
+| [build-log.md](docs/build-log.md)             | Decisions the design did not settle       |
 | [CONTEXT.md](CONTEXT.md)                      | Two words used precisely                  |
 | [original-vision.md](docs/original-vision.md) | Archive. Predates ADR-0007                |

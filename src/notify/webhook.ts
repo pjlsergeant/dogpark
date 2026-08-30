@@ -48,6 +48,7 @@ export interface NotifierOptions {
 }
 
 const MINUTE = 60_000;
+const DRAIN_EVERY_MS = 10_000;
 
 /** Exponential with a ceiling: 1m, 2m, 4m … capped at an hour. */
 export function backoffMs(attempts: number): number {
@@ -126,14 +127,14 @@ export class Notifier {
     return sent;
   }
 
-  start(onError: (e: unknown) => void, intervalMs = 10_000): void {
+  start(onError: (e: unknown) => void): void {
     // Failures inside the queue — not the webhook, which drain() handles —
     // would otherwise escape as an unhandled rejection from a timer, which
     // can take the process down and otherwise makes notification stop
     // silently. Silent is the worst outcome for the thing that pages a human.
     this.#timer ??= setInterval(() => {
       this.drain().catch(onError);
-    }, intervalMs).unref();
+    }, DRAIN_EVERY_MS).unref();
   }
 
   stop(): void {
