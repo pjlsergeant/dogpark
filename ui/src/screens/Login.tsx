@@ -30,8 +30,7 @@ export function Login({
       const credentials = await api.login(password);
       setPassword('');
       onSignedIn({
-        displayName: credentials.displayName ?? null,
-        expiresAt: credentials.expiresAt ?? null,
+        displayName: credentials.displayName,
       });
     } catch (cause) {
       const failure = toApiError(cause);

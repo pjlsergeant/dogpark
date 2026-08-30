@@ -7,7 +7,7 @@
  * saying "something is wrong" and nobody hearing it.
  */
 import type { ReactNode } from 'react';
-import type { Escalation, NotificationState, NotificationStatus } from '../api/index.js';
+import type { Escalation, NotificationState } from '../api/index.js';
 import { useApi } from '../app/api-context.js';
 import { useAsync } from '../app/useAsync.js';
 import { href } from '../app/router.js';
@@ -27,16 +27,9 @@ const EXPLANATION: Record<NotificationState, string> = {
   failed: 'Delivery gave up after retrying. Nobody was told out of band.',
 };
 
-/** `notification` may be the object the store holds, or just its state. */
-function statusOf(escalation: Escalation): NotificationStatus {
-  return typeof escalation.notification === 'string'
-    ? { state: escalation.notification }
-    : escalation.notification;
-}
-
 function Row({ escalation, spaceName }: { escalation: Escalation; spaceName: string }): ReactNode {
-  const status = statusOf(escalation);
-  const attempts = status.attempts ?? 0;
+  const status = escalation.notification;
+  const attempts = status.attempts;
   return (
     <li className={`escalation escalation-${status.state}`}>
       <div className="escalation-head">
@@ -93,7 +86,7 @@ export function EscalationsScreen(): ReactNode {
   const escalations = useAsync(() => api.listEscalations(), [api]);
   const spaces = useAsync(() => api.listSpaces(), [api]);
   const items = escalations.state.data?.items ?? [];
-  const unhandled = items.filter((e) => statusOf(e).state !== 'sent').length;
+  const unhandled = items.filter((e) => e.notification.state !== 'sent').length;
   const nameOf = (id: string): string =>
     (spaces.state.data ?? []).find((s) => s.id === id)?.name ?? 'a space';
 

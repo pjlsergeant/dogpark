@@ -36,6 +36,7 @@ required because the SPA shares an origin with the agent API.
 | Method | Path | Notes |
 | --- | --- | --- |
 | POST | `/session` | password in, cookie + CSRF token out |
+| GET | `/session` | the CSRF token again after a reload, which the cookie survives but the page does not |
 | DELETE | `/session` | invalidates server-side |
 | GET | `/spaces` | |
 | POST | `/spaces` | `{ name }` |
@@ -43,7 +44,8 @@ required because the SPA shares an origin with the agent API.
 | GET | `/spaces/:id/members` | current members, and past intervals |
 | PUT | `/spaces/:id/members/:agentId` | grant |
 | DELETE | `/spaces/:id/members/:agentId` | revoke |
-| GET | `/agents` | with last-seen, and failed attempts claiming each id |
+| GET | `/agents` | with last-seen, failed attempts claiming each id, and every key |
+| GET | `/agents/:id/keys` | the `keyId`s that `DELETE` needs |
 | POST | `/agents` | `{ name }`; returns the key **once** |
 | PATCH | `/agents/:id` | `{ name }` |
 | POST | `/agents/:id/keys` | issue another; returns it once |
@@ -51,23 +53,12 @@ required because the SPA shares an origin with the agent API.
 | POST | `/agents/:id/archive` | revokes every key |
 | POST | `/agents/:id/unarchive` | issues a fresh key |
 | GET | `/spaces/:id/conversations` | the human's thread list |
-| GET | `/conversations/:id/messages` | |
+| GET | `/conversations/:id/messages` | `order=newest` pages back from the end |
+| GET | `/attachments/:id` | cookie-authenticated, unlike the agent route |
 | POST | `/messages` | post as the human |
-| GET | `/reads` | the read log, filterable by agent |
+| GET | `/reads` | the read log, filterable by agent; limit and cursor, because it is the one table that grows without bound |
 | GET | `/escalations` | with notification state |
 | GET | `/search` | `q`; FTS5 over stored bodies |
-
-## Gaps the UI found, now part of the contract
-
-Building the UI against this document surfaced five things it could not do.
-
-| Route | Why it must exist |
-| --- | --- |
-| `GET /api/admin/session` | The CSRF token lives in memory by design, so a page reload loses it while the cookie survives. Without this, every refresh is a re-login. Returns `{ csrfToken, displayName, expiresAt }`. |
-| `GET /api/admin/attachments/:id` | The agent route is bearer-only and a browser has a cookie, so attachments were unreachable for the human — in a product where file sharing is a named requirement. |
-| `GET /api/admin/agents/:id/keys` | `DELETE .../keys/:keyId` needs an id nothing returned. Without it, add-deploy-revoke cannot be completed after a reload, and archiving is the only remaining lever. |
-| `order=newest` on message reads | Paging was forward-only, so reaching today in a long thread meant walking from its first day. |
-| `limit` and a cursor on `/reads` | The read log is the one table guaranteed to grow without bound, and it is the forensic view. |
 
 `POST /agents` returns `{ agent, keyId, key }` and `POST /agents/:id/unarchive`
 returns `{ keyId, key }` — a key that cannot be named cannot be revoked.
@@ -78,7 +69,7 @@ Written down because the smoke test and the implementation must agree, and
 "returns the key once" is not a shape.
 
 ```
-POST /session      -> { csrfToken }
+POST /session      -> { csrfToken, displayName, expiresAt }
 POST /spaces       -> { id, name }
 GET  /spaces       -> [{ id, name }]
 GET  /spaces/:id/members
@@ -87,8 +78,9 @@ GET  /spaces/:id/members
 POST /agents       -> { agent: { id, displayName }, keyId, key }  // key once
 POST /agents/:id/keys
                    -> { keyId, key }                             // key once
-GET  /agents       -> [{ id, displayName, archived, lastSeenAt,
-                         failedAttemptsClaimingId, hasEverAuthenticated }]
+GET  /agents       -> [{ id, displayName, archived, createdAt, lastSeenAt,
+                         failedAttemptsClaimingId, hasEverAuthenticated,
+                         keys: [{ keyId, label, createdAt, revokedAt }] }]
 GET  /reads?agent&since&until&limit&after
                    -> { reads: [{ id, agent, kind, at, parameters, cursor,
                                   itemCount }], nextCursor, hasMore }
@@ -96,9 +88,10 @@ GET  /session      -> { csrfToken, displayName, expiresAt }
 GET  /agents/:id/keys
                    -> [{ keyId, label, createdAt, revokedAt }]
 GET  /escalations  -> [{ id, agent, conversation, reason, raisedAt,
-                         notification }]
+                         notification: { state, attempts, lastAttemptAt,
+                                         nextAttemptAt, lastError } }]
 GET  /search?q=&space=&limit=
-                   -> [{ message, conversation, space }]
+                   -> [{ message, conversation, space, snippet }]
 GET  /spaces/:id/conversations
                    -> [{ id, space, title, messageCount,
                          lastActivityAt, lastSender }]

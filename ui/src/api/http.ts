@@ -15,7 +15,7 @@ import type {
   HumanPostResult,
   IssuedKey,
   Message,
-  MessagesPage,
+  MessagePage,
   Page,
   ReadLogEntry,
   ReadLogFilter,
@@ -64,25 +64,17 @@ function toApiError(status: number, body: unknown, fallback: string): ApiError {
 }
 
 /**
- * Servers answering a collection may reasonably send `{ items, nextCursor,
- * hasMore }`, a bare array, or the protocol's own `{ messages, ... }`. The
- * contract does not say which, so the client accepts all three rather than
- * making every screen defensive.
+ * A collection is either a bare array — one unbounded page — or the read log's
+ * `{ <key>, nextCursor, hasMore }` envelope (docs/http-api.md).
  */
 function toPage<T>(raw: unknown, key: string): Page<T> {
   if (Array.isArray(raw)) return { items: raw as T[], nextCursor: null, hasMore: false };
-  if (raw !== null && typeof raw === 'object') {
-    const record = raw as Record<string, unknown>;
-    const items = record['items'] ?? record[key];
-    if (Array.isArray(items)) {
-      return {
-        items: items as T[],
-        nextCursor: typeof record['nextCursor'] === 'string' ? record['nextCursor'] : null,
-        hasMore: record['hasMore'] === true,
-      };
-    }
-  }
-  return { items: [], nextCursor: null, hasMore: false };
+  const record = raw as Record<string, unknown>;
+  return {
+    items: record[key] as T[],
+    nextCursor: typeof record['nextCursor'] === 'string' ? record['nextCursor'] : null,
+    hasMore: record['hasMore'] === true,
+  };
 }
 
 export function createHttpApi(): DogparkAdminApi {
@@ -163,13 +155,12 @@ export function createHttpApi(): DogparkAdminApi {
     },
 
     /**
-     * Not in `docs/http-api.md`. A reload keeps the cookie but loses the
-     * token held here, so without this route the human must log in again
-     * every refresh. Absence is treated as "no session", never as an error.
+     * A reload keeps the cookie but loses the token held here. A 401 means the
+     * session is gone, which is "not signed in" rather than an error.
      */
     async resume() {
       try {
-        const raw = (await request('GET', '/session', { softFail: [401, 403, 404] })) as Record<
+        const raw = (await request('GET', '/session', { softFail: [401] })) as Record<
           string,
           unknown
         > | null;
@@ -196,21 +187,10 @@ export function createHttpApi(): DogparkAdminApi {
       await request('PATCH', `/spaces/${encodeURIComponent(id)}`, { json: { name } });
     },
     async listMembers(id) {
-      const raw = (await request('GET', `/spaces/${encodeURIComponent(id)}/members`)) as Record<
-        string,
-        unknown
-      > | null;
-      // `{ current, history }` is the pinned shape. A membership entry that
-      // arrives as a bare agent rather than `{ agent, grantedAt }` is still
-      // rendered, without its dates.
-      const entries = (value: unknown): Record<string, unknown>[] =>
-        Array.isArray(value) ? (value as Record<string, unknown>[]) : [];
-      const asMembership = (entry: Record<string, unknown>): Record<string, unknown> =>
-        'agent' in entry ? entry : { agent: entry, grantedAt: null, revokedAt: null };
-      return {
-        current: entries(raw?.['current']).map(asMembership),
-        history: entries(raw?.['history'] ?? raw?.['intervals']).map(asMembership),
-      } as unknown as SpaceMembers;
+      return (await request(
+        'GET',
+        `/spaces/${encodeURIComponent(id)}/members`,
+      )) as unknown as SpaceMembers;
     },
     async addMember(space, agent) {
       await request(
@@ -274,7 +254,7 @@ export function createHttpApi(): DogparkAdminApi {
       const page = toPage<Message>(raw, 'messages');
       return {
         messages: page.items,
-        nextCursor: page.nextCursor as MessagesPage['nextCursor'],
+        nextCursor: page.nextCursor as MessagePage['nextCursor'],
         hasMore: page.hasMore,
       };
     },

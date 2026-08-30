@@ -8,8 +8,7 @@ export interface Session {
    * otherwise: `POST /session` returns only a CSRF token, so the shell says
    * "signed in" rather than inventing a name.
    */
-  readonly displayName: string | null;
-  readonly expiresAt: string | null;
+  readonly displayName: string;
 }
 
 interface AppContextValue {

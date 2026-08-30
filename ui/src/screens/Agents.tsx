@@ -39,25 +39,6 @@ interface Revealed {
   readonly agentName: string;
 }
 
-/** Keys the human watched being issued in this tab. See `keysOf`. */
-type SessionKeys = Readonly<Record<string, readonly ApiKeySummary[]>>;
-
-/**
- * `GET /agents` does not carry an agent's keys, and there is no route that
- * lists them, so the only key ids the UI can ever know are the ones it saw
- * issued. If a server sends `keys` anyway, that wins.
- */
-function keysOf(
-  agent: AdminAgent,
-  session: SessionKeys,
-): {
-  readonly keys: readonly ApiKeySummary[];
-  readonly partial: boolean;
-} {
-  if (agent.keys !== undefined) return { keys: agent.keys, partial: false };
-  return { keys: session[agent.id] ?? [], partial: true };
-}
-
 function activeCount(keys: readonly ApiKeySummary[]): number {
   return keys.filter((key) => key.revokedAt === null || key.revokedAt === undefined).length;
 }
@@ -132,24 +113,12 @@ export function AgentsScreen({ selected }: { selected?: AgentId | undefined }): 
   const [renaming, setRenaming] = useState<AdminAgent | null>(null);
   const [issuing, setIssuing] = useState<AdminAgent | null>(null);
   const [revealed, setRevealed] = useState<Revealed | null>(null);
-  const [sessionKeys, setSessionKeys] = useState<SessionKeys>({});
   const [showArchived, setShowArchived] = useState(false);
 
   const all = agents.state.data ?? [];
   const visible = showArchived ? all : all.filter((agent) => !agent.archived);
   const archivedCount = all.filter((agent) => agent.archived).length;
   const detail = selected === undefined ? null : (all.find((a) => a.id === selected) ?? null);
-
-  const remember = useCallback((agent: AgentId, issued: IssuedKey, label: string | null) => {
-    if (issued.keyId === undefined) return;
-    setSessionKeys((current) => ({
-      ...current,
-      [agent]: [
-        ...(current[agent] ?? []),
-        { id: issued.keyId as string, label, createdAt: undefined, revokedAt: null },
-      ],
-    }));
-  }, []);
 
   const act = useCallback(
     async (what: string, run: () => Promise<unknown>) => {
@@ -203,7 +172,7 @@ export function AgentsScreen({ selected }: { selected?: AgentId | undefined }): 
         {visible.map((agent) => {
           const unproven = !agent.hasEverAuthenticated && agent.failedAttemptsClaimingId > 0;
           const isOpen = detail?.id === agent.id;
-          const { keys, partial } = keysOf(agent, sessionKeys);
+          const keys = agent.keys;
           return (
             <li
               key={agent.id}
@@ -227,12 +196,12 @@ export function AgentsScreen({ selected }: { selected?: AgentId | undefined }): 
                         last seen <Time iso={agent.lastSeenAt} />
                       </>
                     )}
-                    {!partial && (
+                    {
                       <>
                         {' - '}
                         {activeCount(keys)} active key{activeCount(keys) === 1 ? '' : 's'}
                       </>
-                    )}
+                    }
                   </div>
                 </div>
                 <div className="row">
@@ -291,19 +260,8 @@ export function AgentsScreen({ selected }: { selected?: AgentId | undefined }): 
                   </Facts>
 
                   <h3>Keys</h3>
-                  {partial && (
-                    <p className="muted small">
-                      The admin API does not list an agent&rsquo;s keys, so this shows only the keys
-                      issued from this browser session. Older keys are still in force and can be
-                      revoked wholesale by archiving.
-                    </p>
-                  )}
                   {keys.length === 0 ? (
-                    <Empty>
-                      {partial
-                        ? 'No keys have been issued from this session.'
-                        : 'No keys have ever been issued for this agent.'}
-                    </Empty>
+                    <Empty>No keys have ever been issued for this agent.</Empty>
                   ) : (
                     <table className="table">
                       <thead>
@@ -317,21 +275,20 @@ export function AgentsScreen({ selected }: { selected?: AgentId | undefined }): 
                       </thead>
                       <tbody>
                         {keys.map((key) => {
-                          const revoked = key.revokedAt !== null && key.revokedAt !== undefined;
+                          const revoked = key.revokedAt !== null;
                           return (
-                            <tr key={key.id} className={revoked ? 'muted' : ''}>
+                            <tr key={key.keyId} className={revoked ? 'muted' : ''}>
                               <td>
-                                <Id value={key.id} />
+                                <Id value={key.keyId} />
                               </td>
                               <td>{key.label ?? <span className="muted">-</span>}</td>
                               <td>
-                                <Time iso={key.createdAt ?? null} />
+                                <Time iso={key.createdAt} />
                               </td>
                               <td>
                                 {revoked ? (
                                   <>
-                                    <Pill tone="muted">revoked</Pill>{' '}
-                                    <Time iso={key.revokedAt ?? null} />
+                                    <Pill tone="muted">revoked</Pill> <Time iso={key.revokedAt} />
                                   </>
                                 ) : (
                                   <Pill tone="ok">active</Pill>
@@ -349,7 +306,7 @@ export function AgentsScreen({ selected }: { selected?: AgentId | undefined }): 
                                         )
                                       ) {
                                         void act('Key revoked.', () =>
-                                          api.revokeKey(agent.id, key.id),
+                                          api.revokeKey(agent.id, key.keyId),
                                         );
                                       }
                                     }}
@@ -385,7 +342,6 @@ export function AgentsScreen({ selected }: { selected?: AgentId | undefined }): 
                           void (async () => {
                             try {
                               const issued = await api.unarchiveAgent(agent.id);
-                              remember(agent.id, issued, 'unarchived');
                               setRevealed({ issued, agentName: agent.displayName });
                               agents.reload();
                             } catch (cause) {
@@ -433,7 +389,6 @@ export function AgentsScreen({ selected }: { selected?: AgentId | undefined }): 
           onSubmit={async (name) => {
             const issued = await api.createAgent(name);
             const id = issued.agent?.id;
-            if (id !== undefined) remember(id, issued, 'initial');
             setRevealed({ issued, agentName: issued.agent?.displayName ?? name });
             agents.reload();
             if (id !== undefined) navigate(href.agents(id));
@@ -467,7 +422,6 @@ export function AgentsScreen({ selected }: { selected?: AgentId | undefined }): 
           onClose={() => setIssuing(null)}
           onSubmit={async (label) => {
             const issued = await api.issueKey(issuing.id, label === '' ? undefined : label);
-            remember(issuing.id, issued, label === '' ? null : label);
             setRevealed({ issued, agentName: issuing.displayName });
             agents.reload();
           }}

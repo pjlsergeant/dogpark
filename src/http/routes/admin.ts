@@ -88,10 +88,8 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
       guarded.addHook('onRequest', authenticateHuman(ctx));
 
       /**
-       * Not in the contract. A reload keeps the `HttpOnly` cookie but loses
-       * the CSRF token, which lives only in the page; without this the human
-       * logs in again on every refresh. Adding a route the contract does not
-       * name is a smaller thing than that.
+       * A reload keeps the `HttpOnly` cookie but loses the CSRF token, which
+       * lives only in the page; without this the human logs in every refresh.
        */
       guarded.get('/session', async (request) => {
         const session = requireSession(request);

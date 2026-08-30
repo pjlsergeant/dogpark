@@ -74,14 +74,12 @@ export function App(): ReactNode {
       if (!live) return;
       setApi(client);
       // The cookie may still be good even though the CSRF token, which lives
-      // only in memory, went away with the last page. `resume` resolves null
-      // when the server has no such route, which is the contract today.
+      // only in memory, went away with the last page.
       const resumed = await client.resume();
       if (!live) return;
       if (resumed !== null) {
         setSession({
-          displayName: resumed.displayName ?? null,
-          expiresAt: resumed.expiresAt ?? null,
+          displayName: resumed.displayName,
         });
       }
       setBooting(false);
@@ -257,9 +255,7 @@ function Sidebar({
         <button type="button" className="btn btn-quiet" onClick={onHelp}>
           Keys <kbd>?</kbd>
         </button>
-        <div className="muted small">
-          {session.displayName === null ? 'Signed in' : `Signed in as ${session.displayName}`}
-        </div>
+        <div className="muted small">{`Signed in as ${session.displayName}`}</div>
         <button type="button" className="btn btn-quiet" onClick={logout}>
           Sign out
         </button>

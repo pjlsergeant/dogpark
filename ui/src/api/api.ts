@@ -14,7 +14,7 @@ import type {
   HumanPostRequest,
   HumanPostResult,
   IssuedKey,
-  MessagesPage,
+  MessagePage,
   Page,
   ReadLogEntry,
   ReadLogFilter,
@@ -62,7 +62,7 @@ export interface DogparkAdminApi {
 
   // Reading ---------------------------------------------------------------
   listConversations(space: SpaceId): Promise<readonly ConversationSummary[]>;
-  readConversation(id: ConversationId, query?: ConversationQuery): Promise<MessagesPage>;
+  readConversation(id: ConversationId, query?: ConversationQuery): Promise<MessagePage>;
   post(request: HumanPostRequest): Promise<HumanPostResult>;
 
   // Forensics -------------------------------------------------------------

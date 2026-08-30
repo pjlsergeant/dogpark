@@ -3,10 +3,7 @@
  *
  * Domain types come from `src/types.ts` and are imported, never redefined.
  * What is declared here is the *admin* surface. The response shapes pinned in
- * `docs/http-api.md` ("Admin response shapes") are followed exactly; anything
- * marked `@contract-gap` is a field or a whole endpoint the UI needed and the
- * contract does not describe, and every such field is optional so a server
- * built strictly to the contract still renders.
+ * `docs/http-api.md` ("Admin response shapes") are followed exactly.
  */
 import type {
   Agent,
@@ -19,7 +16,7 @@ import type {
   ErrorCode,
   Message,
   MessageId,
-  QueryCursor,
+  MessagePage,
   Sender,
   Space,
   SpaceId,
@@ -31,12 +28,12 @@ export type {
   AgentId,
   Attachment,
   AttachmentId,
+  MessagePage,
   Conversation,
   ConversationId,
   Cursor,
   Message,
   MessageId,
-  QueryCursor,
   Space,
   SpaceId,
   Timestamp,
@@ -72,20 +69,10 @@ export class ApiError extends Error {
 // Session
 // ---------------------------------------------------------------------------
 
-/** `POST /session -> { csrfToken }`. */
+/** `POST /session` and `GET /session -> { csrfToken, displayName, expiresAt }`. */
 export interface SessionCredentials {
   readonly csrfToken: string;
-  /**
-   * @contract-gap The human has a configured display name and no user record.
-   * Nothing hands it to the UI, so the shell cannot say who is signed in. It
-   * does not guess.
-   */
-  readonly displayName?: string | undefined;
-  /**
-   * @contract-gap Sessions have a fixed lifetime. Without an expiry the UI
-   * cannot warn before one ends; it finds out by a write failing.
-   */
-  readonly expiresAt?: Timestamp | undefined;
+  readonly displayName: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -107,22 +94,16 @@ export interface AdminAgent extends Agent {
   readonly failedAttemptsClaimingId: number;
   /** Whether the count above is still diagnostic, or just noise. */
   readonly hasEverAuthenticated: boolean;
-  /** @contract-gap Not in the pinned shape; shown when a server sends it. */
-  readonly createdAt?: Timestamp | undefined;
-  /**
-   * @contract-gap Nothing enumerates an agent's keys, yet
-   * `DELETE /agents/:id/keys/:keyId` needs a `keyId` the human can only have
-   * got from such a list. Where this is absent the UI can only offer to
-   * revoke keys it watched being issued in this session.
-   */
-  readonly keys?: readonly ApiKeySummary[] | undefined;
+  readonly createdAt: Timestamp;
+  /** Every key ever issued to this agent, revoked ones included. */
+  readonly keys: readonly ApiKeySummary[];
 }
 
 export interface ApiKeySummary {
-  readonly id: string;
-  readonly label?: string | null | undefined;
-  readonly createdAt?: Timestamp | undefined;
-  readonly revokedAt?: Timestamp | null | undefined;
+  readonly keyId: string;
+  readonly label: string | null;
+  readonly createdAt: Timestamp;
+  readonly revokedAt: Timestamp | null;
 }
 
 /**
@@ -146,8 +127,8 @@ export interface IssuedKey {
  * `GET /spaces/:id/members -> { current: [{ agent, grantedAt }],
  * history: [{ agent, grantedAt, revokedAt }] }`.
  *
- * @contract-gap The response does not carry the space, so a screen showing
- * one space's members takes its name from `GET /spaces`.
+ * The response does not carry the space, so a screen showing one space's
+ * members takes its name from `GET /spaces`.
  */
 export interface SpaceMembers {
   readonly current: readonly CurrentMembership[];
@@ -168,14 +149,13 @@ export interface PastMembership {
 /**
  * `GET /spaces/:id/conversations` -- "the human's thread list".
  *
- * @contract-gap No shape is pinned. A thread list needs something to sort and
- * scan by, and `Conversation` alone has none, so these are read when present
- * and left out of the display when not.
+ * `lastSender` is the whole `Sender`, so a name renders as it is now rather
+ * than as it was when the message was written. Both null on an empty thread.
  */
 export interface ConversationSummary extends Conversation {
-  readonly messageCount?: number | undefined;
-  readonly lastActivityAt?: Timestamp | null | undefined;
-  readonly lastSender?: Sender | null | undefined;
+  readonly messageCount: number;
+  readonly lastActivityAt: Timestamp | null;
+  readonly lastSender: Sender | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -185,11 +165,9 @@ export interface ConversationSummary extends Conversation {
 /**
  * `POST /messages -> PostResult`.
  *
- * @contract-gap The request body is not pinned. Assumed to be `PostRequest`
- * minus the agent-shaped parts: the same `PostTarget`, the same idempotency
- * key, and files as multipart in the same `request`-part-then-files form as
- * the agent route -- which the contract describes only for
- * `POST /api/agent/messages`.
+ * `PostRequest` minus the agent-shaped parts: the same `PostTarget`, the same
+ * idempotency key, and files as multipart in the same `request`-part-then-files
+ * form as the agent route.
  */
 export interface HumanPostRequest {
   readonly target:
@@ -216,10 +194,8 @@ export interface ReadLogEntry {
   readonly parameters: Readonly<Record<string, unknown>>;
   readonly cursor: string;
   readonly itemCount: number;
-  /** @contract-gap The store records a kind; the response shape drops it. */
-  readonly kind?: 'stream' | 'conversation' | 'space' | undefined;
-  /** @contract-gap No row id, so the list is keyed positionally. */
-  readonly id?: string | undefined;
+  readonly kind: 'stream' | 'conversation' | 'space';
+  readonly id: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -228,17 +204,13 @@ export interface ReadLogEntry {
 
 export type NotificationState = 'pending' | 'sent' | 'failed';
 
-/**
- * @contract-gap `notification` is named but not described. Everything past
- * `state` is retry detail the store already holds, and is displayed when the
- * server sends it. A bare string is accepted too.
- */
+/** The retry detail behind an escalation's notification. */
 export interface NotificationStatus {
   readonly state: NotificationState;
-  readonly attempts?: number | undefined;
-  readonly lastAttemptAt?: Timestamp | null | undefined;
-  readonly nextAttemptAt?: Timestamp | null | undefined;
-  readonly lastError?: string | null | undefined;
+  readonly attempts: number;
+  readonly lastAttemptAt: Timestamp | null;
+  readonly nextAttemptAt: Timestamp | null;
+  readonly lastError: string | null;
 }
 
 /**
@@ -251,7 +223,7 @@ export interface Escalation {
   readonly conversation: Conversation;
   readonly reason: string;
   readonly raisedAt: Timestamp;
-  readonly notification: NotificationStatus | NotificationState;
+  readonly notification: NotificationStatus;
 }
 
 // ---------------------------------------------------------------------------
@@ -259,17 +231,15 @@ export interface Escalation {
 // ---------------------------------------------------------------------------
 
 /**
- * `GET /search?q= -> [{ message, conversation, space }]`.
+ * `GET /search?q= -> [{ message, conversation, space, snippet }]`.
  *
- * @contract-gap No snippet, so the excerpt is cut from the body client-side,
- * and no highlight. Snippets and bodies alike are agent-authored and are
- * rendered as plain text.
+ * The snippet is agent-authored like the body, and is rendered as plain text.
  */
 export interface SearchResult {
   readonly message: Message;
   readonly conversation: Conversation;
   readonly space: Space;
-  readonly snippet?: string | null | undefined;
+  readonly snippet: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -277,20 +247,12 @@ export interface SearchResult {
 // ---------------------------------------------------------------------------
 
 /**
- * @contract-gap `/reads`, `/escalations` and `/search` are pinned as bare
- * arrays: no cursor, no limit, no filter beyond `q` and the read log's agent.
- * The client accepts a `{ items, nextCursor, hasMore }` envelope as well, so
- * paging can be added without touching a screen.
+ * `/reads` answers `{ reads, nextCursor, hasMore }`; `/escalations` and
+ * `/search` answer bare arrays, which read as one unbounded page.
  */
 export interface Page<T> {
   readonly items: readonly T[];
   readonly nextCursor: string | null;
-  readonly hasMore: boolean;
-}
-
-export interface MessagesPage {
-  readonly messages: readonly Message[];
-  readonly nextCursor: QueryCursor | null;
   readonly hasMore: boolean;
 }
 
@@ -302,7 +264,7 @@ export interface ReadLogFilter {
 
 export interface SearchQuery {
   readonly q: string;
-  /** @contract-gap Only `q` is documented; a space filter is sent hopefully. */
+
   readonly space?: SpaceId | undefined;
   readonly after?: string | undefined;
 }
