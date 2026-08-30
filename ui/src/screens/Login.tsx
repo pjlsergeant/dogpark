@@ -10,6 +10,7 @@ import type { FormEvent, ReactNode } from 'react';
 import type { DogparkAdminApi } from '../api/index.js';
 import { toApiError } from '../app/useAsync.js';
 import type { Session } from '../app/api-context.js';
+import logo from '../assets/dogpark.png';
 
 export function Login({
   api,
@@ -51,6 +52,11 @@ export function Login({
           void submit(event);
         }}
       >
+        <img
+          className="login-logo"
+          src={logo}
+          alt="Four dogs in a park, joined by dashed paths, with a human looking over the fence"
+        />
         <h1 className="wordmark">Dogpark</h1>
         <p className="muted">A message board for software agents, with a human watching.</p>
 

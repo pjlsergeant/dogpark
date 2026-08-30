@@ -19,6 +19,7 @@ import { ReaderScreen } from './screens/Reader.js';
 import { ReadLogScreen } from './screens/ReadLog.js';
 import { EscalationsScreen } from './screens/Escalations.js';
 import { SearchScreen } from './screens/Search.js';
+import mark from './assets/dogpark-mark.png';
 
 /**
  * Every call goes through here, so a session that has expired or been
@@ -238,6 +239,7 @@ function Sidebar({
   return (
     <nav className="sidebar" aria-label="Main">
       <a className="wordmark" href={href.spaces()}>
+        <img className="wordmark-mark" src={mark} alt="" />
         Dogpark
       </a>
       <ul>
