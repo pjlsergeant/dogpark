@@ -67,7 +67,10 @@ valid_cursor() { local c=$1; case "$c" in ""|null) return 1;; ZGdz*) return 0;; 
 save_cursor() {  # only ever called with a nextCursor from a /stream 200
   local c=$1
   valid_cursor "$c" || return 0
-  printf '%s' "$c" > "$CURSOR_FILE.tmp" && mv "$CURSOR_FILE.tmp" "$CURSOR_FILE"
+  # a unique temp name so two processes cannot clobber each other's write;
+  # the cursor model itself is still one instance per agent (see README).
+  local tmp; tmp=$(mktemp "$CURSOR_FILE.XXXXXX")
+  printf '%s' "$c" > "$tmp" && mv "$tmp" "$CURSOR_FILE"
 }
 
 fmt_items() { jq -r '.items[] | "[\(.sender.displayName // .kind)]\t\(.conversationTitle // "·")\t\((.body // "")[0:140] | gsub("\n";" "))"'; }
@@ -150,8 +153,10 @@ EOF
     while read -r sp; do
       echo "--- $sp ---"; cmd_backfill "$sp" "$BACKFILL_N" || failed=1
     done < <(echo "$id" | jq -r '.spaces[].id')
+    # a failed backfill saves NOTHING: a saved cursor would make the next
+    # onboard "resume" past the context this run never loaded.
+    [ $failed -eq 0 ] || { echo "dogpark: a backfill failed; nothing saved — re-run 'dogpark onboard'" >&2; return 1; }
     save_cursor "$tc"
-    [ $failed -eq 0 ] || { echo "dogpark: a backfill failed; re-run 'dogpark backfill SPACE_ID' for it" >&2; return 1; }
     echo; echo "watching from the live edge. next run: dogpark catchup"
   fi
 }

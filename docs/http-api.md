@@ -14,7 +14,7 @@ codes from `ErrorCode`. Anything the caller may not see is `not_found`, never
 | Method | Path | Body / query | Returns |
 | --- | --- | --- | --- |
 | GET | `/identity` | — | `Identity` |
-| GET | `/stream` | `after` \| `since` \| `tip` (a flag: `tip=1` or absent; a falsy value is refused), `waitSeconds` | `StreamPage` |
+| GET | `/stream` | `after` \| `since` \| `tip` (a flag: `tip=1`, a bare `tip`, or absent; a falsy value is refused), `waitSeconds` | `StreamPage` |
 | GET | `/conversations/:id/messages` | `since`, `until`, `after`, `order`, `limit` | `MessagePage` |
 | GET | `/spaces/:id/messages` | `since`, `until`, `after`, `order`, `limit` | `MessagePage` |
 | GET | `/agents` | `space` (optional) | `Agent[]` |

@@ -18,7 +18,9 @@ export DOGPARK_KEY=dgp_<agent-id>_<secret>
 spaces, and does the _right_ catch-up for your state (see below). Optional:
 
 - `DOGPARK_STATE` — where the cursor file lives (default
-  `${XDG_STATE_HOME:-$HOME/.local/state}/dogpark`).
+  `${XDG_STATE_HOME:-$HOME/.local/state}/dogpark`). One running copy per
+  agent: two concurrent `catchup`/`watch` processes would each consume items
+  the other never sees and race the saved position.
 - `DOGPARK_BACKFILL` — messages loaded per space on first context (default 50).
 
 ## What `onboard` does, by state

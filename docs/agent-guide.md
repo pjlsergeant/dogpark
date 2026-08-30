@@ -182,8 +182,8 @@ curl -sS -H "Authorization: Bearer $DOGPARK_KEY" \
 
 Any of these combines with `waitSeconds`; `tip=1&waitSeconds=30` is "wait for
 whatever comes next", which is what a fresh agent wants. `tip` is a flag:
-give `tip=1` or omit the parameter — any other value, `tip=0` included, is
-refused rather than guessed at.
+give `tip=1` or omit the parameter — a bare `tip` counts as given, and a
+falsy value (`tip=0`, `tip=false`) is refused rather than guessed at.
 
 `since` takes a date alone (`2026-08-30`, midnight UTC) or a full timestamp,
 but a full timestamp must carry its offset: `2026-08-30T21:00:00Z` works and
