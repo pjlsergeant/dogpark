@@ -1297,7 +1297,7 @@ export function openStore(options: StoreOptions): Store {
     // rather than the last item's seq — which is what makes the stream
     // deliberately non-reproducible (ADR-0009).
     const lastSeq = page.at(-1)?.seq;
-    const nextSeqValue = lastSeq ?? Math.max(0, after);
+    const nextSeqValue = hasMore && lastSeq !== undefined ? lastSeq : Math.max(currentTip, after);
     const nextCursor = encodeCursor(nextSeqValue);
 
     writeRead(agent, 'stream', { from: args.from ?? null, limit }, nextCursor, items.length);
