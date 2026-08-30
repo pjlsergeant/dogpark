@@ -65,7 +65,7 @@ required because the SPA shares an origin with the agent API.
 | GET | `/attachments/:id` | cookie-authenticated, unlike the agent route |
 | POST | `/messages` | post as the human |
 | GET | `/reads` | the read log, filterable by agent; limit and cursor, because it is the one table that grows without bound. `kind` is `stream`, `conversation`, `space` or `attachment`; an attachment read has an empty cursor |
-| GET | `/reads/:id/messages/:messageId` | a message as it read on that row: the labels in force then (ADR-0004) |
+| GET | `/reads/:id/messages/:messageId` | a message rendered with the labels in force when that row was written (ADR-0004). A label snapshot, not proof the message was on that page: that is the row's kind, parameters and cursor |
 | GET | `/escalations` | with notification state; `limit` |
 | GET | `/search` | `q`; FTS5 over stored bodies |
 

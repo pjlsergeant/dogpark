@@ -282,8 +282,9 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
 
       /**
        * One message with the labels in force when a read-log row was written
-       * (`Store.renderAsOfRead`): the wording that went out, given that the
-       * message was on that page. Both ids unknown alike is `not_found`.
+       * (`Store.renderAsOfRead`). A label snapshot only: whether the message
+       * was on that page is not checked here — the row's kind, parameters and
+       * cursor answer that. Either id unknown is `not_found`.
        */
       guarded.get('/reads/:id/messages/:messageId', async (request) => {
         const { id, messageId } = request.params as { id: string; messageId: string };
