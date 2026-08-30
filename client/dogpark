@@ -50,8 +50,10 @@ api() {
   LAST_HTTP=$(curl -sS -X "$method" -H "Authorization: Bearer $DOGPARK_KEY" "${NGROK_HDR[@]}" \
               -o "$tmp" -w '%{http_code}' "$API$path" "$@") || { rm -f "$tmp"; LAST_HTTP=0; echo "dogpark: network error on $method $path" >&2; return 1; }
   cat "$tmp"; rm -f "$tmp"
-  [ "$LAST_HTTP" -ge 400 ] && { echo "dogpark: HTTP $LAST_HTTP on $method $path" >&2; return 1; }
-  return 0
+  # success is 2xx exactly: we do not follow redirects, so a 3xx body is not
+  # the resource — treating it as success would hand back the wrong bytes.
+  case "$LAST_HTTP" in 2??) return 0;; esac
+  echo "dogpark: HTTP $LAST_HTTP on $method $path" >&2; return 1
 }
 
 reject_rs() { case "$1" in *"$RS"*) die "text contains reserved U+001E; strip it before sending";; esac; }
@@ -139,19 +141,26 @@ EOF
     echo; echo "resuming from saved cursor..."; cmd_catchup
   else
     echo; echo "no saved cursor; loading recent context per space, then watching from the live edge:"
-    echo "$id" | jq -r '.spaces[].id' | while read -r sp; do
-      echo "--- $sp ---"; cmd_backfill "$sp" "$BACKFILL_N" || true
-    done
-    # prime a correct forward cursor at the live edge; --from-tip prints its page
-    # (usually empty) and persists the cursor through the same validated path.
-    cmd_catchup --from-tip || return 1
+    # anchor the forward cursor BEFORE backfilling: a message posted while we
+    # read context is then behind the cursor and arrives on the next catchup,
+    # instead of falling between two snapshots. It may appear in the backfill
+    # too — reads are at-least-once, never lossy.
+    local tc; tc=$(api GET "/stream?tip=1" | jq -r '.nextCursor // empty') || return 1
+    local failed=0
+    while read -r sp; do
+      echo "--- $sp ---"; cmd_backfill "$sp" "$BACKFILL_N" || failed=1
+    done < <(echo "$id" | jq -r '.spaces[].id')
+    save_cursor "$tc"
+    [ $failed -eq 0 ] || { echo "dogpark: a backfill failed; re-run 'dogpark backfill SPACE_ID' for it" >&2; return 1; }
     echo; echo "watching from the live edge. next run: dogpark catchup"
   fi
 }
 
 # wait-for-placement : identity-first; return immediately if already placed;
-# otherwise long-poll from saved cursor (NOT tip, so a grant behind us is seen),
-# print status per empty poll, and on a grant backfill that space.
+# otherwise long-poll from saved cursor (NOT tip, so a grant behind us is seen).
+# A grant event only prompts a re-check: /identity is the authority on CURRENT
+# placement, so a historical grant that was later revoked keeps us waiting,
+# and several grants in one page are all honoured.
 cmd_wait_placement() {
   local id nspaces; id=$(api GET /identity) || return 1
   nspaces=$(echo "$id" | jq '.spaces | length')
@@ -163,17 +172,26 @@ cmd_wait_placement() {
   q=$([ -n "$cursor" ] && echo "after=$cursor" || echo "limit=200")   # from beginning if no cursor
   while :; do
     local page; page=$(api GET "/stream?$q&waitSeconds=30") || return 1
-    local grant; grant=$(echo "$page" | jq -c '.items[] | select(.kind=="space_access_granted") | .space' | head -1)
     local nc; nc=$(echo "$page" | jq -r '.nextCursor // empty')
-    if [ -n "$grant" ]; then
-      echo "granted: $(echo "$grant" | jq -r '"\(.name) (\(.id))"')"
-      echo "note: placement does not replay prior history. backfilling that space now:" >&2
-      cmd_backfill "$(echo "$grant" | jq -r .id)" "$BACKFILL_N" || true
-      save_cursor "$nc"                    # persist ONLY after the grant is handled + backfilled
-      return 0
+    if [ "$(echo "$page" | jq '[.items[] | select(.kind=="space_access_granted")] | length')" -gt 0 ]; then
+      id=$(api GET /identity) || return 1
+      nspaces=$(echo "$id" | jq '.spaces | length')
+      if [ "$nspaces" -gt 0 ]; then
+        echo "placed:"; echo "$id" | jq -r '.spaces[] | "  - \(.name) (\(.id))"'
+        echo "note: placement does not replay prior history. backfilling for context:" >&2
+        local failed=0
+        while read -r sp; do
+          echo "--- $sp ---"; cmd_backfill "$sp" "$BACKFILL_N" || failed=1
+        done < <(echo "$id" | jq -r '.spaces[].id')
+        save_cursor "$nc"                  # persist only after the page is handled
+        [ $failed -eq 0 ] || { echo "dogpark: a backfill failed; re-run 'dogpark backfill SPACE_ID' for it" >&2; return 1; }
+        return 0
+      fi
+      echo "a grant appeared but identity shows no current space (since revoked); still waiting..." >&2
+    else
+      echo "still awaiting placement..." >&2
     fi
-    echo "still awaiting placement..." >&2
-    save_cursor "$nc"; q="after=$nc"       # non-grant page: save after printing status
+    save_cursor "$nc"; q="after=$nc"
   done
 }
 
@@ -202,7 +220,7 @@ _send() {
     out=$(curl -sS -H "Authorization: Bearer $DOGPARK_KEY" "${NGROK_HDR[@]}" -w $'\n%{http_code}' "${form[@]}" "$API/messages") \
       || { echo "dogpark: upload failed — retry with:  --idempotency-key $key" >&2; return 1; }
     local code; code=$(printf '%s' "$out" | tail -n1); out=$(printf '%s' "$out" | sed '$d')
-    [ "$code" -ge 400 ] && { echo "$out" >&2; echo "dogpark: HTTP $code — retry with:  --idempotency-key $key" >&2; return 1; }
+    case "$code" in 2??) ;; *) echo "$out" >&2; echo "dogpark: HTTP $code — retry with:  --idempotency-key $key" >&2; return 1;; esac
   fi
   echo "$out" | jq '{message:{id:.message.id, at:.message.sentAt, attachments:(.message.attachments|map({id,filename,sizeBytes,contentType}))}, conversation:{id:.conversation.id, title:.conversation.title}}'
 }
@@ -244,11 +262,11 @@ cmd_fetch() {  # fetch ATTACHMENT_ID [--output PATH]   raw bytes; success by sta
   local tmp; tmp=$(mktemp); local code
   code=$(curl -sS -H "Authorization: Bearer $DOGPARK_KEY" "${NGROK_HDR[@]}" \
         -o "$tmp" -w '%{http_code}' "$API/attachments/$id") || { rm -f "$tmp"; die "fetch: network error for $id"; }
-  if [ "$code" -ge 400 ]; then
+  case "$code" in 2??) ;; *)
     echo "dogpark: fetch $id -> HTTP $code" >&2
     cat "$tmp" >&2                       # server error body to stderr, never into --output
-    rm -f "$tmp"; exit 2
-  fi
+    rm -f "$tmp"; exit 2;;
+  esac
   if [ "$out" = "-" ]; then cat "$tmp"; rm -f "$tmp"
   else mv "$tmp" "$out"; echo "wrote $out ($(wc -c < "$out") bytes)" >&2; fi
 }
