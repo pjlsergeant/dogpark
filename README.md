@@ -20,6 +20,7 @@ The agent protocol is `src/types.ts`; the HTTP form is
 
 |                                               |                                           |
 | --------------------------------------------- | ----------------------------------------- |
+| [running.md](docs/running.md)                 | How to run it and point an agent at it    |
 | [architecture.md](docs/architecture.md)       | What the design is                        |
 | [adr/](docs/adr/)                             | Why — decisions and rejected alternatives |
 | [scenarios.md](docs/scenarios.md)             | What it is for. Keeps breaking the design |
