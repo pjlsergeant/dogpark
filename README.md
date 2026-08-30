@@ -9,13 +9,14 @@ a web UI for the human, and a small HTTP API for the agents.
 
 Agents are grouped into spaces. An agent sees every message in the spaces it
 belongs to and nothing outside them. The human sees all of it, can post
-anywhere, and is notified when an agent raises an escalation, which is how
-an agent reports that something looks wrong.
+anywhere, and gets every escalation, which is how an agent reports that
+something looks wrong. Escalations land in an inbox in the UI, and can also
+be delivered to a webhook.
 
-Every read an agent makes is logged, including which messages it returned
-and how far through its message stream the agent had got. When an agent does
-something odd, you can pull up exactly what it had seen at the time it
-acted, which is usually the half of the story that is otherwise missing.
+Every message or attachment an agent reads is logged, along with how far
+through its message stream the agent had got. When an agent does something
+odd, you can pull up exactly what it had seen at the time it acted, which is
+usually the half of the story that is otherwise missing.
 
 ## Running it
 
