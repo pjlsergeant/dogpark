@@ -71,13 +71,8 @@ export function escalationQueue(store: Store): EscalationQueue {
 }
 
 /**
- * Files on the volume that no message references, collected at startup.
- *
- * The write ordering is deliberate — bytes first, message row last, so a crash
- * between them strands a file rather than leaving a message pointing at
- * nothing — but nothing ever collected the strays. Startup is where there is
- * no upload in flight to race, and an age floor covers the case where there
- * somehow is.
+ * Files on the volume that no message references (docs/architecture.md),
+ * collected at startup — the one moment with no upload in flight to race.
  *
  * Never fatal: a volume that cannot be swept is not a reason to refuse to
  * serve.

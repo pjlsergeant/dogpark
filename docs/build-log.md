@@ -22,21 +22,32 @@ Nothing in the design says what an id looks like, and three things depend on
 it: keys embed an agent id (`dgp_<agent-id>_<secret>`), ids appear in URLs, and
 mention references are tokens inside stored bodies that FTS5 must index.
 
-Preference, to reconcile against whatever the implementation chose:
-type-prefixed, URL-safe, non-sequential — sequential ids leak how many of a
-thing exist and invite enumeration, which uniform not-found otherwise prevents.
-A prefix also stops a space id being accepted where a conversation id belongs.
+The preference here was type-prefixed, URL-safe and non-sequential — sequential
+ids leak how many of a thing exist and invite enumeration, which uniform
+not-found otherwise prevents, and a prefix stops a space id being accepted
+where a conversation id belongs.
 
-One trap: FTS5's default `unicode61` tokenizer treats `_` as a separator, so
-`agt_7f3k2m9q` indexes as two tokens. The mention token in a canonical body
-must survive tokenisation as one word, or searching for an agent finds every
-agent.
+Non-sequential survived; the prefix did not, and the trap is why. FTS5's
+default `unicode61` tokenizer treats `_` as a separator, so `agt_7f3k2m9q`
+indexes as two tokens — and the mention token in a canonical body must survive
+tokenisation as one word, or searching for one agent finds every agent. Ids are
+therefore sixteen characters of Crockford-style base32 with no separator in
+them, which is also what lets a key split as `dgp_<agent-id>_<secret>` on its
+first and last underscore. Type confusion is caught by the branded types in
+`src/types.ts` instead of by a prefix.
 
-### Timestamps
+### Timestamps — settled as strings
 
-The protocol carries ISO-8601 strings. Storage should hold integers — ordering
-and range queries are the whole job, and string comparison of ISO-8601 is a
-correctness accident rather than a design.
+The protocol carries ISO-8601 strings, and the preference here was for storage
+to hold integers, on the grounds that string comparison of ISO-8601 is a
+correctness accident.
+
+Storage holds strings. It is not an accident once the format is fixed: every
+value is written through `now()` or `normalizeTimestamp`, both of which end in
+`toISOString()`, so every stored timestamp is fixed-width UTC and sorts
+lexicographically exactly as it sorts chronologically. Integers would still be
+smaller and would not depend on that invariant holding; strings won on being
+readable in a database someone is debugging at the time.
 
 ### Cursors
 

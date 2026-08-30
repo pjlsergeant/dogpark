@@ -112,14 +112,9 @@ export function createAttachmentFiles(root: string): AttachmentFiles {
 /**
  * Collects files the volume holds and no message references.
  *
- * Files are written before the message row commits, deliberately: a crash
- * between the two leaves an unreferenced file rather than a message pointing
- * at nothing. Nothing ever collected them, so this does — at startup, where
- * there is no upload in flight to race.
- *
- * `minimumAgeMs` is belt and braces for the case where there is: a file
- * younger than that is left alone, because a file being streamed right now is
- * not yet referenced by anything either.
+ * `minimumAgeMs` guards an upload in flight: a file younger than that is left
+ * alone, because a file being streamed right now is not yet referenced by
+ * anything either.
  *
  * Returns the ids removed. Best effort throughout: a volume that cannot be
  * read is not a reason to refuse to start.
