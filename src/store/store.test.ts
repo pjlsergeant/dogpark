@@ -1205,7 +1205,7 @@ describe('keys and authentication', () => {
     const agent = h.store.createAgent('alice').id;
     const issued = h.store.issueKey(agent);
 
-    expect(h.store.verifyKey(issued.key)?.agent.id).toBe(agent);
+    expect(h.store.verifyKey(issued.key)?.id).toBe(agent);
     h.store.revokeKey(issued.id);
     expect(h.store.verifyKey(issued.key)).toBeUndefined();
   });
@@ -1248,7 +1248,7 @@ describe('keys and authentication', () => {
     // cannot be re-shown.
     h.store.unarchiveAgent(agent);
     const replacement = h.store.issueKey(agent);
-    expect(h.store.verifyKey(replacement.key)?.agent.id).toBe(agent);
+    expect(h.store.verifyKey(replacement.key)?.id).toBe(agent);
     expect(h.store.verifyKey(issued.key)).toBeUndefined();
   });
 

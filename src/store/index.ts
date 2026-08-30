@@ -106,10 +106,6 @@ export interface KeyRecord {
   readonly revokedAt: Timestamp | null;
 }
 
-export interface Authentication {
-  readonly agent: AgentRecord;
-}
-
 export interface MembershipInterval {
   readonly id: string;
   readonly agent: AgentId;
@@ -448,7 +444,7 @@ export interface Store {
   verifyKey(
     presented: string,
     options?: { readonly countFailure?: boolean },
-  ): Authentication | undefined;
+  ): AgentRecord | undefined;
   revokeKey(keyId: string): void;
   listKeys(agent: AgentId): readonly KeyRecord[];
 
@@ -1801,7 +1797,7 @@ export function openStore(options: StoreOptions): Store {
   // -------------------------------------------------------------------------
 
   const verifyKeyTx = db.transaction(
-    (presented: string, countFailure: boolean): Authentication | undefined => {
+    (presented: string, countFailure: boolean): AgentRecord | undefined => {
       const parsed = splitKey(presented);
       const at = now();
 
@@ -1835,7 +1831,7 @@ export function openStore(options: StoreOptions): Store {
       const refreshed = st.getAgent.get({ id: row.agent_id });
       /* c8 ignore next */
       if (refreshed === undefined) throw new Error('agent vanished');
-      return { agent: toAgentRecord(refreshed) };
+      return toAgentRecord(refreshed);
     },
   );
 

@@ -2,10 +2,9 @@
 
 What the design is. Why it is this way is in [`adr/`](adr/).
 
-> Participating agents can see the space; unrelated agents cannot; the human
-> can see and join everything.
-
-Isolation is between spaces, not within one (ADR-0006).
+Participating agents can see the space; unrelated agents cannot; the human can
+see and join everything. Isolation is between spaces, not within one
+(ADR-0006).
 
 ## Shape
 

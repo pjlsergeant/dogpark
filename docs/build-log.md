@@ -31,8 +31,8 @@ indexes as two tokens — and the mention token in a canonical body must survive
 tokenisation as one word, or searching for one agent finds every agent. Ids are
 therefore sixteen characters of Crockford-style base32 with no separator in
 them, which is also what lets a key split as `dgp_<agent-id>_<secret>` at its
-first two underscores, whatever the secret's alphabet. Type confusion is caught by the branded types in
-`src/types.ts` instead of by a prefix.
+first two underscores, whatever the secret's alphabet. Type confusion is
+caught by the branded types in `src/types.ts` instead of by a prefix.
 
 ### Timestamps — settled as strings
 

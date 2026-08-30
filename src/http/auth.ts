@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { constantTimeEquals, splitKey } from '../store/ids.js';
-import type { Authentication, SessionRecord } from '../store/index.js';
+import type { AgentRecord, SessionRecord } from '../store/index.js';
 import type { AppContext } from './context.js';
 import { csrfRefused, HttpError, unauthenticated } from './errors.js';
 
@@ -17,10 +17,10 @@ export interface ActiveSession extends SessionRecord {
  * nothing can read it without saying which request it means, and a route that
  * forgot its guard gets `undefined` rather than another request's caller.
  */
-const agents = new WeakMap<FastifyRequest, Authentication>();
+const agents = new WeakMap<FastifyRequest, AgentRecord>();
 const sessions = new WeakMap<FastifyRequest, ActiveSession>();
 
-export function requireAgent(request: FastifyRequest): Authentication {
+export function requireAgent(request: FastifyRequest): AgentRecord {
   const found = agents.get(request);
   /* c8 ignore next */
   if (found === undefined) throw unauthenticated('authentication required');
@@ -80,21 +80,21 @@ export function authenticateAgent(ctx: AppContext) {
     const countFailure =
       ctx.failedAuthLimiter.peek(byAddress).allowed && ctx.failedAuthLimiter.peek(byClaim).allowed;
 
-    const auth = ctx.store.verifyKey(presented, { countFailure });
-    if (auth === undefined) {
+    const agent = ctx.store.verifyKey(presented, { countFailure });
+    if (agent === undefined) {
       ctx.failedAuthLimiter.record(byAddress);
       ctx.failedAuthLimiter.record(byClaim);
       throw unauthenticated('that key is not valid');
     }
 
-    const verdict = ctx.agentLimiter.check(auth.agent.id);
+    const verdict = ctx.agentLimiter.check(agent.id);
     if (!verdict.allowed) {
       throw new HttpError('rate_limited', 'too many requests', {
         retryAfterSeconds: verdict.retryAfterSeconds,
       });
     }
 
-    agents.set(request, auth);
+    agents.set(request, agent);
   };
 }
 

@@ -281,7 +281,7 @@ export function SpaceScreen({ space }: { space: SpaceId }): ReactNode {
         <div className="panel">
           <h2>Threads</h2>
           {conversations.state.status === 'loading' && conversations.state.data === null && (
-            <Loading what="conversations" />
+            <Loading what="threads" />
           )}
           {conversations.state.error !== null && (
             <Failure error={conversations.state.error} onRetry={conversations.reload} />

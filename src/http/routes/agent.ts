@@ -25,7 +25,7 @@ export function agentRoutes(ctx: AppContext): FastifyPluginAsync {
     app.addHook('onRequest', authenticateAgent(ctx));
 
     app.get('/identity', async (request) => {
-      const self = requireAgent(request).agent;
+      const self = requireAgent(request);
       const lastReadCursor = ctx.store.lastReadCursor(self.id);
       const identity: Identity = {
         self: { id: self.id, displayName: self.displayName },
@@ -46,7 +46,7 @@ export function agentRoutes(ctx: AppContext): FastifyPluginAsync {
      * Both reads are recorded in the read log, because both happened.
      */
     app.get('/stream', async (request, reply) => {
-      const self = requireAgent(request).agent;
+      const self = requireAgent(request);
       const query = parse(StreamQuery, request.query, 'query');
       const from = readFromQuery(query);
       const limit = ctx.pageLimit(query.limit);
@@ -76,7 +76,7 @@ export function agentRoutes(ctx: AppContext): FastifyPluginAsync {
     });
 
     app.get('/conversations/:id/messages', async (request) => {
-      const self = requireAgent(request).agent;
+      const self = requireAgent(request);
       const { id } = request.params as { id: string };
       const query = parse(RangeQuery, request.query, 'query');
       return ctx.store.readConversation(
@@ -88,7 +88,7 @@ export function agentRoutes(ctx: AppContext): FastifyPluginAsync {
     });
 
     app.get('/spaces/:id/messages', async (request) => {
-      const self = requireAgent(request).agent;
+      const self = requireAgent(request);
       const { id } = request.params as { id: string };
       const query = parse(RangeQuery, request.query, 'query');
       return ctx.store.readSpace(
@@ -100,7 +100,7 @@ export function agentRoutes(ctx: AppContext): FastifyPluginAsync {
     });
 
     app.get('/agents', async (request) => {
-      const self = requireAgent(request).agent;
+      const self = requireAgent(request);
       const query = parse(AgentsQuery, request.query, 'query');
       return ctx.store.listAgentsSharingSpaceWith(
         self.id,
@@ -109,18 +109,18 @@ export function agentRoutes(ctx: AppContext): FastifyPluginAsync {
     });
 
     app.post('/messages', async (request) => {
-      const self = requireAgent(request).agent;
+      const self = requireAgent(request);
       return submitPost(ctx, request, PostBody, { kind: 'agent', id: self.id });
     });
 
     app.get('/attachments/:id', async (request, reply) => {
-      const self = requireAgent(request).agent;
+      const self = requireAgent(request);
       const { id } = request.params as { id: string };
       return sendAttachment(ctx, { kind: 'agent', id: self.id }, id as AttachmentId, reply);
     });
 
     app.post('/escalations', async (request, reply) => {
-      const self = requireAgent(request).agent;
+      const self = requireAgent(request);
       const payload = parse(EscalateBody, request.body, 'request body');
       ctx.store.recordEscalation({
         agent: self.id,
