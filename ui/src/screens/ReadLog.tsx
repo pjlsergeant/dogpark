@@ -66,6 +66,15 @@ export function ReadLogScreen({ agent }: { agent?: AgentId | undefined }): React
   const hasMore = tail === null ? first?.hasMore === true : tail.hasMore;
   const known = useMemo(() => agents.state.data ?? [], [agents.state.data]);
 
+  // Refetching the first page invalidates everything after it: the log is
+  // newest-first, so a tail fetched from the old cursor either repeats rows or
+  // skips the one the boundary moved past.
+  const refresh = useCallback(() => {
+    setTail(null);
+    setMoreFailed(false);
+    reads.reload();
+  }, [reads]);
+
   const loadMore = useCallback(async () => {
     if (nextCursor === null) return;
     setLoadingMore(true);
@@ -119,13 +128,13 @@ export function ReadLogScreen({ agent }: { agent?: AgentId | undefined }): React
               </option>
             ))}
           </select>
-          <button type="button" className="btn" onClick={reads.reload}>
+          <button type="button" className="btn" onClick={refresh}>
             Refresh
           </button>
         </div>
       </header>
 
-      {reads.state.error !== null && <Failure error={reads.state.error} onRetry={reads.reload} />}
+      {reads.state.error !== null && <Failure error={reads.state.error} onRetry={refresh} />}
       {reads.state.status === 'loading' && reads.state.data === null && <Loading what="reads" />}
       {reads.state.data !== null && entries.length === 0 && (
         <Empty>

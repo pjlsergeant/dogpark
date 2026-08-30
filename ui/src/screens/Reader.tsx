@@ -291,15 +291,17 @@ function Thread({
     void load();
   }, [load]);
 
-  // Poll while the tab is in front. Only with one page showing — the newest
-  // page is always the current one, but a reload would drop older pages
-  // already pulled — and never while a read is out, because `loadOlder` is
-  // prepending to state this would replace wholesale.
+  // Poll while the tab is in front, and only when a wholesale replace is safe:
+  // one page showing, and no older ones behind it. `load()` refetches the
+  // newest page and replaces state, so with `hasMore` the window would slide —
+  // dropping the oldest message on screen — and with pages already prepended it
+  // would throw them away. `inFlight` covers the same replace racing a read
+  // that is already out.
   useEffect(() => {
     const timer = globalThis.setInterval(() => {
       if (document.visibilityState !== 'visible' || inFlight.current) return;
       setLoaded((current) => {
-        if (current !== null && current.pages === 1) void load();
+        if (current !== null && current.pages === 1 && !current.hasMore) void load();
         return current;
       });
     }, POLL_MS);
