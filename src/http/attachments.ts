@@ -9,27 +9,14 @@ import { tooLarge } from './errors.js';
 /** What one file turned out to be, learned on the way past. */
 export interface WrittenFile {
   readonly sizeBytes: number;
-  /**
-   * `sha256:<hex>` over the bytes as they streamed. Hashed here rather than by
-   * re-reading the file: the bytes are already in hand, and a second pass over
-   * a fifty-megabyte upload to learn something we just had is a waste of the
-   * volume.
-   *
-   * It exists so that a retried post identifies the *file* and not just what
-   * the client said about it — without it, two uploads agreeing on name, type
-   * and size are the same request as far as an idempotency key is concerned,
-   * whatever the bytes say.
-   */
+  /** `sha256:<hex>` over the bytes as they streamed (`AttachmentInput.contentDigest`). */
   readonly contentDigest: string;
 }
 
 /**
- * Attachment bytes on the volume; their metadata is a row in SQLite.
- *
- * Files are written under a generated id before the message row commits, so a
- * crash leaves an unreferenced file rather than a message pointing at nothing
- * (docs/architecture.md). The supplied filename is metadata only and never
- * reaches a path.
+ * Attachment bytes on the volume, under generated ids (`AttachmentInput.id`);
+ * their metadata is a row in SQLite. The supplied filename never reaches a
+ * path.
  */
 export interface AttachmentFiles {
   /** Writes `source`, refusing at `maxBytes`. Returns what it turned out to be. */
@@ -39,8 +26,7 @@ export interface AttachmentFiles {
   discard(id: string): Promise<void>;
 }
 
-/** Where attachment bytes live beneath the data directory. One answer, used
- * by the app that writes them and the sweep that collects the strays. */
+/** Where attachment bytes live beneath the data directory. */
 export function attachmentRoot(dataDir: string): string {
   return join(dataDir, 'attachments');
 }

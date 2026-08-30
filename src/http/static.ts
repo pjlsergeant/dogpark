@@ -8,14 +8,13 @@ import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
  * the admin session and could add an agent to every space. The policy is
  * therefore an allowlist of nothing plus what the built bundle actually needs:
  * its own scripts, its own stylesheet, and same-origin XHR. No inline script,
- * no remote anything, and it may not be framed.
+ * no images or fonts (the bundle ships none), no remote anything, and it may
+ * not be framed.
  */
 export const SPA_CSP = [
   "default-src 'none'",
   "script-src 'self'",
   "style-src 'self'",
-  "img-src 'self' data:",
-  "font-src 'self'",
   "connect-src 'self'",
   "base-uri 'none'",
   "form-action 'none'",

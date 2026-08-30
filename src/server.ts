@@ -1,7 +1,6 @@
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { Config } from './config.js';
 import { loadConfig } from './config.js';
 import { attachmentRoot, sweepUnreferenced } from './http/attachments.js';
 import { buildApp } from './http/app.js';
@@ -13,26 +12,12 @@ import { openStore } from './store/index.js';
 import type { AttachmentId, Timestamp } from './types.js';
 
 /**
- * The entry point: configuration, storage, HTTP, notification, and a shutdown
- * that ends them in that order reversed.
- */
-
-/**
- * Where to listen follows from the proxy declaration: every interface when one
- * is in front, loopback when nothing is — the one place plaintext is honest
- * (ADR-0016).
- */
-export function resolveBinding(config: Config): { readonly host: string } {
-  return { host: config.behindProxy ? '0.0.0.0' : '127.0.0.1' };
-}
-
-/**
  * The notifier wants four verbs over pending escalations; the store keeps them
  * as rows with their own retry state. This is the whole of the adapter.
  */
-export function escalationQueue(store: Store): EscalationQueue {
+function escalationQueue(store: Store): EscalationQueue {
   return {
-    claimDue(now, limit) {
+    listDue(now, limit) {
       const due = store.listEscalations({
         state: 'pending',
         dueAt: new Date(now).toISOString() as Timestamp,
@@ -68,20 +53,6 @@ export function escalationQueue(store: Store): EscalationQueue {
       });
     },
   };
-}
-
-/**
- * Files on the volume that no message references (docs/architecture.md),
- * collected at startup — the one moment with no upload in flight to race.
- *
- * Never fatal: a volume that cannot be swept is not a reason to refuse to
- * serve.
- */
-async function sweepOrphanedAttachments(store: Store, config: Config): Promise<readonly string[]> {
-  return sweepUnreferenced(
-    attachmentRoot(config.DOGPARK_DATA_DIR),
-    (id) => store.getAttachment(id as AttachmentId) !== undefined,
-  );
 }
 
 /** `dist/ui` beside the compiled server, or beneath the working directory. */
@@ -124,7 +95,9 @@ async function main(): Promise<void> {
   }
 
   const config = loadConfig();
-  const binding = resolveBinding(config);
+  // Every interface when a proxy is in front, loopback when nothing is — the
+  // one place plaintext is honest (ADR-0016).
+  const binding = { host: config.behindProxy ? '0.0.0.0' : '127.0.0.1' };
 
   const store = openStore({
     file: join(config.DOGPARK_DATA_DIR, 'dogpark.sqlite'),
@@ -142,12 +115,8 @@ async function main(): Promise<void> {
     'dogpark starting',
   );
   if (config.behindProxy) {
-    // 0.0.0.0 is the whole point of the declaration — the proxy has to reach
-    // us — but it is also every other interface. If the port is published, the
-    // proxy is no longer the only way in. A direct caller is refused — whether
-    // it omits `X-Forwarded-Proto` or forges `https`, since the header is
-    // believed only from the declared addresses — but by the time it is
-    // refused, its credentials have already crossed the network in the clear.
+    // A direct caller is refused, but not before its credentials have crossed
+    // the network in the clear (ADR-0016).
     app.log.warn(
       { host: binding.host, trustedProxies: config.trustProxy },
       'listening on every interface because a proxy is declared: publish this port only to ' +
@@ -161,9 +130,12 @@ async function main(): Promise<void> {
     );
   }
 
-  // Before the notifier and before listening: it walks the volume, and there
-  // is nothing in flight to race at this point.
-  const swept = await sweepOrphanedAttachments(store, config);
+  // Before listening: nothing is in flight to race the walk, and a volume
+  // that cannot be swept is not a reason to refuse to serve.
+  const swept = await sweepUnreferenced(
+    attachmentRoot(config.DOGPARK_DATA_DIR),
+    (id) => store.getAttachment(id as AttachmentId) !== undefined,
+  );
   if (swept.length > 0) {
     app.log.info({ count: swept.length }, 'collected attachment files no message references');
   }
@@ -171,7 +143,7 @@ async function main(): Promise<void> {
   const notifier = new Notifier(escalationQueue(store), {
     ...(config.DOGPARK_WEBHOOK_URL === undefined ? {} : { webhookUrl: config.DOGPARK_WEBHOOK_URL }),
   });
-  notifier.start(undefined, (error: unknown) => {
+  notifier.start((error: unknown) => {
     app.log.error({ err: error }, 'the escalation queue failed to drain');
   });
 

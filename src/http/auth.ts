@@ -1,6 +1,6 @@
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import { splitKey } from '../store/ids.js';
+import { constantTimeEquals, splitKey } from '../store/ids.js';
 import type { Authentication, SessionRecord } from '../store/index.js';
 import type { AppContext } from './context.js';
 import { csrfRefused, HttpError, unauthenticated } from './errors.js';
@@ -45,13 +45,6 @@ export function csrfTokenFor(sessionToken: string): string {
   return createHash('sha256').update(`dogpark-csrf:${sessionToken}`, 'utf8').digest('base64url');
 }
 
-function equals(a: string, b: string): boolean {
-  const left = Buffer.from(a, 'utf8');
-  const right = Buffer.from(b, 'utf8');
-  if (left.length !== right.length) return false;
-  return timingSafeEqual(left, right);
-}
-
 function bearerToken(header: string | undefined): string | undefined {
   if (header === undefined) return undefined;
   const match = /^Bearer[ ]+(\S+)$/i.exec(header.trim());
@@ -59,13 +52,9 @@ function bearerToken(header: string | undefined): string | undefined {
 }
 
 /**
- * The id in the middle of `dgp_<agent-id>_<secret>`, which travels in the clear
- * by design so that a rejected authentication is still attributable (see
- * `parseKey` in the store). Read here — never verified here — so a refused
- * attempt can be counted against the id it claimed without hashing anything.
- *
- * A token in no recognisable shape claims nothing, and every such attempt
- * shares one bucket.
+ * The id a key claims (`splitKey`), read without verifying anything, so a
+ * refused attempt can be bucketed by it. A token in no recognisable shape
+ * claims nothing, and every such attempt shares one bucket.
  */
 function claimedAgentId(presented: string): string {
   return splitKey(presented)?.agent ?? '';
@@ -133,7 +122,7 @@ export function authenticateHuman(ctx: AppContext) {
 
     if (SAFE_METHODS.has(request.method)) return;
     const presented = request.headers[CSRF_HEADER];
-    if (typeof presented !== 'string' || !equals(presented, csrfTokenFor(token))) {
+    if (typeof presented !== 'string' || !constantTimeEquals(presented, csrfTokenFor(token))) {
       throw csrfRefused('X-CSRF-Token is missing or does not match this session');
     }
   };

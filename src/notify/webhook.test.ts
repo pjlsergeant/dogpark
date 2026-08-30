@@ -25,7 +25,7 @@ function fakeQueue(pending: PendingEscalation[]) {
     gaveUp: [] as string[],
   };
   const queue: EscalationQueue = {
-    claimDue: () => pending,
+    listDue: () => pending,
     markSent: (id) => calls.sent.push(id),
     markFailed: (id, n) => calls.failed.push([id, n]),
     markGivenUp: (id) => calls.gaveUp.push(id),

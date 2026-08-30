@@ -18,9 +18,13 @@ export interface PendingEscalation {
   readonly attempts: number;
 }
 
-/** What the notifier needs from storage, and no more. */
+/**
+ * What the notifier needs from storage, and no more. `listDue` reads rather
+ * than claims: one process and one drain at a time (`Notifier.drain`) is what
+ * keeps two sends of one escalation apart.
+ */
 export interface EscalationQueue {
-  claimDue(now: number, limit: number): PendingEscalation[];
+  listDue(now: number, limit: number): PendingEscalation[];
   markSent(id: string): void;
   markFailed(id: string, nextAttemptAt: number): void;
   markGivenUp(id: string): void;
@@ -85,10 +89,10 @@ export class Notifier {
   async drain(limit = 20): Promise<number> {
     if (!this.#url) return 0;
 
-    // `claimDue` reads rather than claims, so two overlapping drains would
-    // send the same escalation twice — and the point of an escalation is that
-    // it wakes someone. One process, one writer, so a re-entrancy guard is
-    // enough; a second caller returns rather than queueing behind the first.
+    // Two overlapping drains would send the same escalation twice — and the
+    // point of an escalation is that it wakes someone. One process, so a
+    // re-entrancy guard is enough; a second caller returns rather than
+    // queueing behind the first.
     if (this.#draining) return 0;
     this.#draining = true;
     try {
@@ -99,7 +103,7 @@ export class Notifier {
   }
 
   async #drain(url: string, limit: number): Promise<number> {
-    const due = this.#queue.claimDue(this.#now(), limit);
+    const due = this.#queue.listDue(this.#now(), limit);
     let sent = 0;
 
     for (const e of due) {
@@ -122,7 +126,7 @@ export class Notifier {
     return sent;
   }
 
-  start(intervalMs = 10_000, onError: (e: unknown) => void): void {
+  start(onError: (e: unknown) => void, intervalMs = 10_000): void {
     // Failures inside the queue — not the webhook, which drain() handles —
     // would otherwise escape as an unhandled rejection from a timer, which
     // can take the process down and otherwise makes notification stop

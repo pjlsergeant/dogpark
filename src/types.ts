@@ -119,6 +119,8 @@ export interface Message {
   readonly sentAt: Timestamp;
 }
 
+export type EventId = string & { readonly __brand: 'EventId' };
+
 /**
  * Something that happened to this agent rather than something someone said.
  * Gaining access does not replay a space's history: the event says the space
@@ -128,8 +130,6 @@ export interface Message {
  * because they describe the agent's relationship to a space rather than its
  * contents — otherwise a revocation would delete the event announcing it.
  */
-export type EventId = string & { readonly __brand: 'EventId' };
-
 export type SystemEvent =
   | {
       readonly kind: 'space_access_granted';

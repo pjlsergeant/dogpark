@@ -1,3 +1,4 @@
+/** Admin response bodies, as pinned by "Admin response shapes" in docs/http-api.md. */
 import type {
   AgentRecord,
   ConversationSummary,
@@ -8,16 +9,6 @@ import type {
   Store,
 } from '../store/index.js';
 import type { Agent, AgentId, SpaceId } from '../types.js';
-
-/**
- * Admin response bodies, as pinned by "Admin response shapes" in
- * docs/http-api.md.
- *
- * A few fields go beyond that list — an agent's keys, a read-log row id, the
- * retry detail behind `notification`. Each is something the store already
- * holds and the human's UI treats as optional, so a reader built strictly to
- * the contract is unaffected.
- */
 
 function lookupAgent(store: Store, cache: Map<string, Agent>, id: AgentId): Agent {
   const cached = cache.get(id);

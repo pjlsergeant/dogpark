@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 
 /**
  * Crockford-style base32 without the letters that read as digits, so an id
@@ -45,4 +45,12 @@ export function newId(): string {
     out += ALPHABET[(bytes[i] ?? 0) % ALPHABET.length];
   }
   return out;
+}
+
+/** For secrets and their hashes: a length mismatch is the only early exit. */
+export function constantTimeEquals(a: string, b: string): boolean {
+  const left = Buffer.from(a, 'utf8');
+  const right = Buffer.from(b, 'utf8');
+  if (left.length !== right.length) return false;
+  return timingSafeEqual(left, right);
 }

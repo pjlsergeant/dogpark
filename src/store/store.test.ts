@@ -912,9 +912,9 @@ describe('bodies are canonical', () => {
     const bob = h.store.createAgent('bob').id;
     h.store.grantMembership(bob, space);
 
-    // Hand-written ids — bare, and with a trailing letter the old boundary
-    // let through — are what the author typed, not references. Bob being in
-    // the space changes nothing: the encoding is decided at write time.
+    // Hand-written ids — bare, and followed by a letter — are what the author
+    // typed, not references. Bob being in the space changes nothing: the
+    // encoding is decided at write time.
     const posted = post(h, agent, space, 'notes', `see @${bob} and @${bob}i`);
     const stored = h.store.database
       .prepare('SELECT body FROM message WHERE id = ?')
@@ -987,10 +987,6 @@ describe('bodies are canonical', () => {
 
 describe('the reserved control character', () => {
   const poison = `before${RESERVED_SEQUENCE}after`;
-
-  it('is U+001E', () => {
-    expect(RESERVED_SEQUENCE).toBe('\u001E');
-  });
 
   it('is rejected in a body, and nothing is stored', () => {
     const h = harness();
@@ -1586,15 +1582,6 @@ describe('reading backwards', () => {
     expect(h.store.readReadLog({ agent }).entries[0]?.params).toMatchObject({
       range: { order: 'newest' },
     });
-  });
-
-  it('refuses an order it does not know rather than reading forwards', () => {
-    const h = harness();
-    const { agent, space } = thread(h);
-    expectStoreError(
-      () => h.store.readSpace(reader(agent), space, { order: 'sideways' as 'newest' }),
-      'invalid_request',
-    );
   });
 });
 

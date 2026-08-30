@@ -1,4 +1,4 @@
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import Database from 'better-sqlite3';
@@ -37,7 +37,7 @@ import {
   type ReadLogCursor,
 } from './cursors.js';
 import { invalid, notFound, StoreError } from './errors.js';
-import { KEY_PREFIX, newId, splitKey } from './ids.js';
+import { constantTimeEquals, KEY_PREFIX, newId, splitKey } from './ids.js';
 import { migrate } from './migrate.js';
 import type { MigrateResult } from './migrate.js';
 import {
@@ -59,17 +59,10 @@ export type { Migration, MigrateResult } from './migrate.js';
 export type { ReadLogCursor } from './cursors.js';
 
 /**
- * Mints an id for an attachment that is about to be written.
- *
- * `AttachmentInput.id` is caller-minted on purpose — the file is written to
- * the volume under this id before the message row commits — but the alphabet
- * and the length are the store's, not the caller's. Without this export the
- * only way to satisfy the interface was to reach past it into `./ids.js`,
- * which made an internal module part of the contract by accident.
- *
- * Deliberately the only minter exported: agents, spaces, messages and
- * conversations get their ids from the store itself, and a caller that can
- * mint one of those can collide with one.
+ * Mints an attachment id for the caller, which writes the file under it before
+ * the message row commits (`AttachmentInput.id`). The only minter exported:
+ * every other id is the store's own, and a caller that can mint one can
+ * collide with one.
  */
 export function newAttachmentId(): AttachmentId {
   return newId() as AttachmentId;
@@ -79,11 +72,11 @@ export function newAttachmentId(): AttachmentId {
 // Public shapes the protocol does not already name
 // ---------------------------------------------------------------------------
 
-/** Who is reading. The human has no agent row, so the union is not `AgentId?`. */
+/**
+ * Who is reading or writing. The human has no agent row, so the union is not
+ * `AgentId?`; nor is the human bound by membership.
+ */
 export type Reader = { readonly kind: 'agent'; readonly id: AgentId } | { readonly kind: 'human' };
-
-/** Who is writing. The human has no agent row and is not bound by membership. */
-export type Writer = Reader;
 
 export interface AgentRecord extends Agent {
   readonly archived: boolean;
@@ -115,7 +108,6 @@ export interface KeyRecord {
 
 export interface Authentication {
   readonly agent: AgentRecord;
-  readonly keyId: string;
 }
 
 export interface MembershipInterval {
@@ -137,19 +129,16 @@ export interface AttachmentInput {
   readonly contentType: string;
   readonly sizeBytes: number;
   /**
-   * A digest of the bytes, if the caller has one. Not stored: it exists so
-   * that a retried write hashes to the same request as the original.
-   *
-   * Without it, two uploads agreeing on name, type and size are the same
-   * request as far as an idempotency key is concerned, whatever the bytes say.
-   * The caller streams those bytes to the volume and can hash them on the way
-   * past; the store never sees them.
+   * A digest of the bytes, if the caller has one. Not stored: it goes into the
+   * idempotency request hash, so a retry that uploads a different file under
+   * the same name, type and size is a different request. The store never sees
+   * the bytes; the caller hashes them on the way to the volume.
    */
   readonly contentDigest?: string | undefined;
 }
 
 export interface PostMessageInput {
-  readonly sender: Writer;
+  readonly sender: Reader;
   readonly target: PostTarget;
   readonly body: string;
   readonly attachments?: readonly AttachmentInput[] | undefined;
@@ -365,8 +354,6 @@ interface ReadLogRow {
   params_json: string;
   cursor: string;
   item_count: number;
-  /** The newest label_history.seq when the row was written (migration 0002). */
-  label_seq: number;
 }
 
 /** Everything the read-log statements bind apart from the agent. */
@@ -393,11 +380,9 @@ interface StreamRow {
 }
 
 const DEFAULT_LIMIT = 100;
-const MAX_LIMIT = 1000;
 
 const READ_LOG_COLUMNS =
-  'SELECT rowid AS row_id, id, agent_id, read_at, kind, params_json, cursor, item_count, ' +
-  '       label_seq ' +
+  'SELECT rowid AS row_id, id, agent_id, read_at, kind, params_json, cursor, item_count ' +
   '  FROM read_log WHERE ';
 
 /**
@@ -429,14 +414,7 @@ function requestHash(value: unknown): string {
 function clampLimit(limit: number | undefined): number {
   if (limit === undefined) return DEFAULT_LIMIT;
   if (!Number.isInteger(limit) || limit < 1) throw invalid('limit must be a positive integer');
-  return Math.min(limit, MAX_LIMIT);
-}
-
-function constantTimeEquals(a: string, b: string): boolean {
-  const left = Buffer.from(a, 'utf8');
-  const right = Buffer.from(b, 'utf8');
-  if (left.length !== right.length) return false;
-  return timingSafeEqual(left, right);
+  return limit;
 }
 
 // ---------------------------------------------------------------------------
@@ -489,10 +467,11 @@ export interface Store {
   }): readonly MembershipInterval[];
 
   // Conversations
+  /** Test fixtures only: production opens threads through `postMessage`. */
   resolveOrCreateConversation(
     space: SpaceId,
     title: string,
-    createdBy?: Writer | undefined,
+    createdBy?: Reader | undefined,
   ): Conversation;
   getConversation(conversation: ConversationId): Conversation | undefined;
   renameConversation(conversation: ConversationId, title: string): Conversation;
@@ -596,11 +575,9 @@ export interface Store {
 
 /**
  * Who a write is idempotent for. An agent is its own id; the human is
- * `HUMAN_WRITER`, which carries a character the id alphabet does not, so no id
- * the application mints can equal it. `agent.id` itself is unconstrained TEXT,
- * so an agent hand-written into the table could still carry the sentinel —
- * this refuses to write for one, so the collision is enforced rather than
- * argued away (schema.sql, Idempotency).
+ * `HUMAN_WRITER`, which carries a character the id alphabet does not. A row
+ * hand-written into `agent` could still carry the sentinel, so `writerOf`
+ * refuses to write for one (schema.sql, Idempotency).
  */
 const HUMAN_WRITER = ':human';
 
@@ -730,9 +707,6 @@ export function openStore(options: StoreOptions): Store {
     ),
     closeMembership: db.prepare<{ id: string; at: string; seq: number }, unknown>(
       'UPDATE membership SET revoked_at = @at, revoked_seq = @seq WHERE id = @id',
-    ),
-    everMember: db.prepare<{ agent: string; space: string }, { one: number }>(
-      'SELECT 1 AS one FROM membership WHERE agent_id = @agent AND space_id = @space LIMIT 1',
     ),
     spacesForAgent: db.prepare<{ agent: string }, SpaceRow>(
       'SELECT s.id, s.name FROM space s JOIN membership m ON m.space_id = s.id ' +
@@ -1344,7 +1318,7 @@ export function openStore(options: StoreOptions): Store {
   });
 
   const resolveConversationTx = db.transaction(
-    (space: SpaceId, title: string, createdBy: Writer | undefined): ConversationRow => {
+    (space: SpaceId, title: string, createdBy: Reader | undefined): ConversationRow => {
       // Resolve-or-create in one statement pair inside one transaction, so two
       // writers racing on the same subject line cannot open two threads
       // (ADR-0012).
@@ -1406,12 +1380,8 @@ export function openStore(options: StoreOptions): Store {
           ? { conversation: input.target.conversation }
           : { space: input.target.space, title: input.target.title },
       body: input.body,
-      // Deliberately without `id`: attachment ids are minted per request, so a
-      // retry that uploads the same files carries different ones and would
-      // hash differently every time — the write would never be replayable,
-      // which is the one thing the key promises. What identifies a file here
-      // is what the caller stated about it, plus `contentDigest` when the
-      // caller computed one.
+      // Without `id`: attachment ids are minted per request, so a retry would
+      // never hash the same. See `AttachmentInput.contentDigest`.
       attachments: (input.attachments ?? []).map((a) => ({
         filename: a.filename,
         contentType: a.contentType,
@@ -1717,11 +1687,6 @@ export function openStore(options: StoreOptions): Store {
    */
   function planQuery(range: Range | undefined, limit: number | undefined): QueryPlan {
     const order = range?.order ?? 'oldest';
-    // The HTTP layer validates this against `Range`, but the store is also
-    // called directly, and a typo would otherwise silently read forwards.
-    if (order !== 'oldest' && order !== 'newest') {
-      throw invalid("order must be 'oldest' or 'newest'");
-    }
     return {
       order,
       after:
@@ -1835,19 +1800,9 @@ export function openStore(options: StoreOptions): Store {
   // Keys
   // -------------------------------------------------------------------------
 
-  /**
-   * `dgp_<agent-id>_<secret>`. The id travels in the clear so a rejected
-   * authentication is still attributable — otherwise a mistyped key and an
-   * agent that was never started are indistinguishable.
-   */
-  function parseKey(presented: string): { agent: AgentId } | undefined {
-    const split = splitKey(presented);
-    return split === undefined ? undefined : { agent: split.agent as AgentId };
-  }
-
   const verifyKeyTx = db.transaction(
     (presented: string, countFailure: boolean): Authentication | undefined => {
-      const parsed = parseKey(presented);
+      const parsed = splitKey(presented);
       const at = now();
 
       const fail = (): undefined => {
@@ -1880,7 +1835,7 @@ export function openStore(options: StoreOptions): Store {
       const refreshed = st.getAgent.get({ id: row.agent_id });
       /* c8 ignore next */
       if (refreshed === undefined) throw new Error('agent vanished');
-      return { agent: toAgentRecord(refreshed), keyId: row.id };
+      return { agent: toAgentRecord(refreshed) };
     },
   );
 
@@ -2131,8 +2086,6 @@ export function openStore(options: StoreOptions): Store {
         contentType: row.content_type,
         sizeBytes: row.size_bytes,
         message: row.message_id as MessageId,
-        // Already joined for; withholding it only bought the caller a second
-        // lookup to authorise a download.
         space: row.space_id as SpaceId,
       };
     },

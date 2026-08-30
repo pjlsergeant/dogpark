@@ -35,10 +35,8 @@ function sqlFile(name: string): string {
  */
 export const MIGRATIONS: readonly Migration[] = [
   { version: 1, name: 'initial', sql: sqlFile('schema.sql') },
-  // Amended once before it had run anywhere durable (the first cut lacked
-  // read_log.label_seq). If a database ever turns up that ran that cut,
-  // openStore fails at prepare on the missing column; the remedy is a
-  // version 3 of exactly:
+  // A version-2 database missing read_log.label_seq fails at prepare in
+  // openStore; the remedy is a version 3 of exactly:
   //   ALTER TABLE read_log ADD COLUMN label_seq INTEGER NOT NULL DEFAULT 0
   {
     version: 2,

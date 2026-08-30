@@ -47,17 +47,11 @@ export async function readSecret(input: SecretInput, output: SecretOutput): Prom
 }
 
 /**
- * The human's password, verified against `DOGPARK_PASSWORD_HASH`.
- *
- * The design says "a password hash from the environment" and stops there, so
- * the encoding is chosen here: scrypt, because Node has it in core and adding
- * a native argon2 dependency to a container that already builds better-sqlite3
- * buys little.
+ * `DOGPARK_PASSWORD_HASH` is scrypt, because Node has it in core and a native
+ * argon2 dependency buys little in a container that already builds
+ * better-sqlite3:
  *
  *   scrypt$<N>$<r>$<p>$<salt base64url>$<derived key base64url>
- *
- * Mint one with `node dist/server.js hash-password`, which reads the password
- * from stdin.
  */
 const SCHEME = 'scrypt';
 const N = 16_384;
