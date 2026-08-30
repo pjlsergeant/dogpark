@@ -235,9 +235,13 @@ function Thread({
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
   const [renaming, setRenaming] = useState(false);
+  // A read is out. `pages` does not change until one lands, so without this the
+  // poll below can fire mid-`loadOlder` and overwrite the page it is fetching.
+  const inFlight = useRef(false);
   const bottom = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
+    inFlight.current = true;
     setBusy(true);
     setError(null);
     try {
@@ -251,12 +255,14 @@ function Thread({
     } catch (cause) {
       setError(toApiError(cause));
     } finally {
+      inFlight.current = false;
       setBusy(false);
     }
   }, [api, conversation]);
 
   const loadOlder = useCallback(async () => {
     if (loaded === null || loaded.nextCursor === null) return;
+    inFlight.current = true;
     setBusy(true);
     try {
       const page = await api.readConversation(conversation, {
@@ -276,6 +282,7 @@ function Thread({
     } catch (cause) {
       setError(toApiError(cause));
     } finally {
+      inFlight.current = false;
       setBusy(false);
     }
   }, [api, conversation, loaded]);
@@ -284,12 +291,13 @@ function Thread({
     void load();
   }, [load]);
 
-  // Poll while the tab is in front. Only with one page showing: the newest
+  // Poll while the tab is in front. Only with one page showing — the newest
   // page is always the current one, but a reload would drop older pages
-  // already pulled.
+  // already pulled — and never while a read is out, because `loadOlder` is
+  // prepending to state this would replace wholesale.
   useEffect(() => {
     const timer = globalThis.setInterval(() => {
-      if (document.visibilityState !== 'visible') return;
+      if (document.visibilityState !== 'visible' || inFlight.current) return;
       setLoaded((current) => {
         if (current !== null && current.pages === 1) void load();
         return current;

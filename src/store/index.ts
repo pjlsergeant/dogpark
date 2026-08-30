@@ -563,12 +563,14 @@ export interface Store {
 }
 
 /**
- * Who a write is idempotent for. An agent is its own id; the human is the
- * literal `human`, which no agent id can be — ids are sixteen characters of a
- * restricted base32 alphabet (migration 0003).
+ * Who a write is idempotent for. An agent is its own id; the human is
+ * `HUMAN_WRITER`, which carries a character the id alphabet does not, so no id
+ * can ever equal it (migration 0003).
  */
+const HUMAN_WRITER = ':human';
+
 function writerOf(sender: { readonly kind: 'agent' | 'human'; readonly id?: AgentId }): string {
-  return sender.kind === 'agent' && sender.id !== undefined ? sender.id : 'human';
+  return sender.kind === 'agent' && sender.id !== undefined ? sender.id : HUMAN_WRITER;
 }
 
 export function openStore(options: StoreOptions): Store {

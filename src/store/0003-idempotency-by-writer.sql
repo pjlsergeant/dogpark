@@ -7,10 +7,14 @@
 -- every key on restart and stored rendered results the store deliberately
 -- does not (ADR-0014).
 --
--- `writer` holds an agent id or the literal `human`. The two cannot collide:
--- an agent id is sixteen characters from a restricted base32 alphabet, so no
--- agent id is ever the five letters `human`. The foreign key goes with the
--- rename, because the human has nothing to reference.
+-- `writer` holds an agent id or the literal `:human`. The two cannot collide,
+-- and not merely because ids are sixteen characters long: `:` is outside the
+-- id alphabet entirely, so no id — including one a hand-written row put in the
+-- agent table, which this schema does not constrain — can ever equal it.
+--
+-- The foreign key goes with the rename, because the human has nothing to
+-- reference. Nothing deletes an agent (archiving is not retirement, ADR-0013),
+-- so no row is orphaned by losing it.
 CREATE TABLE idempotency_by_writer (
   writer TEXT NOT NULL,
   key TEXT NOT NULL,
