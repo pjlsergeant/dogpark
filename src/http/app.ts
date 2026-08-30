@@ -38,11 +38,12 @@ const SESSION_TTL_SECONDS = 12 * 60 * 60;
 const LOGINS_PER_MINUTE = 10;
 
 /**
- * Failed bearer authentications tolerated per minute, per source address and
- * per claimed agent id. A key that does not verify is never a healthy client's
- * ordinary traffic, so this is deliberately far below `requestsPerMinute`: it
- * is the ceiling on unauthenticated hashing, and on how fast a stranger can
- * inflate an agent's failed-attempt counter.
+ * Failed bearer authentications *counted* per minute, per source address and
+ * per claimed agent id. Every presented key is still hashed and answered with
+ * the same 401 — ADR-0015 refuses nothing, so a flood of forgeries cannot
+ * lock a healthy key out — which makes this a ceiling only on how fast a
+ * stranger can inflate an agent's failed-attempt counter, not on the hashing
+ * itself. Request-rate flooding is the reverse proxy's job.
  */
 const FAILED_AUTHS_PER_MINUTE = 20;
 

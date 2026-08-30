@@ -1,4 +1,19 @@
-import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
+import { randomBytes, scrypt, scryptSync, timingSafeEqual, type ScryptOptions } from 'node:crypto';
+
+// Not `promisify(scrypt)`: the types resolve that to the overload without
+// options, and the options carry `maxmem`, which cannot be dropped.
+function scryptAsync(
+  password: string,
+  salt: Buffer,
+  keyLength: number,
+  options: ScryptOptions,
+): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    scrypt(password, salt, keyLength, options, (error, key) =>
+      error === null ? resolve(key) : reject(error),
+    );
+  });
+}
 
 /**
  * What `readSecret` needs of stdin: the bytes, and — when it is a terminal —
@@ -107,12 +122,17 @@ export function assertUsablePasswordHash(stored: string): void {
   }
 }
 
-export function verifyPassword(stored: string, password: string): boolean {
+/**
+ * Async where `hashPassword` is not: this runs on a request path in the one
+ * process that is also every agent's long poll, and scrypt is deliberately
+ * slow. The derivation happens in the threadpool, not on the event loop.
+ */
+export async function verifyPassword(stored: string, password: string): Promise<boolean> {
   const parsed = parse(stored);
   if (parsed === undefined) return false;
   // `maxmem` scales with N*r*128; the default 32MB rejects the parameters
   // above, so it is raised rather than the work factor lowered.
-  const derived = scryptSync(password, parsed.salt, parsed.key.length, {
+  const derived = await scryptAsync(password, parsed.salt, parsed.key.length, {
     N: parsed.n,
     r: parsed.r,
     p: parsed.p,

@@ -52,9 +52,9 @@ describe('readSecret', () => {
 });
 
 describe('the hash round-trips', () => {
-  it('verifies what it minted and nothing else', () => {
+  it('verifies what it minted and nothing else', async () => {
     const hash = hashPassword('a password');
-    expect(verifyPassword(hash, 'a password')).toBe(true);
-    expect(verifyPassword(hash, 'a passwor')).toBe(false);
+    await expect(verifyPassword(hash, 'a password')).resolves.toBe(true);
+    await expect(verifyPassword(hash, 'a passwor')).resolves.toBe(false);
   });
 });

@@ -64,7 +64,7 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
       if (!verdict.allowed) throw unauthenticated('too many attempts; wait and try again');
 
       const { password } = parse(PasswordBody, request.body, 'request body');
-      if (!verifyPassword(ctx.config.DOGPARK_PASSWORD_HASH, password)) {
+      if (!(await verifyPassword(ctx.config.DOGPARK_PASSWORD_HASH, password))) {
         throw unauthenticated('that password is not correct');
       }
 
