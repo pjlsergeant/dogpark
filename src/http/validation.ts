@@ -91,6 +91,12 @@ export const RangeQuery = z.strictObject({
 
 export const AgentsQuery = z.strictObject({ space: Id.optional() });
 
+/** The human's long poll: the last version seen, and how long to wait past it. */
+export const ChangesQuery = z.strictObject({
+  after: z.coerce.number().int().nonnegative().optional(),
+  waitSeconds: z.coerce.number().int().nonnegative().optional(),
+});
+
 export const ReadLogQuery = z.strictObject({
   agent: Id.optional(),
   limit: z.coerce.number().int().positive().optional(),

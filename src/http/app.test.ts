@@ -1761,3 +1761,90 @@ describe('the agent guide', () => {
     expect(response.json()).toEqual({ code: 'not_found', message: 'not found' });
   });
 });
+
+describe("the human's long poll and space counts", () => {
+  let h: Harness;
+  beforeEach(async () => {
+    h = await harness();
+  });
+  afterEach(() => teardown(h));
+
+  const human = async (): Promise<{
+    cookie: string;
+    csrf: string;
+    get: (url: string) => Promise<LightMyRequestResponse>;
+    post: (url: string, payload: Record<string, unknown>) => Promise<LightMyRequestResponse>;
+  }> => {
+    const session = await login(h);
+    return {
+      ...session,
+      get: (url) => h.app.inject({ method: 'GET', url, headers: { cookie: session.cookie } }),
+      post: (url, payload) =>
+        h.app.inject({
+          method: 'POST',
+          url,
+          headers: { cookie: session.cookie, 'x-csrf-token': session.csrf },
+          payload,
+        }),
+    };
+  };
+
+  it('reports the version at once without `after`, or when `after` is not the current one', async () => {
+    const me = await human();
+    expect((await me.get('/api/admin/changes')).json()).toEqual({ version: 0 });
+    // A restart resets the count: a stale `after` from before it is answered
+    // immediately rather than waited on.
+    const stale = await me.get('/api/admin/changes?after=5&waitSeconds=2');
+    expect(stale.json()).toEqual({ version: 0 });
+  });
+
+  it('holds until a write, then reports the version it moved to', async () => {
+    const me = await human();
+    const space = (await me.post('/api/admin/spaces', { name: 'acme' })).json() as { id: string };
+    // Creating a space is not a write agents are woken for.
+    expect((await me.get('/api/admin/changes')).json()).toEqual({ version: 0 });
+
+    const waiting = me.get('/api/admin/changes?after=0&waitSeconds=2');
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const started = Date.now();
+    await me.post('/api/admin/messages', {
+      target: { space: space.id, title: 'hello' },
+      body: 'anyone here?',
+    });
+    const woke = await waiting;
+    expect(woke.json()).toEqual({ version: 1 });
+    expect(Date.now() - started).toBeLessThan(1500);
+  });
+
+  it('times out to the unchanged version when nothing is written', async () => {
+    const me = await human();
+    const started = Date.now();
+    const quiet = await me.get('/api/admin/changes?after=0&waitSeconds=1');
+    expect(quiet.json()).toEqual({ version: 0 });
+    expect(Date.now() - started).toBeGreaterThanOrEqual(900);
+  });
+
+  it('lists every space with its thread and message counts', async () => {
+    const me = await human();
+    const acme = (await me.post('/api/admin/spaces', { name: 'acme' })).json() as { id: string };
+    await me.post('/api/admin/spaces', { name: 'quiet' });
+    await me.post('/api/admin/messages', { target: { space: acme.id, title: 'one' }, body: 'a' });
+    await me.post('/api/admin/messages', { target: { space: acme.id, title: 'one' }, body: 'b' });
+    await me.post('/api/admin/messages', { target: { space: acme.id, title: 'two' }, body: 'c' });
+
+    const listed = (await me.get('/api/admin/spaces')).json() as {
+      name: string;
+      conversationCount: number;
+      messageCount: number;
+      lastActivityAt: string | null;
+    }[];
+    expect(listed.map((s) => s.name)).toEqual(['acme', 'quiet']);
+    expect(listed[0]).toMatchObject({ conversationCount: 2, messageCount: 3 });
+    expect(listed[0]?.lastActivityAt).toEqual(expect.any(String));
+    expect(listed[1]).toMatchObject({
+      conversationCount: 0,
+      messageCount: 0,
+      lastActivityAt: null,
+    });
+  });
+});

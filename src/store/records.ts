@@ -61,6 +61,14 @@ export interface KeyRecord {
   readonly revokedAt: Timestamp | null;
 }
 
+/** A space as the human's list shows it: how much is in it, and when it last moved. */
+export interface SpaceSummary extends Space {
+  readonly conversationCount: number;
+  readonly messageCount: number;
+  /** When the last message in any of its threads landed. Null for a space nobody has posted in. */
+  readonly lastActivityAt: Timestamp | null;
+}
+
 export interface MembershipInterval {
   readonly id: string;
   readonly agent: AgentId;
@@ -307,6 +315,8 @@ export interface Store {
   createSpace(name: string): Space;
   renameSpace(space: SpaceId, name: string): Space;
   listSpaces(): readonly Space[];
+  /** Every space with its counts, for the human's list. */
+  listSpaceSummaries(): readonly SpaceSummary[];
   getSpace(space: SpaceId): Space | undefined;
   grantMembership(agent: AgentId, space: SpaceId): boolean;
   revokeMembership(agent: AgentId, space: SpaceId): boolean;

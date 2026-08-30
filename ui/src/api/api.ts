@@ -24,6 +24,7 @@ import type {
   SearchResult,
   SessionCredentials,
   Space,
+  SpaceSummary,
   SpaceId,
   SpaceMembers,
 } from './types.js';
@@ -49,7 +50,18 @@ export interface DogparkAdminApi {
   logout(): Promise<void>;
 
   // Spaces ----------------------------------------------------------------
-  listSpaces(): Promise<readonly Space[]>;
+  listSpaces(): Promise<readonly SpaceSummary[]>;
+  /**
+   * Resolves once something has been written since `after` — a post, a
+   * membership change — or when `waitSeconds` run out, with the version to
+   * pass next time. The app holds one of these open while it is visible and
+   * refreshes what a write can move when it returns.
+   */
+  awaitChanges(
+    after: number | undefined,
+    waitSeconds: number,
+    signal?: AbortSignal | undefined,
+  ): Promise<number>;
   createSpace(name: string): Promise<Space>;
   /** The contract pins no body for a rename; nothing is read back. */
   renameSpace(id: SpaceId, name: string): Promise<void>;

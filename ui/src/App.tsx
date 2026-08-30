@@ -7,6 +7,7 @@ import type { ReactNode } from 'react';
 import type { DogparkAdminApi } from './api/index.js';
 import { ApiError, createHttpApi } from './api/index.js';
 import { AppProvider, useApp } from './app/api-context.js';
+import { ChangesProvider } from './app/changes.js';
 import type { Session } from './app/api-context.js';
 import { href, navigate, useRoute } from './app/router.js';
 import { ToastHost } from './components/Toasts.js';
@@ -115,9 +116,11 @@ export function App(): ReactNode {
 
   return (
     <AppProvider value={value}>
-      <ToastHost>
-        <Shell />
-      </ToastHost>
+      <ChangesProvider api={value.api}>
+        <ToastHost>
+          <Shell />
+        </ToastHost>
+      </ChangesProvider>
     </AppProvider>
   );
 }

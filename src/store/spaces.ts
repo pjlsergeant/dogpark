@@ -13,6 +13,7 @@ export function spaceStore(
   | 'createSpace'
   | 'renameSpace'
   | 'listSpaces'
+  | 'listSpaceSummaries'
   | 'getSpace'
   | 'grantMembership'
   | 'revokeMembership'
@@ -82,6 +83,15 @@ export function spaceStore(
 
     listSpaces() {
       return st.listSpaces.all().map(toSpace);
+    },
+
+    listSpaceSummaries() {
+      return st.spaceSummaries.all().map((row) => ({
+        ...toSpace(row),
+        conversationCount: row.conversation_count,
+        messageCount: row.message_count,
+        lastActivityAt: row.last_sent_at as Timestamp | null,
+      }));
     },
 
     getSpace(space) {

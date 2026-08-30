@@ -7,6 +7,7 @@ import { useCallback, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { AdminAgent, AgentId, Space, SpaceId } from '../api/index.js';
 import { useApi } from '../app/api-context.js';
+import { useOnChange } from '../app/changes.js';
 import { useAsync } from '../app/useAsync.js';
 import { href } from '../app/router.js';
 import { Empty, Facts, Fact, Failure, Id, Loading, Pill, Time } from '../components/bits.js';
@@ -17,6 +18,8 @@ export function SpacesScreen(): ReactNode {
   const api = useApi();
   const notify = useNotify();
   const spaces = useAsync(() => api.listSpaces(), [api]);
+  // The counts move with every post.
+  useOnChange(spaces.reload);
   const [creating, setCreating] = useState(false);
   const [renaming, setRenaming] = useState<Space | null>(null);
 
@@ -50,6 +53,17 @@ export function SpacesScreen(): ReactNode {
                   {space.name}
                 </a>
                 <Id value={space.id} />
+                <p className="muted small">
+                  {space.conversationCount} thread{space.conversationCount === 1 ? '' : 's'}
+                  {' · '}
+                  {space.messageCount} message{space.messageCount === 1 ? '' : 's'}
+                  {space.lastActivityAt !== null && (
+                    <>
+                      {' · last '}
+                      <Time iso={space.lastActivityAt} />
+                    </>
+                  )}
+                </p>
                 <div className="card-actions">
                   <a className="btn btn-quiet" href={href.read(space.id)}>
                     Read
@@ -108,6 +122,11 @@ export function SpaceScreen({ space }: { space: SpaceId }): ReactNode {
   // The members response does not carry the space, so its name comes from here.
   const spaces = useAsync(() => api.listSpaces(), [api]);
   const conversations = useAsync(() => api.listConversations(space), [api, space]);
+  // Membership and threads both move on writes the long poll reports.
+  useOnChange(() => {
+    members.reload();
+    conversations.reload();
+  });
   const [renaming, setRenaming] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [adding, setAdding] = useState<AgentId | ''>('');

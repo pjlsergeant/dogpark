@@ -33,6 +33,12 @@ export interface SpaceRow {
   name: string;
 }
 
+export interface SpaceSummaryRow extends SpaceRow {
+  conversation_count: number;
+  message_count: number;
+  last_sent_at: string | null;
+}
+
 export interface AgentNameRow {
   id: string;
   display_name: string;
@@ -258,6 +264,18 @@ export function prepareStatements(db: Db) {
       'UPDATE space SET name = @name WHERE id = @id',
     ),
     listSpaces: prepare<[], SpaceRow>('SELECT id, name FROM space ORDER BY name'),
+    // Three correlated counts rather than one join-and-group: a space with no
+    // threads still needs a row, and a join through conversation to message
+    // would multiply nothing into nothing.
+    spaceSummaries: prepare<[], SpaceSummaryRow>(
+      'SELECT s.id AS id, s.name AS name, ' +
+        '       (SELECT COUNT(*) FROM conversation c WHERE c.space_id = s.id) AS conversation_count, ' +
+        '       (SELECT COUNT(*) FROM message m JOIN conversation c ON c.id = m.conversation_id ' +
+        '         WHERE c.space_id = s.id) AS message_count, ' +
+        '       (SELECT MAX(m.sent_at) FROM message m JOIN conversation c ON c.id = m.conversation_id ' +
+        '         WHERE c.space_id = s.id) AS last_sent_at ' +
+        '  FROM space s ORDER BY s.name',
+    ),
 
     openMembership: prepare<{ agent: string; space: string }, { id: string }>(
       'SELECT id FROM membership WHERE agent_id = @agent AND space_id = @space AND revoked_seq IS NULL',

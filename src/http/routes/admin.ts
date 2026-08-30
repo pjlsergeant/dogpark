@@ -25,6 +25,7 @@ import {
   asSearchCursor,
   asSpaceId,
   asTimestamp,
+  ChangesQuery,
   EscalationsQuery,
   HumanPostBody,
   KeyBody,
@@ -113,7 +114,36 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
       // Spaces and membership
       // ---------------------------------------------------------------------
 
-      guarded.get('/spaces', async () => ctx.store.listSpaces());
+      guarded.get('/spaces', async () => ctx.store.listSpaceSummaries());
+
+      /**
+       * The human's long poll. A version that moves on every write agents are
+       * woken for — a post, a membership change — so the UI can hold one of
+       * these open and refresh what it shows when it returns, rather than
+       * asking on a timer. `after` is the version last seen: a write that
+       * landed between two requests answers the next one at once, and a
+       * restart (which resets the count) reads as a change, which it may as
+       * well be. Without `after` or a wait it simply reports the version.
+       */
+      guarded.get('/changes', async (request, reply) => {
+        const query = parse(ChangesQuery, request.query, 'query');
+        const waitSeconds = Math.min(query.waitSeconds ?? 0, ctx.limits.maxWaitSeconds);
+        const current = ctx.writes.version;
+        if (query.after === undefined || query.after !== current || waitSeconds === 0) {
+          return { version: current };
+        }
+        const gone = new AbortController();
+        const onClose = (): void => {
+          if (!reply.raw.writableFinished) gone.abort();
+        };
+        reply.raw.on('close', onClose);
+        try {
+          await ctx.writes.wait(waitSeconds * 1000, gone.signal);
+        } finally {
+          reply.raw.off('close', onClose);
+        }
+        return { version: ctx.writes.version };
+      });
 
       guarded.post('/spaces', async (request, reply) => {
         const { name } = parse(NameBody, request.body, 'request body');

@@ -66,9 +66,11 @@ export function normalizeTimestamp(field: string, value: string): Timestamp {
   if (shape === null) throw invalid(`${field} is not an ISO-8601 timestamp`);
   // `Date.parse` refuses an impossible hour or offset but rolls an impossible
   // day forward — `2026-02-30` becomes March the 2nd — so the day is checked
-  // against its month here. Day zero of the next month is the last of this.
+  // against its month here.
   const [year, month, day] = [Number(shape[1]), Number(shape[2]), Number(shape[3])];
-  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  // Not Date.UTC, which reads a year of 0-99 as 1900-1999.
+  const leap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+  const daysInMonth = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1] ?? 0;
   const ms = Date.parse(value);
   if (Number.isNaN(ms) || month < 1 || month > 12 || day < 1 || day > daysInMonth) {
     throw invalid(`${field} is not a valid ISO-8601 timestamp`);

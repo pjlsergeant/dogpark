@@ -133,6 +133,9 @@ export function messageStore(
     // from input — the only one a row carries is the encoder's own mention
     // marker (text.ts), which is what makes that marker unforgeable.
     assertNoReservedSequence('body', input.body);
+    if (input.idempotencyKey !== undefined) {
+      assertNoReservedSequence('idempotencyKey', input.idempotencyKey);
+    }
     if ('title' in input.target) assertNonEmpty('title', input.target.title);
     for (const attachment of input.attachments ?? []) {
       assertNoReservedSequence('filename', attachment.filename);

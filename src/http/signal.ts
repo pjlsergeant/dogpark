@@ -8,8 +8,19 @@
  */
 export class WriteSignal {
   #waiters = new Set<() => void>();
+  #version = 0;
+
+  /**
+   * How many writes have been signalled since the process started. A caller
+   * that remembers the last value it saw can tell whether one landed between
+   * two of its requests, which a bare wake-up cannot say.
+   */
+  get version(): number {
+    return this.#version;
+  }
 
   notify(): void {
+    this.#version += 1;
     const waiting = [...this.#waiters];
     this.#waiters.clear();
     for (const wake of waiting) wake();

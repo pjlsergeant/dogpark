@@ -26,7 +26,10 @@ describe('normalizeTimestamp', () => {
     ]) {
       expect(() => normalizeTimestamp('until', value)).toThrow('not a valid ISO-8601 timestamp');
     }
-    // A leap day in a leap year is a real day.
+    // A leap day in a leap year is a real day — including year 0, which is
+    // one, and which Date.UTC would have read as 1900.
     expect(normalizeTimestamp('until', '2024-02-29')).toBe('2024-02-29T00:00:00.000Z');
+    expect(normalizeTimestamp('until', '0000-02-29')).toBe('0000-02-29T00:00:00.000Z');
+    expect(() => normalizeTimestamp('until', '0100-02-29')).toThrow('not a valid ISO-8601');
   });
 });

@@ -25,6 +25,7 @@ import type {
   SearchResult,
   SessionCredentials,
   Space,
+  SpaceSummary,
   SpaceMembers,
 } from './types.js';
 import { ApiError } from './types.js';
@@ -39,6 +40,8 @@ interface RequestOptions {
   readonly query?: Readonly<Record<string, string | number | undefined>> | undefined;
   /** Treat these statuses as `null` rather than throwing. */
   readonly softFail?: readonly number[] | undefined;
+  /** For a request that may be abandoned, such as a long poll on a tab going to the background. */
+  readonly signal?: AbortSignal | undefined;
 }
 
 /** Errors are `{ code, message, retryAfterSeconds? }` — anything else is ours. */
@@ -107,6 +110,7 @@ export function createHttpApi(): DogparkAdminApi {
         ...(body === undefined ? {} : { body }),
         credentials: 'same-origin',
         redirect: 'error',
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
       });
     } catch (cause) {
       throw new ApiError({
@@ -176,7 +180,14 @@ export function createHttpApi(): DogparkAdminApi {
     },
 
     async listSpaces() {
-      return (await request('GET', '/spaces')) as Space[];
+      return (await request('GET', '/spaces')) as SpaceSummary[];
+    },
+    async awaitChanges(after, waitSeconds, signal) {
+      const raw = (await request('GET', '/changes', {
+        query: { after, waitSeconds },
+        signal,
+      })) as { version: number };
+      return raw.version;
     },
     async createSpace(name) {
       return (await request('POST', '/spaces', { json: { name } })) as Space;

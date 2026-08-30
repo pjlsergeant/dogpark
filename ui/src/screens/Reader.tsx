@@ -18,6 +18,7 @@ import type {
   SpaceId,
 } from '../api/index.js';
 import { useApi } from '../app/api-context.js';
+import { useOnChange } from '../app/changes.js';
 import { toApiError, useAsync } from '../app/useAsync.js';
 import { href, navigate } from '../app/router.js';
 import { absoluteTime, dayHeading, sameDay } from '../app/format.js';
@@ -28,7 +29,12 @@ import { NameDialog } from '../components/NameDialog.js';
 import { loadThread, olderPage } from './thread-pages.js';
 import type { Loaded } from './thread-pages.js';
 
-const POLL_MS = 20_000;
+/**
+ * A backstop only. New messages arrive through the app's long poll
+ * (`app/changes.tsx`) the moment they are written; this catches one that the
+ * poll missed — a reload that was in flight when the change came, say.
+ */
+const POLL_MS = 60_000;
 
 export function ReaderScreen({
   space,
@@ -104,6 +110,8 @@ function SpaceReader({
 }): ReactNode {
   const api = useApi();
   const conversations = useAsync(() => api.listConversations(space), [api, space]);
+  // A new thread, or a last-activity that moved: the list follows the writes.
+  useOnChange(conversations.reload);
   const threads = useMemo(() => {
     const needle = filter.trim().toLowerCase();
     const all = conversations.state.data ?? [];
@@ -358,6 +366,12 @@ function Thread({
     seek.current = highlight;
     void load();
   }, [load, highlight]);
+
+  // Something was written somewhere: look at the tip now rather than at the
+  // next tick. It may have been another thread — then nothing is added.
+  useOnChange(() => {
+    if (asOf === undefined && !reloading.current) void pollNewest();
+  });
 
   useEffect(() => {
     // A thread as of a past read does not move.

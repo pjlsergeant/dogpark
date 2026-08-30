@@ -14,7 +14,7 @@ import type {
   Store,
 } from './records.js';
 import type { EscalationBounds, EscalationRow } from './statements.js';
-import { assertNonEmpty, normalizeTimestamp } from './text.js';
+import { assertNoReservedSequence, assertNonEmpty, normalizeTimestamp } from './text.js';
 
 export function escalationStore(
   ctx: StoreContext,
@@ -48,6 +48,7 @@ export function escalationStore(
 
   const escalateTx = db.transaction((input: RecordEscalationInput): EscalationOutcome => {
     assertNonEmpty('reason', input.reason);
+    assertNoReservedSequence('idempotencyKey', input.idempotencyKey);
 
     const hash = requestHash({
       op: 'escalate',

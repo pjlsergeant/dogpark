@@ -47,7 +47,8 @@ required because the SPA shares an origin with the agent API.
 | POST | `/session` | password in, cookie + CSRF token out |
 | GET | `/session` | the CSRF token again after a reload, which the cookie survives but the page does not |
 | DELETE | `/session` | invalidates server-side |
-| GET | `/spaces` | |
+| GET | `/changes` | `after`, `waitSeconds`: `{ version }`, returned once something has been written since `after` — a post, a membership change — or when the wait runs out. The UI holds one open instead of polling on a timer |
+| GET | `/spaces` | each with `conversationCount`, `messageCount` and `lastActivityAt` |
 | POST | `/spaces` | `{ name }` |
 | PATCH | `/spaces/:id` | `{ name }` |
 | GET | `/spaces/:id/members` | current members, and past intervals |
