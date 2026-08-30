@@ -118,7 +118,6 @@ export function safeContentType(declared: string): string {
  */
 export function contentDisposition(filename: string): string {
   const ascii =
-    // eslint-disable-next-line no-control-regex
     filename
       .replace(/[^\x20-\x7e]/g, '_')
       .replace(/["\\/]/g, '_')

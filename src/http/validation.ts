@@ -71,6 +71,7 @@ export const RangeQuery = z.strictObject({
   since: z.string().min(1).optional(),
   until: z.string().min(1).optional(),
   after: z.string().min(1).optional(),
+  order: z.enum(['oldest', 'newest']).optional(),
   limit: z.coerce.number().int().positive().optional(),
 });
 
@@ -79,7 +80,8 @@ export const AgentsQuery = z.strictObject({ space: Id.optional() });
 export const ReadLogQuery = z.strictObject({
   agent: Id.optional(),
   limit: z.coerce.number().int().positive().optional(),
-  /** Accepted and ignored: the read log has no cursor to page from. */
+  since: z.string().optional(),
+  until: z.string().optional(),
   after: z.string().optional(),
 });
 
@@ -118,10 +120,20 @@ export function readFromQuery(query: z.infer<typeof StreamQuery>): ReadFrom | un
 }
 
 export function rangeFromQuery(query: z.infer<typeof RangeQuery>): Range {
+  // `order=newest` is in the contract and in `Range`, and the storage layer
+  // does not implement it: `readConversation` and `readSpace` order by
+  // sequence ascending, full stop. Refusing is the only answer that is not a
+  // lie — an agent asking for a thread's last fifty messages and silently
+  // getting its first fifty cannot tell the difference. Reported; the fix
+  // belongs in the store, not in a shim here that would re-page every read.
+  if (query.order === 'newest') {
+    throw invalid('order=newest is not supported by this deployment yet');
+  }
   return {
     ...(query.since === undefined ? {} : { since: query.since as Timestamp }),
     ...(query.until === undefined ? {} : { until: query.until as Timestamp }),
     ...(query.after === undefined ? {} : { after: query.after as QueryCursor }),
+    ...(query.order === undefined ? {} : { order: query.order }),
   };
 }
 

@@ -114,6 +114,29 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     }
   });
 
+  /**
+   * An empty JSON body is no body, not a malformed one. Several admin routes
+   * change state without carrying anything — `PUT .../members/:agentId`, the
+   * archive pair — and a client that sets `Content-Type: application/json`
+   * anyway is being tidy, not wrong. A body that is present but unparseable is
+   * still `invalid_request`, in our shape rather than Fastify's.
+   */
+  app.addContentTypeParser<string>(
+    'application/json',
+    { parseAs: 'string' },
+    (_request, body, done) => {
+      if (body.trim() === '') {
+        done(null, undefined);
+        return;
+      }
+      try {
+        done(null, JSON.parse(body) as unknown);
+      } catch {
+        done(invalid('request body is not valid JSON'), undefined);
+      }
+    },
+  );
+
   await app.register(fastifyCookie);
   await app.register(fastifyMultipart, {
     limits: {
@@ -123,6 +146,16 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       fields: 10,
       parts: 40,
     },
+  });
+
+  /**
+   * Shutdown must not wait out every open long poll. `preClose` runs before
+   * the server stops accepting and before in-flight requests are awaited, so
+   * waking the waiters here lets each return its page and finish in the time
+   * it takes to read one, rather than in `maxWaitSeconds`.
+   */
+  app.addHook('preClose', async () => {
+    ctx.writes.notify();
   });
 
   const health = store.database.prepare<[], { ok: number }>('SELECT 1 AS ok');

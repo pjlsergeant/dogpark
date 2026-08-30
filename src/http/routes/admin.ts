@@ -171,6 +171,14 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
         return withKeys(ctx.store.renameAgent(asAgentId(id), name));
       });
 
+      guarded.get('/agents/:id/keys', async (request) => {
+        // A key that cannot be named cannot be revoked, and the plaintext is
+        // shown once — so the list is ids and dates, never material.
+        const { id } = request.params as { id: string };
+        const record = agentOr404(id);
+        return ctx.store.listKeys(record.id).map(keySummary);
+      });
+
       guarded.post('/agents/:id/keys', async (request, reply) => {
         const { id } = request.params as { id: string };
         const { label } = parse(KeyBody, request.body ?? {}, 'request body');
@@ -282,13 +290,35 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
 
       guarded.get('/reads', async (request) => {
         const query = parse(ReadLogQuery, request.query, 'query');
+        // The store filters the read log by agent and nothing else. Ranging or
+        // paging it here would mean fetching a window and trimming it, which
+        // in the one view whose whole job is completeness would silently drop
+        // rows. Refused until the store can do it. Reported.
+        for (const [name, value] of Object.entries({
+          since: query.since,
+          until: query.until,
+          after: query.after,
+        })) {
+          if (value !== undefined) {
+            throw invalid(`the read log cannot be filtered by ${name} yet`);
+          }
+        }
+
+        const limit = pageLimit(query.limit);
         const cache = new Map<string, Agent>();
-        return ctx.store
-          .listReadLog({
-            ...(query.agent === undefined ? {} : { agent: asAgentId(query.agent) }),
-            limit: pageLimit(query.limit),
-          })
-          .map((entry) => readLogRow(ctx.store, cache, entry));
+        const rows = ctx.store.listReadLog({
+          ...(query.agent === undefined ? {} : { agent: asAgentId(query.agent) }),
+          // One more than asked for, so `hasMore` is observed rather than
+          // guessed.
+          limit: limit + 1,
+        });
+        return {
+          reads: rows.slice(0, limit).map((entry) => readLogRow(ctx.store, cache, entry)),
+          // Null, not a token: there is nothing to resume from until the store
+          // offers a cursor over this table.
+          nextCursor: null,
+          hasMore: rows.length > limit,
+        };
       });
 
       guarded.get('/escalations', async (request) => {

@@ -33,8 +33,19 @@ export function bare(agent: { readonly id: AgentId; readonly displayName: string
   return { id: agent.id, displayName: agent.displayName };
 }
 
+/**
+ * `GET /agents/:id/keys` pins the field as `keyId`; the same summary rides
+ * along inside `GET /agents`, where it is an agent's key rather than a key of
+ * its own. Both names are emitted so one shape serves both readings.
+ */
 export function keySummary(key: KeyRecord): unknown {
-  return { id: key.id, label: key.label, createdAt: key.createdAt, revokedAt: key.revokedAt };
+  return {
+    keyId: key.id,
+    id: key.id,
+    label: key.label,
+    createdAt: key.createdAt,
+    revokedAt: key.revokedAt,
+  };
 }
 
 /**
