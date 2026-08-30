@@ -15,8 +15,8 @@ codes from `ErrorCode`. Anything the caller may not see is `not_found`, never
 | --- | --- | --- | --- |
 | GET | `/identity` | — | `Identity` |
 | GET | `/stream` | `after` \| `since` \| `tip`, `waitSeconds` | `StreamPage` |
-| GET | `/conversations/:id/messages` | `since`, `until`, `after` | `MessagePage` |
-| GET | `/spaces/:id/messages` | `since`, `until`, `after` | `MessagePage` |
+| GET | `/conversations/:id/messages` | `since`, `until`, `after`, `order`, `limit` | `MessagePage` |
+| GET | `/spaces/:id/messages` | `since`, `until`, `after`, `order`, `limit` | `MessagePage` |
 | GET | `/agents` | `space` (optional) | `Agent[]` |
 | POST | `/messages` | `PostRequest` (JSON or multipart) | `PostResult` |
 | GET | `/attachments/:id` | — | the file |
@@ -97,13 +97,24 @@ GET  /agents/:id/keys
                    -> [{ keyId, label, createdAt, revokedAt }]
 GET  /escalations  -> [{ id, agent, conversation, reason, raisedAt,
                          notification }]
-GET  /search?q=    -> [{ message, conversation, space }]
+GET  /search?q=&space=&limit=
+                   -> [{ message, conversation, space }]
+GET  /spaces/:id/conversations
+                   -> [{ id, space, title, messageCount,
+                         lastActivityAt, lastSender }]
 POST /messages     -> PostResult                                 // as the human
 ```
 
 `hasEverAuthenticated` exists so the UI can show failure counts prominently
 during onboarding and quietly afterwards, which is the only window where they
 diagnose anything.
+
+`lastSender` is a whole `Sender` rather than a name, so a thread list renders an
+agent's *current* name rather than one frozen when it last posted.
+
+`/escalations` and `/search` return plain arrays: neither has a cursor, because
+neither store query offers one. They should grow one before either list gets
+long enough to matter.
 
 ## Serving the UI
 

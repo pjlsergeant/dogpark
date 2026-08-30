@@ -149,14 +149,14 @@ function SpaceReader({
               >
                 <span className="thread-title">{thread.title}</span>
                 <span className="thread-meta">
-                  {thread.lastMessageAt === null || thread.lastMessageAt === undefined ? (
+                  {thread.lastActivityAt === null || thread.lastActivityAt === undefined ? (
                     ''
                   ) : (
                     <>
-                      <Time iso={thread.lastMessageAt} />
-                      {thread.lastSenderName !== null &&
-                        thread.lastSenderName !== undefined &&
-                        ` - ${thread.lastSenderName}`}
+                      <Time iso={thread.lastActivityAt} />
+                      {thread.lastSender?.displayName !== null &&
+                        thread.lastSender?.displayName !== undefined &&
+                        ` - ${thread.lastSender?.displayName}`}
                     </>
                   )}
                 </span>

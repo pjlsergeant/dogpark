@@ -96,12 +96,8 @@ export function spaceMembers(store: Store, space: SpaceId): unknown {
 /**
  * One row of the human's thread list.
  *
- * The contract pins no shape for `GET /spaces/:id/conversations` beyond "the
- * human's thread list", and the UI reads `lastMessageAt` and `lastSenderName`
- * where the store returns `lastActivityAt` and a whole `Sender`. Both spellings
- * go out, as `keySummary` already does for `keyId`/`id`: the store's names are
- * the record, the flat ones are what the UI scans by, and a reader built to
- * either is served. Reported — one of them should win.
+ * `lastSender` is the whole `Sender`, not a name, so the UI renders an agent's
+ * current name rather than one frozen when the message was written.
  */
 export function conversationRow(summary: ConversationSummary): unknown {
   return {
@@ -110,9 +106,7 @@ export function conversationRow(summary: ConversationSummary): unknown {
     title: summary.title,
     messageCount: summary.messageCount,
     lastActivityAt: summary.lastActivityAt,
-    lastMessageAt: summary.lastActivityAt,
     lastSender: summary.lastSender,
-    lastSenderName: summary.lastSender?.displayName ?? null,
   };
 }
 

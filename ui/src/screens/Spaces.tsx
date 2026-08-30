@@ -301,14 +301,14 @@ export function SpaceScreen({ space }: { space: SpaceId }): ReactNode {
                         {conversation.messageCount === 1 ? '' : 's'}
                       </>
                     )}
-                    {conversation.lastMessageAt !== null &&
-                      conversation.lastMessageAt !== undefined && (
+                    {conversation.lastActivityAt !== null &&
+                      conversation.lastActivityAt !== undefined && (
                         <>
                           {conversation.messageCount === undefined ? '' : ' · '}
-                          <Time iso={conversation.lastMessageAt} />
-                          {conversation.lastSenderName !== null &&
-                            conversation.lastSenderName !== undefined &&
-                            ` · ${conversation.lastSenderName}`}
+                          <Time iso={conversation.lastActivityAt} />
+                          {conversation.lastSender?.displayName !== null &&
+                            conversation.lastSender?.displayName !== undefined &&
+                            ` · ${conversation.lastSender?.displayName}`}
                         </>
                       )}
                   </div>

@@ -20,6 +20,7 @@ import type {
   Message,
   MessageId,
   QueryCursor,
+  Sender,
   Space,
   SpaceId,
   Timestamp,
@@ -173,8 +174,8 @@ export interface PastMembership {
  */
 export interface ConversationSummary extends Conversation {
   readonly messageCount?: number | undefined;
-  readonly lastMessageAt?: Timestamp | null | undefined;
-  readonly lastSenderName?: string | null | undefined;
+  readonly lastActivityAt?: Timestamp | null | undefined;
+  readonly lastSender?: Sender | null | undefined;
 }
 
 // ---------------------------------------------------------------------------

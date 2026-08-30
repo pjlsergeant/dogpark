@@ -1240,25 +1240,24 @@ describe('the HTTP surface', () => {
         id: string;
         title: string;
         messageCount: number;
-        lastMessageAt: string | null;
         lastActivityAt: string | null;
-        lastSenderName: string | null;
+        lastActivityAt: string | null;
         lastSender: { kind: string; displayName: string } | null;
       }[];
 
       const busy = threads.find((t) => t.id === conversation);
       expect(busy?.messageCount).toBe(1);
-      expect(busy?.lastMessageAt).toEqual(expect.any(String));
-      expect(busy?.lastActivityAt).toBe(busy?.lastMessageAt);
-      expect(busy?.lastSenderName).toBe('alpha');
+      expect(busy?.lastActivityAt).toEqual(expect.any(String));
+      // The whole Sender, not a name: the UI renders an agent's current name
+      // rather than one frozen when the message was written.
       expect(busy?.lastSender).toMatchObject({ kind: 'agent', displayName: 'alpha' });
 
       // A thread nobody has posted to is still a thread, and says so rather
       // than being left out of the list.
       const empty = threads.find((t) => t.id === quiet);
       expect(empty?.messageCount).toBe(0);
-      expect(empty?.lastMessageAt).toBeNull();
-      expect(empty?.lastSenderName).toBeNull();
+      expect(empty?.lastActivityAt).toBeNull();
+      expect(empty?.lastSender).toBeNull();
     });
 
     it('404s a space that does not exist rather than answering emptily', async () => {
