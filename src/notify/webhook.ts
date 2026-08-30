@@ -56,6 +56,7 @@ export class Notifier {
   #now: () => number;
   #fetch: typeof globalThis.fetch;
   #timer: NodeJS.Timeout | undefined;
+  #draining = false;
 
   constructor(queue: EscalationQueue, options: NotifierOptions = {}) {
     this.#queue = queue;
@@ -72,12 +73,27 @@ export class Notifier {
    */
   async drain(limit = 20): Promise<number> {
     if (!this.#url) return 0;
+
+    // `claimDue` reads rather than claims, so two overlapping drains would
+    // send the same escalation twice — and the point of an escalation is that
+    // it wakes someone. One process, one writer, so a re-entrancy guard is
+    // enough; a second caller returns rather than queueing behind the first.
+    if (this.#draining) return 0;
+    this.#draining = true;
+    try {
+      return await this.#drain(this.#url, limit);
+    } finally {
+      this.#draining = false;
+    }
+  }
+
+  async #drain(url: string, limit: number): Promise<number> {
     const due = this.#queue.claimDue(this.#now(), limit);
     let sent = 0;
 
     for (const e of due) {
       try {
-        const res = await this.#fetch(this.#url, {
+        const res = await this.#fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ text: formatMessage(e) }),

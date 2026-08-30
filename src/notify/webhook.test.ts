@@ -67,6 +67,26 @@ describe('Notifier', () => {
     expect(calls.sent).toEqual([]);
   });
 
+  it('does not send twice when two drains overlap', async () => {
+    const { queue, calls } = fakeQueue([escalation()]);
+    let release: () => void = () => {};
+    const inFlight = new Promise<void>((r) => (release = r));
+    const fetch = vi.fn(async () => {
+      await inFlight;
+      return new Response('ok', { status: 200 });
+    });
+    const n = new Notifier(queue, { webhookUrl: 'https://hook', fetch });
+
+    const first = n.drain();
+    const second = await n.drain(); // must not re-send while the first is out
+    release();
+    await first;
+
+    expect(second).toBe(0);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(calls.sent).toEqual(['esc_1']);
+  });
+
   it('caps backoff so a long outage does not become an infinite wait', () => {
     expect(backoffMs(1)).toBe(120_000);
     expect(backoffMs(20)).toBe(3_600_000);
