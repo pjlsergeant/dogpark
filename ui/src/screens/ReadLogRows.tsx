@@ -79,7 +79,12 @@ export function ReadLogRows({ entries }: { entries: readonly ReadLogEntry[] }): 
             </td>
             <td className="numeric">{entry.itemCount}</td>
             <td>
-              <Id value={entry.cursor} />
+              {/* A file returns no position, so an attachment read has none. */}
+              {entry.cursor === '' ? (
+                <span className="muted">none</span>
+              ) : (
+                <Id value={entry.cursor} />
+              )}
             </td>
           </tr>
         ))}

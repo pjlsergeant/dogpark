@@ -197,7 +197,7 @@ export interface ReadLogEntry {
   readonly parameters: Readonly<Record<string, unknown>>;
   readonly cursor: string;
   readonly itemCount: number;
-  readonly kind: 'stream' | 'conversation' | 'space';
+  readonly kind: 'stream' | 'conversation' | 'space' | 'attachment';
   readonly id: string;
 }
 
