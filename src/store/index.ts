@@ -17,7 +17,6 @@ import type {
   MessageId,
   MessagePage,
   PostTarget,
-  QueryCursor,
   Range,
   ReadFrom,
   Sender,
@@ -470,7 +469,6 @@ export interface Store {
   revokeMembership(agent: AgentId, space: SpaceId): boolean;
   isCurrentMember(agent: AgentId, space: SpaceId): boolean;
   listSpacesForAgent(agent: AgentId): readonly Space[];
-  listSpaceMembers(space: SpaceId): readonly Agent[];
   listMembershipIntervals(filter?: {
     readonly agent?: AgentId | undefined;
     readonly space?: SpaceId | undefined;
@@ -484,12 +482,10 @@ export interface Store {
   ): Conversation;
   getConversation(conversation: ConversationId): Conversation | undefined;
   renameConversation(conversation: ConversationId, title: string): Conversation;
-  listConversations(space: SpaceId): readonly Conversation[];
   /**
    * The thread list: every conversation in a space with its message count,
    * last activity and last sender, ordered by last activity. The admin
-   * surface's, like `listConversations` — no call enumerates a space's
-   * conversations for an agent.
+   * surface's — no call enumerates a space's conversations for an agent.
    */
   listConversationSummaries(space: SpaceId): readonly ConversationSummary[];
 
@@ -514,7 +510,6 @@ export interface Store {
     range?: Range | undefined,
     limit?: number | undefined,
   ): MessagePage;
-  getMessage(reader: Reader, message: MessageId): Message | undefined;
   searchMessages(
     query: string,
     options?: {
@@ -549,24 +544,12 @@ export interface Store {
   ): EscalationRecord;
 
   // The read log
-  recordRead(entry: {
-    readonly agent: AgentId;
-    readonly kind: ReadKind;
-    readonly params: unknown;
-    readonly cursor: string;
-    readonly itemCount: number;
-  }): void;
   /**
    * The forensic view, newest first, filtered and paged. This is the read log
    * table's only full reader: it grows faster than anything else here, so
    * every page is bounded and resumable.
    */
   readReadLog(filter?: ReadLogFilter): ReadLogPage;
-  /**
-   * The entries of `readReadLog` without the page around them, for a caller
-   * that wants one bounded slice and no continuation.
-   */
-  listReadLog(filter?: ReadLogFilter): readonly ReadLogEntry[];
   lastReadCursor(agent: AgentId): Cursor | undefined;
 
   // Sessions
@@ -686,10 +669,6 @@ export function openStore(options: StoreOptions): Store {
       'SELECT s.id, s.name FROM space s JOIN membership m ON m.space_id = s.id ' +
         'WHERE m.agent_id = @agent AND m.revoked_seq IS NULL ORDER BY s.name',
     ),
-    spaceMembers: db.prepare<{ space: string }, AgentRow>(
-      'SELECT a.* FROM agent a JOIN membership m ON m.agent_id = a.id ' +
-        'WHERE m.space_id = @space AND m.revoked_seq IS NULL ORDER BY a.display_name',
-    ),
     membershipIntervals: db.prepare<
       { agent: string | null; space: string | null },
       {
@@ -741,10 +720,6 @@ export function openStore(options: StoreOptions): Store {
     renameConversation: db.prepare<{ id: string; title: string }, unknown>(
       'UPDATE conversation SET title = @title WHERE id = @id',
     ),
-    listConversations: db.prepare<{ space: string }, ConversationRow>(
-      'SELECT id, space_id, title FROM conversation WHERE space_id = @space ORDER BY created_at, id',
-    ),
-
     insertMessage: db.prepare<
       {
         seq: number;
@@ -1917,13 +1892,6 @@ export function openStore(options: StoreOptions): Store {
       return st.spacesForAgent.all({ agent }).map(toSpace);
     },
 
-    listSpaceMembers(space) {
-      requireSpaceRow(space);
-      return st.spaceMembers
-        .all({ space })
-        .map((row) => ({ id: row.id as AgentId, displayName: row.display_name }));
-    },
-
     listMembershipIntervals(filter) {
       return st.membershipIntervals
         .all({ agent: filter?.agent ?? null, space: filter?.space ?? null })
@@ -1962,11 +1930,6 @@ export function openStore(options: StoreOptions): Store {
       return toConversation(renamed);
     },
 
-    listConversations(space) {
-      requireSpaceRow(space);
-      return st.listConversations.all({ space }).map(toConversation);
-    },
-
     listConversationSummaries(space) {
       requireSpaceRow(space);
       return st.conversationSummaries.all({ space }).map((row) => ({
@@ -1991,15 +1954,6 @@ export function openStore(options: StoreOptions): Store {
 
     readSpace(reader, space, range, limit) {
       return readSpaceTx(reader, space, range, limit);
-    },
-
-    getMessage(reader, message) {
-      const row = st.messageById.get({ id: message });
-      if (row === undefined) return undefined;
-      if (reader.kind === 'agent' && !isCurrentMember(reader.id, row.space_id as SpaceId)) {
-        return undefined;
-      }
-      return toMessage(row, newRenderCache());
     },
 
     searchMessages(query, opts) {
@@ -2070,11 +2024,6 @@ export function openStore(options: StoreOptions): Store {
       return toEscalation(row);
     },
 
-    recordRead(entry) {
-      requireAgentRow(entry.agent);
-      writeRead(entry.agent, entry.kind, entry.params, entry.cursor, entry.itemCount);
-    },
-
     readReadLog(filter) {
       const limit = clampLimit(filter?.limit);
       const after = filter?.after === undefined ? undefined : decodeReadLogCursor(filter.after);
@@ -2103,10 +2052,6 @@ export function openStore(options: StoreOptions): Store {
             : encodeReadLogCursor({ readAt: last.read_at, rowId: last.row_id }),
         hasMore,
       };
-    },
-
-    listReadLog(filter) {
-      return store.readReadLog(filter).entries;
     },
 
     lastReadCursor(agent) {

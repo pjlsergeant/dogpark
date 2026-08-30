@@ -284,7 +284,7 @@ describe('readStream access filter', () => {
     // The cursor moved past the filtered tail rather than stopping at the last
     // item it could deliver: the tip is where a fresh reader would start.
     expect(page.nextCursor).toBe(h.store.readStream(peer, { from: { from: 'tip' } }).nextCursor);
-    expect(h.store.listReadLog({ agent })[0]?.cursor).toBe(page.nextCursor);
+    expect(h.store.readReadLog({ agent }).entries[0]?.cursor).toBe(page.nextCursor);
   });
 
   it('never re-delivers what it skipped, even after access returns', () => {
@@ -416,7 +416,7 @@ describe('queries are not stream positions', () => {
     h.store.readSpace({ kind: 'agent', id: agent }, space);
     h.store.readConversation(
       { kind: 'agent', id: agent },
-      h.store.listConversations(space)[0]?.id ?? ('' as ConversationId),
+      h.store.listConversationSummaries(space)[0]?.id ?? ('' as ConversationId),
     );
 
     // Neither query recorded a stream position, so the stream still owes the
@@ -622,7 +622,7 @@ describe('titles are unique within a space', () => {
     });
 
     expect(second.conversation.id).toBe(first.conversation.id);
-    expect(h.store.listConversations(space)).toHaveLength(1);
+    expect(h.store.listConversationSummaries(space)).toHaveLength(1);
   });
 
   it('scopes titles to the space', () => {
@@ -763,7 +763,7 @@ describe('the reserved control character', () => {
     const h = harness();
     const { agent, space } = scene(h);
     expectStoreError(() => post(h, agent, space, 'notes', poison), 'reserved_sequence');
-    expect(h.store.listConversations(space)).toHaveLength(0);
+    expect(h.store.listConversationSummaries(space)).toHaveLength(0);
   });
 
   it('is rejected in a title, a filename, an escalation reason and a name', () => {
@@ -827,7 +827,7 @@ describe('the read log', () => {
     const stream = h.store.readStream(agent, { limit: 5 });
     h.store.readSpace({ kind: 'agent', id: agent }, space, { since: h.at() });
 
-    const log = h.store.listReadLog({ agent });
+    const log = h.store.readReadLog({ agent }).entries;
     expect(log.map((e) => e.kind)).toEqual(['space', 'stream']);
 
     const streamRow = log.find((e) => e.kind === 'stream');
@@ -845,7 +845,7 @@ describe('the read log', () => {
     post(h, agent, space, 'notes', 'one');
     h.store.readStream(agent, { from: { from: 'tip' } });
 
-    const entry = h.store.listReadLog({ agent })[0];
+    const entry = h.store.readReadLog({ agent }).entries[0];
     // A position log would have claimed this agent was handed everything
     // behind the cursor; the parameters say otherwise.
     expect(entry?.params).toEqual({ from: { from: 'tip' }, limit: 100 });
@@ -869,7 +869,7 @@ describe('the read log', () => {
     const { agent, space } = scene(h);
     post(h, agent, space, 'notes', 'one');
     h.store.readSpace({ kind: 'human' }, space);
-    expect(h.store.listReadLog()).toHaveLength(0);
+    expect(h.store.readReadLog().entries).toHaveLength(0);
   });
 });
 
@@ -1104,7 +1104,7 @@ describe('reading backwards', () => {
       at[body] = h.at();
       post(h, agent, space, 'notes', body);
     }
-    const conversation = h.store.listConversations(space)[0]?.id ?? ('' as ConversationId);
+    const conversation = h.store.listConversationSummaries(space)[0]?.id ?? ('' as ConversationId);
     return { agent, space, conversation, at };
   }
 
@@ -1267,7 +1267,7 @@ describe('reading backwards', () => {
     const h = harness();
     const { agent, space } = thread(h);
     h.store.readSpace(reader(agent), space, { order: 'newest' }, 2);
-    expect(h.store.listReadLog({ agent })[0]?.params).toMatchObject({
+    expect(h.store.readReadLog({ agent }).entries[0]?.params).toMatchObject({
       range: { order: 'newest' },
     });
   });
@@ -1296,7 +1296,7 @@ describe('the read log is paged', () => {
     // cursor that only carried the timestamp would either repeat or skip.
     reads(h, agent, space, 5);
 
-    const all = h.store.listReadLog({ agent });
+    const all = h.store.readReadLog({ agent }).entries;
     expect(all).toHaveLength(5);
 
     const seen: string[] = [];
@@ -1320,7 +1320,7 @@ describe('the read log is paged', () => {
     const h = harness();
     const { agent, space } = scene(h);
     reads(h, agent, space, 3);
-    const original = h.store.listReadLog({ agent }).map((e) => e.id);
+    const original = h.store.readReadLog({ agent }).entries.map((e) => e.id);
 
     const first = h.store.readReadLog({ agent, limit: 2 });
     expect(first.entries.map((e) => e.id)).toEqual(original.slice(0, 2));
@@ -1638,7 +1638,7 @@ describe('replaying an idempotency key', () => {
     const h = harness();
     const { agent, space } = scene(h);
     post(h, agent, space, 'notes', 'one');
-    const conversation = h.store.listConversations(space)[0]?.id ?? ('' as ConversationId);
+    const conversation = h.store.listConversationSummaries(space)[0]?.id ?? ('' as ConversationId);
     const first = h.store.recordEscalation({
       agent,
       conversation,

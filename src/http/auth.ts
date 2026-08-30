@@ -33,10 +33,6 @@ export function requireSession(request: FastifyRequest): ActiveSession {
   return found;
 }
 
-export function rememberSession(request: FastifyRequest, session: ActiveSession): void {
-  sessions.set(request, session);
-}
-
 /**
  * The CSRF token is derived from the session token rather than stored beside
  * it. The session token is already the secret and the browser will not hand it

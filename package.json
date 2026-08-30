@@ -7,11 +7,6 @@
   "engines": {
     "node": ">=22.12.0"
   },
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "files": [
-    "dist"
-  ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json && cp src/store/*.sql dist/store/",
     "start": "node dist/server.js",

@@ -16,8 +16,6 @@ export const ID_LENGTH = 16;
  */
 export const ID_PATTERN = `[0-9a-hjkmnp-tv-z]{${ID_LENGTH}}`;
 
-const ID_RE = new RegExp(`^${ID_PATTERN}$`);
-
 export function newId(): string {
   const bytes = randomBytes(ID_LENGTH);
   let out = '';
@@ -29,6 +27,3 @@ export function newId(): string {
   return out;
 }
 
-export function isId(value: string): boolean {
-  return ID_RE.test(value);
-}
