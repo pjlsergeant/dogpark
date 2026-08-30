@@ -20,6 +20,7 @@ import { StoreError } from './errors.js';
 import {
   newAttachmentId,
   openStore,
+  type CollapseResume,
   type Reader,
   type ReadLogCursor,
   type Store,
@@ -1967,6 +1968,33 @@ describe('runs of empty stream polls are compacted', () => {
     return page.nextCursor;
   }
 
+  /**
+   * A whole sweep, batch by batch, totalled the way the server totals it. The
+   * store hands back one batch per call, so every assertion about a sweep goes
+   * through here.
+   */
+  function sweep(
+    store: Store,
+    cutoff: Timestamp,
+    batchSize?: number,
+  ): { collapsed: number; removed: number } {
+    let collapsed = 0;
+    let removed = 0;
+    let resume: CollapseResume | undefined;
+    // A batch that neither advances nor finishes is a bug, not a long log.
+    for (let guard = 0; guard < 100; guard += 1) {
+      const batch = store.collapseEmptyStreamReads(cutoff, {
+        ...(batchSize === undefined ? {} : { batchSize }),
+        ...(resume === undefined ? {} : { resume }),
+      });
+      collapsed += batch.collapsed;
+      removed += batch.removed;
+      if (batch.done) return { collapsed, removed };
+      resume = batch.resume;
+    }
+    throw new Error('the sweep never finished');
+  }
+
   /** `count` polls a minute apart, each resuming where the last left off. */
   function poll(h: Harness, agent: AgentId, from: Cursor, count: number): Cursor {
     let cursor = from;
@@ -1985,7 +2013,7 @@ describe('runs of empty stream polls are compacted', () => {
     const cursor = poll(h, agent, start, 4);
     const ended = h.store.readReadLog({ agent }).entries[0]?.readAt;
 
-    expect(h.store.collapseEmptyStreamReads(h.at())).toEqual({ collapsed: 1, removed: 3 });
+    expect(sweep(h.store, h.at())).toEqual({ collapsed: 1, removed: 3 });
 
     const entries = h.store.readReadLog({ agent }).entries;
     expect(entries).toHaveLength(2);
@@ -2021,7 +2049,7 @@ describe('runs of empty stream polls are compacted', () => {
     }
     expect(cursors.size).toBe(3);
 
-    expect(h.store.collapseEmptyStreamReads(h.at())).toEqual({ collapsed: 1, removed: 2 });
+    expect(sweep(h.store, h.at())).toEqual({ collapsed: 1, removed: 2 });
     const entries = h.store.readReadLog({ agent }).entries;
     expect(entries).toHaveLength(2);
     expect(entries[0]?.collapsedCount).toBe(3);
@@ -2041,7 +2069,7 @@ describe('runs of empty stream polls are compacted', () => {
 
     // Two runs, on either side of the read that was handed something — which
     // keeps its own row and stands for itself.
-    expect(h.store.collapseEmptyStreamReads(h.at())).toEqual({ collapsed: 2, removed: 2 });
+    expect(sweep(h.store, h.at())).toEqual({ collapsed: 2, removed: 2 });
     expect(
       h.store.readReadLog({ agent }).entries.map((e) => [e.itemCount, e.collapsedCount]),
     ).toEqual([
@@ -2064,7 +2092,7 @@ describe('runs of empty stream polls are compacted', () => {
     // Neither its predecessor nor its successor can be shown to have resumed
     // from it, so the run is three runs of one. Counted over the table, since
     // the forensic view parses what the sweep declined to trust.
-    expect(h.store.collapseEmptyStreamReads(h.at())).toEqual({ collapsed: 0, removed: 0 });
+    expect(sweep(h.store, h.at())).toEqual({ collapsed: 0, removed: 0 });
     const rows = h.store.database.prepare('SELECT COUNT(*) AS n FROM read_log').get() as {
       n: number;
     };
@@ -2089,8 +2117,9 @@ describe('runs of empty stream polls are compacted', () => {
     }
 
     // Three batches of at most five candidates, two runs straddling every
-    // seam: each agent still ends with one row standing for its whole stretch.
-    h.store.collapseEmptyStreamReads(h.at(), 5);
+    // seam: each agent still ends with one row standing for its whole stretch,
+    // and the seams are in neither count.
+    expect(sweep(h.store, h.at(), 5)).toEqual({ collapsed: 2, removed: 12 });
     for (const [who, cursor] of [
       [agent, mine],
       [bob, theirs],
@@ -2103,12 +2132,50 @@ describe('runs of empty stream polls are compacted', () => {
     }
 
     // Nothing left to do, and a batch size is not an excuse to do it twice.
-    expect(h.store.collapseEmptyStreamReads(h.at(), 5)).toEqual({ collapsed: 0, removed: 0 });
+    expect(sweep(h.store, h.at(), 5)).toEqual({ collapsed: 0, removed: 0 });
+  });
+
+  it('reports the same sweep whatever the batch size', () => {
+    /** Two runs of seven, either side of a read that was handed something. */
+    function scenario(): { h: Harness; agent: AgentId } {
+      const h = harness();
+      const { agent, space } = scene(h);
+      let cursor = poll(h, agent, settle(h, agent), 7);
+      post(h, agent, space, 'notes', 'something');
+      cursor = h.store.readStream(agent, { from: { after: cursor } }).nextCursor;
+      h.advance(60);
+      poll(h, agent, cursor, 7);
+      return { h, agent };
+    }
+
+    const shape = (of: { h: Harness; agent: AgentId }): unknown[] =>
+      of.h.store
+        .readReadLog({ agent: of.agent })
+        .entries.map((e) => [e.kind, e.itemCount, e.collapsedCount]);
+
+    const batched = scenario();
+    const whole = scenario();
+    // Every run straddles a seam at five, and none of them at the default.
+    const split = sweep(batched.h.store, batched.h.at(), 5);
+    expect(split).toEqual({ collapsed: 2, removed: 12 });
+    // Where the batches fall is the sweep's business and nobody else's: the
+    // two runs are two runs, not one per batch they happen to span.
+    expect(split).toEqual(sweep(whole.h.store, whole.h.at()));
+    expect(shape(batched)).toEqual(shape(whole));
+    expect(shape(batched)).toEqual([
+      ['stream', 0, 7],
+      ['stream', 1, 1],
+      ['stream', 0, 7],
+      ['stream', 1, 1],
+    ]);
   });
 
   it('refuses a batch size that would never finish', () => {
     const h = harness();
-    expectStoreError(() => h.store.collapseEmptyStreamReads(h.at(), 0), 'invalid_request');
+    expectStoreError(
+      () => h.store.collapseEmptyStreamReads(h.at(), { batchSize: 0 }),
+      'invalid_request',
+    );
   });
 
   it('merges a later run into the row a previous sweep left', () => {
@@ -2117,12 +2184,12 @@ describe('runs of empty stream polls are compacted', () => {
     let cursor = settle(h, agent);
     const began = h.at();
     cursor = poll(h, agent, cursor, 3);
-    expect(h.store.collapseEmptyStreamReads(h.at()).removed).toBe(2);
+    expect(sweep(h.store, h.at()).removed).toBe(2);
 
     cursor = poll(h, agent, cursor, 3);
     // Converges: a second sweep leaves one row for the stretch, not one per
     // sweep, because an already-collapsed row is an ordinary candidate.
-    expect(h.store.collapseEmptyStreamReads(h.at())).toEqual({ collapsed: 1, removed: 3 });
+    expect(sweep(h.store, h.at())).toEqual({ collapsed: 1, removed: 3 });
     const entries = h.store.readReadLog({ agent }).entries;
     expect(entries).toHaveLength(2);
     expect(entries[0]?.collapsedCount).toBe(6);
@@ -2141,11 +2208,11 @@ describe('runs of empty stream polls are compacted', () => {
       h.store.resolveOrCreateConversation(space, 'notes').id,
     );
 
-    expect(h.store.collapseEmptyStreamReads(cutoff)).toEqual({ collapsed: 0, removed: 0 });
+    expect(sweep(h.store, cutoff)).toEqual({ collapsed: 0, removed: 0 });
     expect(h.store.readReadLog({ agent }).entries).toHaveLength(6);
 
     // The queries returned nothing either, and are still their own rows.
-    expect(h.store.collapseEmptyStreamReads(h.at()).removed).toBe(2);
+    expect(sweep(h.store, h.at()).removed).toBe(2);
     const kinds = h.store.readReadLog({ agent }).entries.map((e) => e.kind);
     expect(kinds).toEqual(['conversation', 'space', 'stream', 'stream']);
   });
@@ -2158,7 +2225,7 @@ describe('runs of empty stream polls are compacted', () => {
     h.store.readSpace({ kind: 'agent', id: agent }, space);
     h.advance(60);
     poll(h, agent, cursor, 4);
-    h.store.collapseEmptyStreamReads(h.at());
+    sweep(h.store, h.at());
 
     // A read of another kind keeps its own row and does not break the run: the
     // collapsed row's span simply brackets it.

@@ -5,7 +5,7 @@ import { decodeReadLogCursor, encodeReadLogCursor } from './cursors.js';
 import { invalid } from './errors.js';
 import { newId } from './ids.js';
 import { clampLimit } from './limits.js';
-import type { ReadKind, ReadLogEntry, Store } from './records.js';
+import type { CollapseResume, CollapseSeed, ReadKind, ReadLogEntry, Store } from './records.js';
 import type { EmptyStreamReadRow, ReadLogBounds, ReadLogRow } from './statements.js';
 import { normalizeTimestamp } from './text.js';
 
@@ -22,11 +22,12 @@ interface StreamReadParams {
 }
 
 /**
- * How many candidates one sweep transaction holds and considers. The sweep is
- * unbounded in what it has to walk — an instance upgraded after months of idle
- * long-polling has one candidate per poll — so it is bounded in what it holds:
- * memory, and the length of any single transaction, are constant in the size of
- * the log. Large enough that an ordinary hourly sweep is one batch.
+ * How many candidates one call holds and considers. The sweep is unbounded in
+ * what it has to walk — an instance upgraded after months of idle long-polling
+ * has one candidate per poll — so it is bounded in what it holds: memory, the
+ * length of any single transaction, and the time the event loop is held, are
+ * constant in the size of the log. Large enough that an ordinary hourly sweep
+ * is one call.
  */
 const COLLAPSE_BATCH = 5000;
 
@@ -108,8 +109,14 @@ export function readLogStore(
     readonly removed: number;
     /** Rows the batch fetched; fewer than the limit means the walk is done. */
     readonly fetched: number;
-    /** The newest rowid seen, which is where the next batch resumes. */
-    readonly lastRow: number;
+    /** Where the next batch picks the walk up. */
+    readonly resume: CollapseResume;
+  }
+
+  /** An agent's chain so far: its rows, and whether its head is already counted. */
+  interface OpenChain {
+    readonly rows: EmptyStreamReadRow[];
+    readonly counted: boolean;
   }
 
   /**
@@ -120,64 +127,73 @@ export function readLogStore(
    * run is deleted, both in this transaction: a half-collapsed run would
    * double-count the reads it stands for.
    *
-   * `seeds` carries each agent's surviving row out of this batch and into the
-   * next, so a run split by a batch boundary is compacted twice, the second
-   * time with the first half's survivor as an ordinary candidate. That is the
-   * same property that makes repeated sweeps converge on one row per idle
-   * stretch: without the seed the survivors could not be rejoined at all, since
-   * collapsing a run discards the row whose cursor the next one resumed from.
+   * The resume state carries each agent's surviving row out of this batch and
+   * into the next, so a run split by a batch boundary is compacted twice, the
+   * second time with the first half's survivor as an ordinary candidate. That
+   * is the same property that makes repeated sweeps converge on one row per
+   * idle stretch: without the seed the survivors could not be rejoined at all,
+   * since collapsing a run discards the row whose cursor the next one resumed
+   * from. Compacting a run twice is not counting it twice: the seed remembers
+   * that its run has been counted, so `collapsed` is the number of logical runs
+   * whatever the batch size.
    */
   const collapseBatchTx = db.transaction(
-    (
-      olderThan: string,
-      afterRow: number,
-      limit: number,
-      seeds: Map<string, EmptyStreamReadRow>,
-    ): BatchResult => {
+    (olderThan: string, from: CollapseResume, limit: number): BatchResult => {
       let collapsed = 0;
       let removed = 0;
-      const chains = new Map<string, EmptyStreamReadRow[]>();
-      for (const [agent, seed] of seeds) chains.set(agent, [seed]);
+      const chains = new Map<string, OpenChain>();
+      for (const [agent, seed] of from.seeds) {
+        chains.set(agent, { rows: [seed.row], counted: seed.counted });
+      }
 
       /** Compacts a chain, and reports the row that survived it. */
-      function flush(chain: readonly EmptyStreamReadRow[]): EmptyStreamReadRow {
-        const first = chain[0];
-        const last = chain.at(-1);
+      function flush(chain: OpenChain): CollapseSeed {
+        const first = chain.rows[0];
+        const last = chain.rows.at(-1);
         /* c8 ignore next */
         if (first === undefined || last === undefined) throw new Error('an empty chain');
-        if (chain.length === 1) return last;
-        const count = chain.reduce((total, row) => total + row.collapsed_count, 0);
+        if (chain.rows.length === 1) return { row: last, counted: chain.counted };
+        const count = chain.rows.reduce((total, row) => total + row.collapsed_count, 0);
         const firstReadAt = first.first_read_at ?? first.read_at;
         st.collapseRead.run({ row: last.row_id, count, first: firstReadAt });
-        for (const row of chain.slice(0, -1)) {
+        for (const row of chain.rows.slice(0, -1)) {
           st.deleteReadRow.run({ row: row.row_id });
           removed += 1;
         }
-        collapsed += 1;
+        // A run the previous batch already compacted is the same run, not a
+        // second one: only its first compaction counts.
+        if (!chain.counted) collapsed += 1;
         // What the row now says, so that seeding the next batch with it sums
         // the run once rather than once per batch.
-        return { ...last, collapsed_count: count, first_read_at: firstReadAt };
+        return {
+          row: { ...last, collapsed_count: count, first_read_at: firstReadAt },
+          counted: true,
+        };
       }
 
-      const rows = st.emptyStreamReads.all({ before: olderThan, afterRow, limit });
+      const rows = st.emptyStreamReads.all({
+        before: olderThan,
+        afterRow: from.afterRow,
+        limit,
+      });
       for (const row of rows) {
         const chain = chains.get(row.agent_id);
-        const previous = chain?.at(-1);
+        const previous = chain?.rows.at(-1);
         if (chain !== undefined && previous !== undefined && resumes(previous, row)) {
-          chain.push(row);
+          chain.rows.push(row);
         } else {
           if (chain !== undefined) flush(chain);
-          chains.set(row.agent_id, [row]);
+          chains.set(row.agent_id, { rows: [row], counted: false });
         }
       }
-      seeds.clear();
+      const seeds = new Map<string, CollapseSeed>();
       for (const [agent, chain] of chains) seeds.set(agent, flush(chain));
 
       return {
         collapsed,
         removed,
         fetched: rows.length,
-        lastRow: rows.at(-1)?.row_id ?? afterRow,
+        resume: { afterRow: rows.at(-1)?.row_id ?? from.afterRow, seeds },
       };
     },
   );
@@ -230,24 +246,23 @@ export function readLogStore(
       recordRead(ctx, agent, 'attachment', { attachment, message }, '', 1);
     },
 
-    collapseEmptyStreamReads(olderThan, batchSize = COLLAPSE_BATCH) {
+    collapseEmptyStreamReads(olderThan, options) {
+      const batchSize = options?.batchSize ?? COLLAPSE_BATCH;
       if (!Number.isInteger(batchSize) || batchSize < 1) {
         throw invalid('batchSize must be a positive integer');
       }
       const before = normalizeTimestamp('olderThan', olderThan);
       // Deletions only ever remove rows at or behind `afterRow`, so the keyset
       // walk is not disturbed by the sweep's own writes.
-      const seeds = new Map<string, EmptyStreamReadRow>();
-      let collapsed = 0;
-      let removed = 0;
-      let afterRow = 0;
-      for (;;) {
-        const batch = collapseBatchTx(before, afterRow, batchSize, seeds);
-        collapsed += batch.collapsed;
-        removed += batch.removed;
-        afterRow = batch.lastRow;
-        if (batch.fetched < batchSize) return { collapsed, removed };
-      }
+      const from = options?.resume ?? { afterRow: 0, seeds: new Map<string, CollapseSeed>() };
+      const batch = collapseBatchTx(before, from, batchSize);
+      return {
+        collapsed: batch.collapsed,
+        removed: batch.removed,
+        // A short batch is the end of the walk: there was nothing left to fill it.
+        done: batch.fetched < batchSize,
+        resume: batch.resume,
+      };
     },
   };
 }

@@ -9,6 +9,7 @@ import { WriteSignals } from './http/signal.js';
 import { escalationQueue } from './notify/queue.js';
 import { Notifier } from './notify/webhook.js';
 import { openStore } from './store/index.js';
+import type { CollapseResume } from './store/index.js';
 import type { AttachmentId, Timestamp } from './types.js';
 
 /** `dist/ui` beside the compiled server, or beneath the working directory. */
@@ -141,24 +142,45 @@ async function main(): Promise<void> {
   // says how many it stands for; nothing that returned content is touched.
   const collapseDays = config.DOGPARK_READ_COLLAPSE_DAYS;
   let collapseTimer: NodeJS.Timeout | undefined;
-  if (collapseDays > 0) {
-    const collapse = (): void => {
-      try {
-        const cutoff = new Date(Date.now() - collapseDays * 86_400_000).toISOString() as Timestamp;
-        const { collapsed, removed } = store.collapseEmptyStreamReads(cutoff);
-        if (removed > 0) {
-          app.log.info({ collapsed, removed }, 'compacted runs of empty stream polls');
-        }
-      } catch (error) {
-        // A sweep that cannot run is not a reason to stop serving, nor to
-        // stop trying an hour later.
-        app.log.error({ err: error }, 'the read-log collapse sweep failed');
+  // One sweep at a time: a second walk over the same candidates would find
+  // only the first one's work, and the two would contend for the same rows.
+  let sweeping = false;
+  const collapse = async (): Promise<void> => {
+    if (sweeping) return;
+    sweeping = true;
+    try {
+      const cutoff = new Date(Date.now() - collapseDays * 86_400_000).toISOString() as Timestamp;
+      let collapsed = 0;
+      let removed = 0;
+      let resume: CollapseResume | undefined;
+      for (;;) {
+        const batch = store.collapseEmptyStreamReads(cutoff, {
+          ...(resume === undefined ? {} : { resume }),
+        });
+        collapsed += batch.collapsed;
+        removed += batch.removed;
+        if (batch.done) break;
+        resume = batch.resume;
+        // A sweep is resumable by construction and the next one is an hour
+        // away, so shutdown does not wait for the rest of this one — and no
+        // batch runs against the database the shutdown is about to close.
+        if (closing) break;
+        // Back to the event loop between batches: a backlog of months is a
+        // long sweep, and a long sweep must not be a stalled server.
+        await new Promise((done) => setImmediate(done));
       }
-    };
-    collapse();
-    collapseTimer = setInterval(collapse, 3_600_000);
-    collapseTimer.unref();
-  }
+      // Once a sweep, not once a batch: what the operator wants is the total.
+      if (removed > 0) {
+        app.log.info({ collapsed, removed }, 'compacted runs of empty stream polls');
+      }
+    } catch (error) {
+      // A sweep that cannot run is not a reason to stop serving, nor to
+      // stop trying an hour later.
+      app.log.error({ err: error }, 'the read-log collapse sweep failed');
+    } finally {
+      sweeping = false;
+    }
+  };
 
   const notifier = new Notifier(
     escalationQueue(store, () => writes.adminOnly()),
@@ -196,6 +218,15 @@ async function main(): Promise<void> {
   process.on('SIGINT', () => shutdown('SIGINT'));
 
   await app.listen({ host: binding.host, port: config.DOGPARK_PORT });
+
+  // After listening, and not awaited: the first sweep of an instance upgraded
+  // after months of idle polling has a long backlog to walk, and readiness is
+  // not allowed to wait on it. Errors are the driver's own business.
+  if (collapseDays > 0) {
+    void collapse();
+    collapseTimer = setInterval(() => void collapse(), 3_600_000);
+    collapseTimer.unref();
+  }
 }
 
 main().catch((error: unknown) => {

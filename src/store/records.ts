@@ -26,6 +26,7 @@ import type {
 } from '../types.js';
 import type { EscalationCursor, ReadLogCursor, SearchCursor } from './cursors.js';
 import type { MigrateResult } from './migrate.js';
+import type { EmptyStreamReadRow } from './statements.js';
 
 /**
  * Who is reading or writing. The human has no agent row, so the union is not
@@ -244,6 +245,36 @@ export interface ReadLogPage {
   readonly hasMore: boolean;
 }
 
+/**
+ * One agent's surviving row on its way from one collapse batch to the next,
+ * and whether the run it stands for has already been counted.
+ */
+export interface CollapseSeed {
+  readonly row: EmptyStreamReadRow;
+  readonly counted: boolean;
+}
+
+/**
+ * Where a collapse sweep got to. Opaque to callers: hand it back verbatim to
+ * continue the sweep, and read nothing out of it. It carries the keyset
+ * position and each agent's surviving row, so a run split at a batch boundary
+ * can be rejoined — and counted once.
+ */
+export interface CollapseResume {
+  readonly afterRow: number;
+  readonly seeds: ReadonlyMap<string, CollapseSeed>;
+}
+
+export interface CollapseBatch {
+  /** Logical runs compacted by this call. */
+  readonly collapsed: number;
+  /** Rows this call deleted. */
+  readonly removed: number;
+  /** Whether the walk reached the end; until it does, call again with `resume`. */
+  readonly done: boolean;
+  readonly resume: CollapseResume;
+}
+
 export interface SessionRecord {
   readonly id: string;
   readonly createdAt: Timestamp;
@@ -458,21 +489,26 @@ export interface Store {
    * timestamp, cursor and parameters and gains `collapsedCount` and
    * `firstReadAt` saying what it stands for. Nothing that returned content,
    * and no read of any other kind, is ever touched — so this is a summary,
-   * not a retention policy. `collapsed` counts the runs compacted, `removed`
-   * the rows that went.
+   * not a retention policy. `collapsed` counts the runs compacted — logical
+   * runs, so a sweep reports the same number whatever the batch size — and
+   * `removed` the rows that went; both are per call, and a caller running a
+   * whole sweep sums them.
    *
-   * The walk is batched, so neither memory nor any one transaction grows with
-   * the log. `batchSize` is how many candidates a batch holds; it defaults to a
-   * size no ordinary sweep reaches and exists so a test can cross a batch
-   * boundary without writing thousands of rows.
+   * One call is one batch, so neither memory, nor any one transaction, nor the
+   * time the event loop is held, grows with the log. Until `done`, call again
+   * with the `resume` just returned — between calls the caller is free, which
+   * is how a backlog of months is swept without stalling the server.
+   * `batchSize` is how many candidates a batch holds; it defaults to a size no
+   * ordinary sweep reaches and exists so a test can cross a batch boundary
+   * without writing thousands of rows.
    */
   collapseEmptyStreamReads(
     olderThan: Timestamp,
-    batchSize?: number,
-  ): {
-    readonly collapsed: number;
-    readonly removed: number;
-  };
+    options?: {
+      readonly batchSize?: number | undefined;
+      readonly resume?: CollapseResume | undefined;
+    },
+  ): CollapseBatch;
 
   // Sessions
   createSession(ttlSeconds: number): IssuedSession;
