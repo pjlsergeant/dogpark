@@ -12,30 +12,8 @@ import type { AgentId, ReadLogEntry } from '../api/index.js';
 import { useApi } from '../app/api-context.js';
 import { useAsync } from '../app/useAsync.js';
 import { href, navigate } from '../app/router.js';
-import { absoluteTime } from '../app/format.js';
-import { Empty, Failure, Id, Loading, Pill, Time } from '../components/bits.js';
-
-/** `from: tip` discards the backlog: the agent did not see what was behind it. */
-function isSeekToTip(entry: ReadLogEntry): boolean {
-  return entry.parameters['from'] === 'tip';
-}
-
-function Params({ params }: { params: Readonly<Record<string, unknown>> }): ReactNode {
-  const entries = Object.entries(params);
-  if (entries.length === 0) return <span className="muted">from the beginning</span>;
-  return (
-    <span className="params">
-      {entries.map(([name, value]) => (
-        <span className="param" key={name}>
-          <span className="param-name">{name}</span>
-          <span className="param-value">
-            {typeof value === 'string' ? value : JSON.stringify(value)}
-          </span>
-        </span>
-      ))}
-    </span>
-  );
-}
+import { Empty, Failure, Loading } from '../components/bits.js';
+import { ReadLogRows } from './ReadLogRows.js';
 
 export function ReadLogScreen({ agent }: { agent?: AgentId | undefined }): ReactNode {
   const api = useApi();
@@ -154,52 +132,7 @@ export function ReadLogScreen({ agent }: { agent?: AgentId | undefined }): React
         </Empty>
       )}
 
-      {entries.length > 0 && (
-        <table className="table table-log">
-          <thead>
-            <tr>
-              <th>When</th>
-              <th>Agent</th>
-              <th>Kind</th>
-              <th>Read with</th>
-              <th className="numeric">Items</th>
-              <th>Cursor returned</th>
-            </tr>
-          </thead>
-          <tbody>
-            {entries.map((entry, index) => (
-              <tr key={entry.id ?? index}>
-                <td title={absoluteTime(entry.at)}>
-                  <Time iso={entry.at} />
-                </td>
-                <td>
-                  <a href={href.agents(entry.agent.id)}>{entry.agent.displayName}</a>
-                </td>
-                <td>
-                  {entry.kind !== undefined && (
-                    <Pill tone={entry.kind === 'stream' ? 'info' : 'muted'}>{entry.kind}</Pill>
-                  )}
-                  {isSeekToTip(entry) && (
-                    <span
-                      className="jump"
-                      title="Started at the live edge, discarding everything behind it. This read is a jump, not a span."
-                    >
-                      jump
-                    </span>
-                  )}
-                </td>
-                <td>
-                  <Params params={entry.parameters} />
-                </td>
-                <td className="numeric">{entry.itemCount}</td>
-                <td>
-                  <Id value={entry.cursor} />
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+      {entries.length > 0 && <ReadLogRows entries={entries} />}
 
       {hasMore && nextCursor !== null && (
         <div className="row load-more">
