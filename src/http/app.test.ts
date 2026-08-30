@@ -231,20 +231,19 @@ describe('the HTTP surface', () => {
 
       const codes: number[] = [];
       for (let i = 0; i < 30; i += 1) codes.push((await attempt('10.0.0.1')).statusCode);
-      expect(codes.filter((c) => c === 429).length).toBeGreaterThan(0);
 
-      const refused = await attempt('10.0.0.1');
-      expect(refused.statusCode).toBe(429);
-      expect(refused.json()).toMatchObject({ code: 'rate_limited' });
-      expect(refused.headers['retry-after']).toBeDefined();
+      // A bad key is always 401, never 429. Refusing before verification
+      // cannot distinguish a flood from a valid key, so it would lock out
+      // whoever the attacker chose to imitate or share a host with.
+      expect(codes.every((c) => c === 401)).toBe(true);
 
-      // Every agent id is public — it is the middle of every key — so this
-      // counter is what a stranger could otherwise drive up without limit,
-      // making a healthy agent look broken. It stops at the budget.
-      expect(h.store.getAgent(alpha.id)?.failedAuthAttempts).toBeLessThanOrEqual(
-        codes.filter((c) => c === 401).length,
-      );
-      expect(h.store.getAgent(alpha.id)?.failedAuthAttempts).toBeGreaterThan(0);
+      // What is bounded is the counter, because every agent id is public —
+      // it is the middle of every key — so a stranger could otherwise drive it
+      // up without limit and make a healthy agent look broken. It stops well
+      // short of the number of attempts.
+      const counted = h.store.getAgent(alpha.id)?.failedAuthAttempts ?? 0;
+      expect(counted).toBeGreaterThan(0);
+      expect(counted).toBeLessThan(codes.length);
     });
 
     it('never lets that flood shut out a key that verifies', async () => {
@@ -257,9 +256,9 @@ describe('the HTTP surface', () => {
         });
       }
 
-      // The flood exhausted the address it came from and the id it claimed.
-      // Neither alone may refuse anyone: the id is attacker-supplied, and the
-      // address is shared by every agent on one host.
+      // The flood spent both buckets — the address it came from and the id it
+      // claimed. Neither may refuse anyone: the id is attacker-supplied, and
+      // the address is shared by every agent on one host.
       const victim = await h.app.inject({
         method: 'GET',
         url: '/api/agent/identity',
@@ -1240,7 +1239,6 @@ describe('the HTTP surface', () => {
         id: string;
         title: string;
         messageCount: number;
-        lastActivityAt: string | null;
         lastActivityAt: string | null;
         lastSender: { kind: string; displayName: string } | null;
       }[];

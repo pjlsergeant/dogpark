@@ -84,6 +84,6 @@ revocation taking effect immediately.
 
 ## The data directory
 
-`dogpark.db` and `attachments/`. Backing it up is copying the directory; there
+`dogpark.sqlite` and `attachments/`. Backing it up is copying the directory; there
 is nothing else to preserve. Attachments orphaned by a crash between the file
 write and the message commit are swept at startup.

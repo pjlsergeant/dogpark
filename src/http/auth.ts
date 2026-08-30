@@ -107,17 +107,23 @@ export function authenticateAgent(ctx: AppContext) {
 
     const byAddress = `ip:${request.ip}`;
     const byClaim = `id:${claimedAgentId(presented)}`;
-    const address = ctx.failedAuthLimiter.peek(byAddress);
-    const claim = ctx.failedAuthLimiter.peek(byClaim);
-    if (!address.allowed && !claim.allowed) {
-      throw new HttpError('rate_limited', 'too many failed authentication attempts', {
-        retryAfterSeconds: Math.max(address.retryAfterSeconds, claim.retryAfterSeconds),
-      });
-    }
+    // Neither bucket refuses, and that is deliberate.
+    //
+    // Refusing before verification cannot work: you cannot tell a valid key
+    // from a flood without verifying it, so refusing on the address locks out
+    // every other agent on that host — plausible, since a fleet often shares a
+    // box — and refusing on the claimed id lets anyone lock out a named agent,
+    // because every id is public.
+    //
+    // There is little to protect anyway. Verification is one SHA-256 and an
+    // indexed lookup: the store does not stretch, because a key is 256 random
+    // bits with no dictionary behind it. The only real cost of a bad attempt
+    // is the counter write, so that is what the buckets bound. Request-rate
+    // floods are the reverse proxy's job, which this design assumes is there.
+    const countFailure =
+      ctx.failedAuthLimiter.peek(byAddress).allowed && ctx.failedAuthLimiter.peek(byClaim).allowed;
 
-    // The store counts a rejected attempt against the id the key claimed, so
-    // a bad key is still attributable.
-    const auth = ctx.store.verifyKey(presented);
+    const auth = ctx.store.verifyKey(presented, { countFailure });
     if (auth === undefined) {
       ctx.failedAuthLimiter.record(byAddress);
       ctx.failedAuthLimiter.record(byClaim);

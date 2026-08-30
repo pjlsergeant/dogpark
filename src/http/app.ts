@@ -110,20 +110,29 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   });
 
   /**
-   * Told there is a proxy, and the proxy says this request was plaintext: the
-   * bearer token or session cookie has already crossed the wire in the clear.
-   * Refused rather than served. A proxy that sets no `X-Forwarded-Proto` at
-   * all says nothing, and is not second-guessed.
+   * Told there is a proxy, so every API request must carry that proxy's word
+   * that it arrived over TLS. Anything else has put a bearer token or a session
+   * cookie on the wire in the clear.
+   *
+   * A missing header is refused too, not waved through. Proxy mode binds
+   * 0.0.0.0, so a request that reaches the process directly can simply omit
+   * the header — treating silence as consent would make the whole check
+   * optional for exactly the caller it exists to stop. A declared proxy is
+   * expected to set it; if yours does not, it is not terminating TLS on
+   * Dogpark's behalf in a way Dogpark can verify.
    */
   app.addHook('onRequest', async (request) => {
     if (!config.behindProxy || !request.url.startsWith('/api/')) return;
     const declared = request.headers['x-forwarded-proto'];
-    if (declared === undefined) return;
-    const proto = String(declared).split(',')[0]?.trim().toLowerCase();
-    if (proto !== undefined && proto !== '' && proto !== 'https') {
+    const proto = String(declared ?? '')
+      .split(',')[0]
+      ?.trim()
+      .toLowerCase();
+    if (proto !== 'https') {
       throw invalid(
         'this deployment is configured behind a TLS-terminating proxy, but the request ' +
-          `arrived over ${proto}; refusing to accept credentials over plaintext`,
+          `did not arrive over one (X-Forwarded-Proto: ${proto === '' ? 'absent' : proto}); ` +
+          'refusing to accept credentials over plaintext',
       );
     }
   });

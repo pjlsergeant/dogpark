@@ -449,7 +449,15 @@ export interface Store {
 
   // Keys
   issueKey(agent: AgentId, label?: string | undefined): IssuedKey;
-  verifyKey(presented: string): Authentication | undefined;
+  /**
+   * `countFailure` false verifies without charging the agent's failure
+   * counter — for a caller that has decided this attempt is part of a flood
+   * and should not drive public telemetry further.
+   */
+  verifyKey(
+    presented: string,
+    options?: { readonly countFailure?: boolean },
+  ): Authentication | undefined;
   revokeKey(keyId: string): void;
   listKeys(agent: AgentId): readonly KeyRecord[];
 
@@ -1722,36 +1730,44 @@ export function openStore(options: StoreOptions): Store {
     return { agent: agent as AgentId };
   }
 
-  const verifyKeyTx = db.transaction((presented: string): Authentication | undefined => {
-    const parsed = parseKey(presented);
-    const at = now();
+  const verifyKeyTx = db.transaction(
+    (presented: string, countFailure: boolean): Authentication | undefined => {
+      const parsed = parseKey(presented);
+      const at = now();
 
-    const fail = (): undefined => {
-      // Counted against the id the key claimed, which is what it is: anyone
-      // who knows an agent's id can send a bad key bearing it.
-      if (parsed !== undefined && st.getAgent.get({ id: parsed.agent }) !== undefined) {
-        st.countFailedAuth.run({ id: parsed.agent });
-      }
-      return undefined;
-    };
+      const fail = (): undefined => {
+        // Counted against the id the key claimed, which is what it is: anyone
+        // who knows an agent's id can send a bad key bearing it. Skipped once
+        // the caller judges the attempts a flood, so a public counter cannot be
+        // driven — and a write cannot be forced — without limit.
+        if (
+          countFailure &&
+          parsed !== undefined &&
+          st.getAgent.get({ id: parsed.agent }) !== undefined
+        ) {
+          st.countFailedAuth.run({ id: parsed.agent });
+        }
+        return undefined;
+      };
 
-    if (parsed === undefined) return fail();
-    const row = st.keyByHash.get({ hash: sha256(presented) });
-    if (row === undefined) return fail();
-    if (row.revoked_at !== null) return fail();
-    // The hash matched, so the id in the token is the id on the row; check it
-    // anyway rather than trusting the caller's half of the string.
-    if (row.agent_id !== parsed.agent) return fail();
+      if (parsed === undefined) return fail();
+      const row = st.keyByHash.get({ hash: sha256(presented) });
+      if (row === undefined) return fail();
+      if (row.revoked_at !== null) return fail();
+      // The hash matched, so the id in the token is the id on the row; check it
+      // anyway rather than trusting the caller's half of the string.
+      if (row.agent_id !== parsed.agent) return fail();
 
-    const agentRow = st.getAgent.get({ id: row.agent_id });
-    if (agentRow === undefined || agentRow.archived === 1) return fail();
+      const agentRow = st.getAgent.get({ id: row.agent_id });
+      if (agentRow === undefined || agentRow.archived === 1) return fail();
 
-    st.touchAgent.run({ id: row.agent_id, at });
-    const refreshed = st.getAgent.get({ id: row.agent_id });
-    /* c8 ignore next */
-    if (refreshed === undefined) throw new Error('agent vanished');
-    return { agent: toAgentRecord(refreshed), keyId: row.id };
-  });
+      st.touchAgent.run({ id: row.agent_id, at });
+      const refreshed = st.getAgent.get({ id: row.agent_id });
+      /* c8 ignore next */
+      if (refreshed === undefined) throw new Error('agent vanished');
+      return { agent: toAgentRecord(refreshed), keyId: row.id };
+    },
+  );
 
   // -------------------------------------------------------------------------
   // The Store
@@ -1836,8 +1852,8 @@ export function openStore(options: StoreOptions): Store {
       return { id, agent, key, createdAt: at };
     },
 
-    verifyKey(presented) {
-      return verifyKeyTx(presented);
+    verifyKey(presented, options) {
+      return verifyKeyTx(presented, options?.countFailure ?? true);
     },
 
     revokeKey(keyId) {
