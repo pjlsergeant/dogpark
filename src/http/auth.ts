@@ -1,5 +1,6 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import type { FastifyReply, FastifyRequest } from 'fastify';
+import { splitKey } from '../store/ids.js';
 import type { Authentication, SessionRecord } from '../store/index.js';
 import type { AppContext } from './context.js';
 import { csrfRefused, HttpError, unauthenticated } from './errors.js';
@@ -67,10 +68,7 @@ function bearerToken(header: string | undefined): string | undefined {
  * shares one bucket.
  */
 function claimedAgentId(presented: string): string {
-  const parts = presented.split('_');
-  const [prefix, agent, secret] = parts;
-  if (parts.length !== 3 || prefix !== 'dgp' || agent === undefined || !secret) return '';
-  return agent;
+  return splitKey(presented)?.agent ?? '';
 }
 
 /**
