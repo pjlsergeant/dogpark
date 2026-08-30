@@ -58,10 +58,10 @@ export interface DogparkAdminApi {
    * refreshes what a write can move when it returns.
    */
   awaitChanges(
-    after: number | undefined,
+    after: string | undefined,
     waitSeconds: number,
     signal?: AbortSignal | undefined,
-  ): Promise<number>;
+  ): Promise<string>;
   createSpace(name: string): Promise<Space>;
   /** The contract pins no body for a rename; nothing is read back. */
   renameSpace(id: SpaceId, name: string): Promise<void>;

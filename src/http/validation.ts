@@ -93,7 +93,8 @@ export const AgentsQuery = z.strictObject({ space: Id.optional() });
 
 /** The human's long poll: the last version seen, and how long to wait past it. */
 export const ChangesQuery = z.strictObject({
-  after: z.coerce.number().int().nonnegative().optional(),
+  /** Opaque: whatever the last answer said. */
+  after: z.string().min(1).max(64).optional(),
   waitSeconds: z.coerce.number().int().nonnegative().optional(),
 });
 

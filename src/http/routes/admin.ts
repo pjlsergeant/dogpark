@@ -122,8 +122,9 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
        * these open and refresh what it shows when it returns, rather than
        * asking on a timer. `after` is the version last seen: a write that
        * landed between two requests answers the next one at once, and a
-       * restart (which resets the count) reads as a change, which it may as
-       * well be. Without `after` or a wait it simply reports the version.
+       * restart reads as a change (the version carries a per-process epoch),
+       * which it may as well be. Without `after` or a wait it simply reports
+       * the version.
        */
       guarded.get('/changes', async (request, reply) => {
         const query = parse(ChangesQuery, request.query, 'query');

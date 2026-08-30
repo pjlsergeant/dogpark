@@ -1,3 +1,5 @@
+import { randomBytes } from 'node:crypto';
+
 /**
  * Wakes long polls when something is written.
  *
@@ -8,19 +10,23 @@
  */
 export class WriteSignal {
   #waiters = new Set<() => void>();
-  #version = 0;
+  /** Random per process, so a count that restarted from zero never equals one from before. */
+  readonly #epoch = randomBytes(4).toString('hex');
+  #count = 0;
 
   /**
-   * How many writes have been signalled since the process started. A caller
-   * that remembers the last value it saw can tell whether one landed between
-   * two of its requests, which a bare wake-up cannot say.
+   * An opaque token that changes on every write signalled since the process
+   * started. A caller that remembers the last value it saw can tell whether
+   * one landed between two of its requests, which a bare wake-up cannot say —
+   * and a restart, which resets the count, still reads as a change, because
+   * the epoch in front of it is new.
    */
-  get version(): number {
-    return this.#version;
+  get version(): string {
+    return `${this.#epoch}:${this.#count}`;
   }
 
   notify(): void {
-    this.#version += 1;
+    this.#count += 1;
     const waiting = [...this.#waiters];
     this.#waiters.clear();
     for (const wake of waiting) wake();

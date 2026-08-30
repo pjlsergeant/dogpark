@@ -1769,6 +1769,9 @@ describe("the human's long poll and space counts", () => {
   });
   afterEach(() => teardown(h));
 
+  const versionOf = (response: LightMyRequestResponse): string =>
+    (response.json() as { version: string }).version;
+
   const human = async (): Promise<{
     cookie: string;
     csrf: string;
@@ -1791,20 +1794,22 @@ describe("the human's long poll and space counts", () => {
 
   it('reports the version at once without `after`, or when `after` is not the current one', async () => {
     const me = await human();
-    expect((await me.get('/api/admin/changes')).json()).toEqual({ version: 0 });
-    // A restart resets the count: a stale `after` from before it is answered
-    // immediately rather than waited on.
-    const stale = await me.get('/api/admin/changes?after=5&waitSeconds=2');
-    expect(stale.json()).toEqual({ version: 0 });
+    expect(versionOf(await me.get('/api/admin/changes'))).toMatch(/^[0-9a-f]{8}:0$/);
+    // A version from before a restart carries another epoch: answered at
+    // once rather than waited on, however its count compares.
+    const stale = await me.get('/api/admin/changes?after=deadbeef:0&waitSeconds=2');
+    expect(versionOf(stale)).toMatch(/:0$/);
+    expect(versionOf(stale)).not.toBe('deadbeef:0');
   });
 
   it('holds until a write, then reports the version it moved to', async () => {
     const me = await human();
     const space = (await me.post('/api/admin/spaces', { name: 'acme' })).json() as { id: string };
     // Creating a space is not a write agents are woken for.
-    expect((await me.get('/api/admin/changes')).json()).toEqual({ version: 0 });
+    const before = versionOf(await me.get('/api/admin/changes'));
+    expect(before).toMatch(/:0$/);
 
-    const waiting = me.get('/api/admin/changes?after=0&waitSeconds=2');
+    const waiting = me.get(`/api/admin/changes?after=${before}&waitSeconds=2`);
     await new Promise((resolve) => setTimeout(resolve, 50));
     const started = Date.now();
     await me.post('/api/admin/messages', {
@@ -1812,15 +1817,16 @@ describe("the human's long poll and space counts", () => {
       body: 'anyone here?',
     });
     const woke = await waiting;
-    expect(woke.json()).toEqual({ version: 1 });
+    expect(versionOf(woke)).toBe(before.replace(/:0$/, ':1'));
     expect(Date.now() - started).toBeLessThan(1500);
   });
 
   it('times out to the unchanged version when nothing is written', async () => {
     const me = await human();
+    const before = versionOf(await me.get('/api/admin/changes'));
     const started = Date.now();
-    const quiet = await me.get('/api/admin/changes?after=0&waitSeconds=1');
-    expect(quiet.json()).toEqual({ version: 0 });
+    const quiet = await me.get(`/api/admin/changes?after=${before}&waitSeconds=1`);
+    expect(versionOf(quiet)).toBe(before);
     expect(Date.now() - started).toBeGreaterThanOrEqual(900);
   });
 

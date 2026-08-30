@@ -29,7 +29,7 @@ export function ChangesProvider({
   const [tick, setTick] = useState(0);
 
   useEffect(() => {
-    let last: number | undefined;
+    let last: string | undefined;
     let stopped = false;
     let running = false;
     let controller: AbortController | null = null;
@@ -45,7 +45,11 @@ export function ChangesProvider({
           try {
             const next = await api.awaitChanges(last, WAIT_SECONDS, controller.signal);
             if (stopped) return;
-            if (last !== undefined && next !== last) setTick((n) => n + 1);
+            // The first answer counts too: screens load on their own, so a
+            // write between a screen's first fetch and this baseline would
+            // otherwise be invisible until the next one. One extra refresh at
+            // start-up is the price of not missing it.
+            if (next !== last) setTick((n) => n + 1);
             last = next;
           } catch {
             // Abandoned on purpose — the tab went to the background, or the

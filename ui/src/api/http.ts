@@ -186,7 +186,7 @@ export function createHttpApi(): DogparkAdminApi {
       const raw = (await request('GET', '/changes', {
         query: { after, waitSeconds },
         signal,
-      })) as { version: number };
+      })) as { version: string };
       return raw.version;
     },
     async createSpace(name) {
