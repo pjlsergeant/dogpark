@@ -38,9 +38,8 @@ export interface DogparkAdminApi {
   // Session ---------------------------------------------------------------
   login(password: string): Promise<SessionCredentials>;
   /**
-   * Re-establish from the cookie alone after a reload, if the server offers
-   * it. Resolves `null` when there is no live session — including when the
-   * route does not exist, since it is not in the contract.
+   * Re-establish from the cookie alone after a reload. Resolves `null` when
+   * there is no live session, which is a state rather than an error.
    */
   resume(): Promise<SessionCredentials | null>;
   logout(): Promise<void>;
