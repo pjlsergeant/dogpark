@@ -148,7 +148,7 @@ rm -rf "$UP"
 step "the human's thread list carries what a list needs"
 THREADS=$(admin GET "/spaces/$SPACE/conversations")
 echo "$THREADS" | jq -e --arg c "$CONV" \
-  '[.[] | select(.id == $c)][0] | (.messageCount > 0) and (.lastMessageAt != null) and (.lastSenderName != null)' \
+  '[.[] | select(.id == $c)][0] | (.messageCount > 0) and (.lastActivityAt != null) and (.lastSender.displayName != null)' \
   >/dev/null && ok "threads carry a count, last activity and last sender" \
   || bad "thread list" "count, last activity, last sender" "$THREADS"
 
