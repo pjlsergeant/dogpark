@@ -57,6 +57,34 @@ required because the SPA shares an origin with the agent API.
 | GET | `/escalations` | with notification state |
 | GET | `/search` | `q`; FTS5 over stored bodies |
 
+## Admin response shapes
+
+Written down because the smoke test and the implementation must agree, and
+"returns the key once" is not a shape.
+
+```
+POST /session      -> { csrfToken }
+POST /spaces       -> { id, name }
+GET  /spaces       -> [{ id, name }]
+GET  /spaces/:id/members
+                   -> { current: [{ agent, grantedAt }],
+                        history: [{ agent, grantedAt, revokedAt }] }
+POST /agents       -> { agent: { id, displayName }, key }        // key once
+POST /agents/:id/keys
+                   -> { keyId, key }                             // key once
+GET  /agents       -> [{ id, displayName, archived, lastSeenAt,
+                         failedAttemptsClaimingId, hasEverAuthenticated }]
+GET  /reads        -> [{ agent, at, parameters, cursor, itemCount }]
+GET  /escalations  -> [{ id, agent, conversation, reason, raisedAt,
+                         notification }]
+GET  /search?q=    -> [{ message, conversation, space }]
+POST /messages     -> PostResult                                 // as the human
+```
+
+`hasEverAuthenticated` exists so the UI can show failure counts prominently
+during onboarding and quietly afterwards, which is the only window where they
+diagnose anything.
+
 ## Serving the UI
 
 Static assets from `/`, with `/api/*` taking precedence. Agent-supplied content
