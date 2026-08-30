@@ -5,8 +5,11 @@ import { ID_PATTERN } from './ids.js';
 /**
  * The reserved control character (ADR-0010): U+001E, INFORMATION SEPARATOR
  * TWO. Reported to agents by `identity()`.
+ *
+ * Written as an escape rather than the literal character: a raw control byte
+ * in source survives no round trip through an editor or a formatter.
  */
-export const RESERVED_SEQUENCE = '';
+export const RESERVED_SEQUENCE = '\u001E';
 
 /**
  * Rejected, never stripped. Stripping one occurrence from a doubled sequence

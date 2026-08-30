@@ -1,0 +1,1070 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
+import type {
+  AgentId,
+  AttachmentId,
+  ConversationId,
+  Cursor,
+  IdempotencyKey,
+  Message,
+  QueryCursor,
+  SpaceId,
+  StreamItem,
+  Timestamp,
+} from '../types.js';
+import { StoreError } from './errors.js';
+import { openStore, type Store } from './index.js';
+import { RESERVED_SEQUENCE } from './text.js';
+
+// ---------------------------------------------------------------------------
+// Harness: a real on-disk database per test, and a clock the test can move so
+// that timestamp ranges are testable without sleeping.
+// ---------------------------------------------------------------------------
+
+interface Harness {
+  readonly store: Store;
+  advance(seconds: number): void;
+  at(): Timestamp;
+}
+
+const open: Store[] = [];
+const dirs: string[] = [];
+
+function harness(): Harness {
+  const dir = mkdtempSync(join(tmpdir(), 'dogpark-store-'));
+  dirs.push(dir);
+  let millis = Date.parse('2026-01-01T00:00:00.000Z');
+  const store = openStore({
+    file: join(dir, 'nested', 'dogpark.db'),
+    humanDisplayName: 'the human',
+    now: () => new Date(millis),
+  });
+  open.push(store);
+  return {
+    store,
+    advance(seconds) {
+      millis += seconds * 1000;
+    },
+    at() {
+      return new Date(millis).toISOString() as Timestamp;
+    },
+  };
+}
+
+afterEach(() => {
+  for (const store of open.splice(0)) store.close();
+  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
+
+function expectStoreError(fn: () => unknown, code: string): StoreError {
+  try {
+    fn();
+  } catch (error) {
+    expect(error).toBeInstanceOf(StoreError);
+    const store = error as StoreError;
+    expect(store.code).toBe(code);
+    return store;
+  }
+  throw new Error('expected a StoreError, but nothing was thrown');
+}
+
+function bodies(items: readonly StreamItem[]): string[] {
+  return items.filter((i): i is Message => i.kind === 'message').map((i) => i.body);
+}
+
+function kinds(items: readonly StreamItem[]): string[] {
+  return items.map((i) => i.kind);
+}
+
+const key = (value: string): IdempotencyKey => value as IdempotencyKey;
+
+/** A space with one member, which most tests need before anything else. */
+function scene(h: Harness): { agent: AgentId; space: SpaceId } {
+  const agent = h.store.createAgent('alice').id;
+  const space = h.store.createSpace('acme').id;
+  h.store.grantMembership(agent, space);
+  return { agent, space };
+}
+
+function post(h: Harness, agent: AgentId, space: SpaceId, title: string, body: string): Message {
+  return h.store.postMessage({
+    sender: { kind: 'agent', id: agent },
+    target: { space, title },
+    body,
+  }).message;
+}
+
+// ---------------------------------------------------------------------------
+
+describe('membership is append-only intervals', () => {
+  it('opens a new interval on re-grant and never clears a revocation', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+
+    h.advance(60);
+    h.store.revokeMembership(agent, space);
+    h.advance(60);
+    h.store.grantMembership(agent, space);
+
+    const intervals = h.store.listMembershipIntervals({ agent, space });
+    expect(intervals).toHaveLength(2);
+    expect(intervals[0]?.revokedAt).toBe('2026-01-01T00:01:00.000Z');
+    expect(intervals[1]?.revokedAt).toBeNull();
+  });
+
+  it('treats adding an already-current member as a no-op, not a second interval', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+
+    expect(h.store.grantMembership(agent, space)).toBe(false);
+
+    expect(h.store.listMembershipIntervals({ agent, space })).toHaveLength(1);
+    // And no second announcement: nothing happened, so nothing is announced.
+    expect(kinds(h.store.readStream(agent).items)).toEqual(['space_access_granted']);
+  });
+
+  it('refuses a second open interval at the schema level', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+
+    expect(() =>
+      h.store.database
+        .prepare(
+          'INSERT INTO membership (id, agent_id, space_id, granted_at, granted_seq) ' +
+            "VALUES ('x', ?, ?, '2026-01-01T00:00:00.000Z', 99)",
+        )
+        .run(agent, space),
+    ).toThrow(/UNIQUE constraint failed/);
+  });
+
+  it('reports revoking a non-member as a no-op', () => {
+    const h = harness();
+    const agent = h.store.createAgent('alice').id;
+    const space = h.store.createSpace('acme').id;
+    expect(h.store.revokeMembership(agent, space)).toBe(false);
+  });
+
+  it('keeps membership across archive and unarchive', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    h.store.archiveAgent(agent);
+    expect(h.store.listSpacesForAgent(agent).map((s) => s.id)).toEqual([space]);
+    h.store.unarchiveAgent(agent);
+    expect(h.store.listSpacesForAgent(agent).map((s) => s.id)).toEqual([space]);
+  });
+});
+
+describe('messages are immutable', () => {
+  it('exposes no way to change or remove one', () => {
+    const h = harness();
+    const mutators = Object.keys(h.store).filter((name) =>
+      /^(update|edit|delete|remove)Message$/.test(name),
+    );
+    expect(mutators).toEqual([]);
+  });
+});
+
+describe('ordering', () => {
+  it('allocates one sequence across messages and system events', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const other = h.store.createSpace('beta').id;
+
+    post(h, agent, space, 'notes', 'one');
+    h.store.grantMembership(agent, other);
+    post(h, agent, other, 'notes', 'two');
+
+    const seqs = (
+      h.store.database
+        .prepare('SELECT seq FROM message UNION ALL SELECT seq FROM system_event ORDER BY seq')
+        .all() as { seq: number }[]
+    ).map((r) => r.seq);
+    expect(seqs).toEqual([1, 2, 3, 4]);
+  });
+
+  it('returns items in sequence order, interleaving events and messages', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const other = h.store.createSpace('beta').id;
+
+    post(h, agent, space, 'notes', 'one');
+    h.store.grantMembership(agent, other);
+    post(h, agent, other, 'notes', 'two');
+
+    expect(kinds(h.store.readStream(agent).items)).toEqual([
+      'space_access_granted',
+      'message',
+      'space_access_granted',
+      'message',
+    ]);
+  });
+
+  it('hands out cursors that are opaque and not interchangeable with query cursors', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    post(h, agent, space, 'notes', 'one');
+
+    const stream = h.store.readStream(agent).nextCursor;
+    const query = h.store.readSpace({ kind: 'agent', id: agent }, space).nextCursor;
+    expect(stream).not.toMatch(/^\d+$/);
+    expect(stream).not.toBe(query);
+
+    expectStoreError(
+      () => h.store.readStream(agent, { from: { after: query as unknown as Cursor } }),
+      'invalid_request',
+    );
+    expectStoreError(
+      () =>
+        h.store.readSpace({ kind: 'agent', id: agent }, space, {
+          after: stream as unknown as QueryCursor,
+        }),
+      'invalid_request',
+    );
+  });
+});
+
+describe('readStream access filter', () => {
+  it('does not replay history from before the grant', () => {
+    const h = harness();
+    const writer = h.store.createAgent('writer').id;
+    const space = h.store.createSpace('acme').id;
+    h.store.grantMembership(writer, space);
+    post(h, writer, space, 'notes', 'before');
+
+    const late = h.store.createAgent('late').id;
+    h.store.grantMembership(late, space);
+    post(h, writer, space, 'notes', 'after');
+
+    const page = h.store.readStream(late);
+    expect(kinds(page.items)).toEqual(['space_access_granted', 'message']);
+    expect(bodies(page.items)).toEqual(['after']);
+
+    // Access is not delivery: the history is readable, just not replayed.
+    const backfill = h.store.readConversation(
+      { kind: 'agent', id: late },
+      page.items.find((i): i is Message => i.kind === 'message')?.conversation ??
+        ('' as ConversationId),
+    );
+    expect(backfill.messages.map((m) => m.body)).toEqual(['before', 'after']);
+  });
+
+  it('skips an unreachable backlog and advances the cursor past it', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    post(h, agent, space, 'notes', 'seen-never');
+    h.store.revokeMembership(agent, space);
+
+    const page = h.store.readStream(agent);
+    // The message fails the current-access test and is skipped; the revocation
+    // event is exempt from that test and delivers.
+    expect(kinds(page.items)).toEqual(['space_access_granted', 'space_access_revoked']);
+    expect(page.hasMore).toBe(false);
+
+    // The cursor moved past the skipped message, so a second read stalls at
+    // nothing rather than re-offering it.
+    const again = h.store.readStream(agent, { from: { after: page.nextCursor } });
+    expect(again.items).toEqual([]);
+    expect(again.nextCursor).toBe(page.nextCursor);
+  });
+
+  it('never re-delivers what it skipped, even after access returns', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    post(h, agent, space, 'notes', 'skipped');
+    h.store.revokeMembership(agent, space);
+
+    const first = h.store.readStream(agent);
+    h.store.grantMembership(agent, space);
+    post(h, agent, space, 'notes', 'fresh');
+
+    const second = h.store.readStream(agent, { from: { after: first.nextCursor } });
+    expect(kinds(second.items)).toEqual(['space_access_granted', 'message']);
+    expect(bodies(second.items)).toEqual(['fresh']);
+
+    // ...but the skipped message is still readable by query.
+    const backfill = h.store.readSpace({ kind: 'agent', id: agent }, space);
+    expect(backfill.messages.map((m) => m.body)).toEqual(['skipped', 'fresh']);
+  });
+
+  it('is deliberately not reproducible from the same cursor', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const start = h.store.readStream(agent, { from: { from: 'tip' } }).nextCursor;
+    post(h, agent, space, 'notes', 'one');
+
+    expect(bodies(h.store.readStream(agent, { from: { after: start } }).items)).toEqual(['one']);
+    h.store.revokeMembership(agent, space);
+    expect(bodies(h.store.readStream(agent, { from: { after: start } }).items)).toEqual([]);
+  });
+
+  it('delivers only the reading agent its own events', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const bystander = h.store.createAgent('bystander').id;
+    h.store.grantMembership(bystander, space);
+
+    expect(h.store.readStream(agent).items).toHaveLength(1);
+  });
+
+  it('paginates without stalling and always returns a cursor', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    post(h, agent, space, 'notes', 'one');
+    post(h, agent, space, 'notes', 'two');
+
+    const first = h.store.readStream(agent, { limit: 1 });
+    expect(first.hasMore).toBe(true);
+    expect(kinds(first.items)).toEqual(['space_access_granted']);
+
+    const second = h.store.readStream(agent, { from: { after: first.nextCursor }, limit: 1 });
+    expect(bodies(second.items)).toEqual(['one']);
+    expect(second.hasMore).toBe(true);
+
+    const third = h.store.readStream(agent, { from: { after: second.nextCursor }, limit: 1 });
+    expect(bodies(third.items)).toEqual(['two']);
+    expect(third.hasMore).toBe(false);
+
+    const empty = h.store.readStream(agent, { from: { after: third.nextCursor } });
+    expect(empty.items).toEqual([]);
+    expect(empty.nextCursor).toBe(third.nextCursor);
+  });
+});
+
+describe('ReadFrom', () => {
+  it('starts at the live edge with nothing behind it', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    post(h, agent, space, 'notes', 'old');
+
+    const page = h.store.readStream(agent, { from: { from: 'tip' } });
+    expect(page.items).toEqual([]);
+
+    post(h, agent, space, 'notes', 'new');
+    expect(bodies(h.store.readStream(agent, { from: { after: page.nextCursor } }).items)).toEqual([
+      'new',
+    ]);
+  });
+
+  it('anchors inclusively on a timestamp', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    post(h, agent, space, 'notes', 'before');
+    h.advance(60);
+    const boundary = h.at();
+    post(h, agent, space, 'notes', 'at-boundary');
+    h.advance(60);
+    post(h, agent, space, 'notes', 'after');
+
+    expect(bodies(h.store.readStream(agent, { from: { since: boundary } }).items)).toEqual([
+      'at-boundary',
+      'after',
+    ]);
+  });
+
+  it('accepts a timestamp written without milliseconds', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    post(h, agent, space, 'notes', 'at-boundary');
+
+    const coarse = '2026-01-01T00:00:00Z' as Timestamp;
+    expect(bodies(h.store.readStream(agent, { from: { since: coarse } }).items)).toEqual([
+      'at-boundary',
+    ]);
+  });
+});
+
+describe('queries are not stream positions', () => {
+  it('honours current access and reads history the stream never delivered', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    post(h, agent, space, 'notes', 'one');
+
+    h.store.revokeMembership(agent, space);
+    expectStoreError(() => h.store.readSpace({ kind: 'agent', id: agent }, space), 'not_found');
+
+    h.store.grantMembership(agent, space);
+    expect(
+      h.store.readSpace({ kind: 'agent', id: agent }, space).messages.map((m) => m.body),
+    ).toEqual(['one']);
+  });
+
+  it('does not advance the stream cursor', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    post(h, agent, space, 'notes', 'one');
+
+    h.store.readSpace({ kind: 'agent', id: agent }, space);
+    h.store.readConversation(
+      { kind: 'agent', id: agent },
+      h.store.listConversations(space)[0]?.id ?? ('' as ConversationId),
+    );
+
+    // Neither query recorded a stream position, so the stream still owes the
+    // agent everything.
+    expect(h.store.lastReadCursor(agent)).toBeUndefined();
+    expect(bodies(h.store.readStream(agent).items)).toEqual(['one']);
+  });
+
+  it('treats since as inclusive and until as exclusive', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    post(h, agent, space, 'notes', 'first');
+    h.advance(60);
+    const middle = h.at();
+    post(h, agent, space, 'notes', 'second');
+    h.advance(60);
+    const end = h.at();
+    post(h, agent, space, 'notes', 'third');
+
+    const page = h.store.readSpace({ kind: 'agent', id: agent }, space, {
+      since: middle,
+      until: end,
+    });
+    expect(page.messages.map((m) => m.body)).toEqual(['second']);
+  });
+
+  it('pages within a range with a query cursor and leaves an empty page in place', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    post(h, agent, space, 'notes', 'one');
+    post(h, agent, space, 'notes', 'two');
+
+    const first = h.store.readSpace({ kind: 'agent', id: agent }, space, undefined, 1);
+    expect(first.messages.map((m) => m.body)).toEqual(['one']);
+    expect(first.hasMore).toBe(true);
+
+    const second = h.store.readSpace(
+      { kind: 'agent', id: agent },
+      space,
+      { after: first.nextCursor },
+      1,
+    );
+    expect(second.messages.map((m) => m.body)).toEqual(['two']);
+    expect(second.hasMore).toBe(false);
+
+    const third = h.store.readSpace({ kind: 'agent', id: agent }, space, {
+      after: second.nextCursor,
+    });
+    expect(third.messages).toEqual([]);
+    // A query skips nothing, so an empty page leaves the position untouched —
+    // the opposite of the stream, which jumps past what it filtered out.
+    expect(third.nextCursor).toBe(second.nextCursor);
+  });
+
+  it('reports not found for a space the agent cannot see', () => {
+    const h = harness();
+    const { agent } = scene(h);
+    const secret = h.store.createSpace('secret').id;
+    expectStoreError(() => h.store.readSpace({ kind: 'agent', id: agent }, secret), 'not_found');
+    // Indistinguishable from a space that does not exist at all.
+    expectStoreError(
+      () => h.store.readSpace({ kind: 'agent', id: agent }, 'nosuchspace00000' as SpaceId),
+      'not_found',
+    );
+  });
+});
+
+describe('idempotency', () => {
+  it('replays the original result rather than writing twice', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const request = {
+      sender: { kind: 'agent', id: agent } as const,
+      target: { space, title: 'notes' },
+      body: 'hello',
+      idempotencyKey: key('k1'),
+    };
+
+    const first = h.store.postMessage(request);
+    const second = h.store.postMessage(request);
+
+    expect(second.created).toBe(false);
+    expect(second.message.id).toBe(first.message.id);
+    expect(h.store.readSpace({ kind: 'agent', id: agent }, space).messages).toHaveLength(1);
+  });
+
+  it('rejects a different request under the same key', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    h.store.postMessage({
+      sender: { kind: 'agent', id: agent },
+      target: { space, title: 'notes' },
+      body: 'hello',
+      idempotencyKey: key('k1'),
+    });
+
+    expectStoreError(
+      () =>
+        h.store.postMessage({
+          sender: { kind: 'agent', id: agent },
+          target: { space, title: 'notes' },
+          body: 'something else',
+          idempotencyKey: key('k1'),
+        }),
+      'invalid_request',
+    );
+    expect(h.store.readSpace({ kind: 'agent', id: agent }, space).messages).toHaveLength(1);
+  });
+
+  it('is scoped per agent', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const other = h.store.createAgent('bob').id;
+    h.store.grantMembership(other, space);
+
+    h.store.postMessage({
+      sender: { kind: 'agent', id: agent },
+      target: { space, title: 'notes' },
+      body: 'from alice',
+      idempotencyKey: key('shared'),
+    });
+    const second = h.store.postMessage({
+      sender: { kind: 'agent', id: other },
+      target: { space, title: 'notes' },
+      body: 'from bob',
+      idempotencyKey: key('shared'),
+    });
+
+    expect(second.created).toBe(true);
+    expect(h.store.readSpace({ kind: 'agent', id: agent }, space).messages).toHaveLength(2);
+  });
+
+  it('writes the key only with the write it covers', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+
+    // Fails after the key would have been claimed, had it been claimed early.
+    expectStoreError(
+      () =>
+        h.store.postMessage({
+          sender: { kind: 'agent', id: agent },
+          target: { conversation: 'nosuchconvo0000' as ConversationId },
+          body: 'hello',
+          idempotencyKey: key('k1'),
+        }),
+      'not_found',
+    );
+
+    const rows = h.store.database.prepare('SELECT COUNT(*) AS n FROM idempotency').get() as {
+      n: number;
+    };
+    expect(rows.n).toBe(0);
+
+    // So the same key is still usable for the retry that succeeds.
+    const retry = h.store.postMessage({
+      sender: { kind: 'agent', id: agent },
+      target: { space, title: 'notes' },
+      body: 'hello',
+      idempotencyKey: key('k1'),
+    });
+    expect(retry.created).toBe(true);
+  });
+
+  it('replays an escalation rather than waking someone twice', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const conversation = h.store.resolveOrCreateConversation(space, 'notes').id;
+    const request = {
+      agent,
+      conversation,
+      reason: 'the numbers do not add up',
+      idempotencyKey: key('e1'),
+    };
+
+    const first = h.store.recordEscalation(request);
+    const second = h.store.recordEscalation(request);
+    expect(first.created).toBe(true);
+    expect(second.created).toBe(false);
+    expect(second.escalation.id).toBe(first.escalation.id);
+    expect(h.store.listEscalations()).toHaveLength(1);
+
+    expectStoreError(
+      () => h.store.recordEscalation({ ...request, reason: 'different reason' }),
+      'invalid_request',
+    );
+  });
+});
+
+describe('titles are unique within a space', () => {
+  it('resolves an existing conversation or opens one, atomically', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+
+    const first = h.store.postMessage({
+      sender: { kind: 'agent', id: agent },
+      target: { space, title: 'daily' },
+      body: 'one',
+    });
+    const second = h.store.postMessage({
+      sender: { kind: 'agent', id: agent },
+      target: { space, title: 'daily' },
+      body: 'two',
+    });
+
+    expect(second.conversation.id).toBe(first.conversation.id);
+    expect(h.store.listConversations(space)).toHaveLength(1);
+  });
+
+  it('scopes titles to the space', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const other = h.store.createSpace('beta').id;
+    h.store.grantMembership(agent, other);
+
+    const a = h.store.resolveOrCreateConversation(space, 'daily');
+    const b = h.store.resolveOrCreateConversation(other, 'daily');
+    expect(a.id).not.toBe(b.id);
+  });
+
+  it('refuses a rename onto a title already used in the space', () => {
+    const h = harness();
+    const { space } = scene(h);
+    h.store.resolveOrCreateConversation(space, 'one');
+    const second = h.store.resolveOrCreateConversation(space, 'two');
+    expectStoreError(() => h.store.renameConversation(second.id, 'one'), 'invalid_request');
+  });
+
+  it('carries the conversation title on every message, and renames it in place', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const posted = h.store.postMessage({
+      sender: { kind: 'agent', id: agent },
+      target: { space, title: 'daily' },
+      body: 'one',
+    });
+    expect(posted.message.conversationTitle).toBe('daily');
+
+    h.store.renameConversation(posted.conversation.id, 'weekly');
+    const reread = h.store.readSpace({ kind: 'agent', id: agent }, space).messages[0];
+    expect(reread?.conversationTitle).toBe('weekly');
+  });
+});
+
+describe('bodies are canonical', () => {
+  it('stores a reference token and renders the current name', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const bob = h.store.createAgent('bob').id;
+    h.store.grantMembership(bob, space);
+
+    const posted = post(h, agent, space, 'notes', 'ping @bob please');
+    const stored = h.store.database
+      .prepare('SELECT body FROM message WHERE id = ?')
+      .get(posted.id) as { body: string };
+
+    expect(stored.body).toBe(`ping @${bob} please`);
+    expect(posted.body).toBe('ping @bob please');
+    expect(posted.mentions).toEqual([bob]);
+
+    h.store.renameAgent(bob, 'robert');
+    const reread = h.store.readSpace({ kind: 'agent', id: agent }, space).messages[0];
+    expect(reread?.body).toBe('ping @robert please');
+    expect(reread?.mentions).toEqual([bob]);
+  });
+
+  it('leaves an unresolvable name literal rather than erroring', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const posted = post(h, agent, space, 'notes', 'ping @nobody and @alice');
+    expect(posted.body).toBe(`ping @nobody and @alice`);
+    expect(posted.mentions).toEqual([agent]);
+  });
+
+  it('resolves names only within the space', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const stranger = h.store.createAgent('stranger').id;
+    const elsewhere = h.store.createSpace('beta').id;
+    h.store.grantMembership(stranger, elsewhere);
+
+    const posted = post(h, agent, space, 'notes', 'ping @stranger');
+    const stored = h.store.database
+      .prepare('SELECT body FROM message WHERE id = ?')
+      .get(posted.id) as { body: string };
+
+    // Literal, and not an error: a mention that failed differently would
+    // reveal whether a stranger exists.
+    expect(stored.body).toBe('ping @stranger');
+    expect(posted.mentions).toEqual([]);
+  });
+
+  it('does not render a hand-written token for an agent outside the space', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const stranger = h.store.createAgent('stranger').id;
+
+    const posted = post(h, agent, space, 'notes', `ping @${stranger}`);
+    expect(posted.body).toBe(`ping @${stranger}`);
+    expect(posted.mentions).toEqual([]);
+  });
+
+  it('keeps punctuation next to a mention', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const posted = post(h, agent, space, 'notes', 'over to @alice.');
+    expect(posted.body).toBe('over to @alice.');
+    expect(posted.mentions).toEqual([agent]);
+  });
+
+  it('does not treat an email address as a mention', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const posted = post(h, agent, space, 'notes', 'mail alice@alice for details');
+    const stored = h.store.database
+      .prepare('SELECT body FROM message WHERE id = ?')
+      .get(posted.id) as { body: string };
+    expect(stored.body).toBe('mail alice@alice for details');
+  });
+
+  it('keeps mentions searchable as tokens, so a rename touches no index', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const bob = h.store.createAgent('bob').id;
+    h.store.grantMembership(bob, space);
+    post(h, agent, space, 'notes', 'ping @bob about invoices');
+
+    expect(h.store.searchMessages(`"${bob}"`)).toHaveLength(1);
+    expect(h.store.searchMessages('invoices')).toHaveLength(1);
+
+    h.store.renameAgent(bob, 'robert');
+    expect(h.store.searchMessages(`"${bob}"`)).toHaveLength(1);
+    expect(h.store.searchMessages('robert')).toHaveLength(0);
+  });
+});
+
+describe('the reserved control character', () => {
+  const poison = `before${RESERVED_SEQUENCE}after`;
+
+  it('is U+001E', () => {
+    expect(RESERVED_SEQUENCE).toBe('\u001E');
+  });
+
+  it('is rejected in a body, and nothing is stored', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    expectStoreError(() => post(h, agent, space, 'notes', poison), 'reserved_sequence');
+    expect(h.store.listConversations(space)).toHaveLength(0);
+  });
+
+  it('is rejected in a title, a filename, an escalation reason and a name', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const conversation = h.store.resolveOrCreateConversation(space, 'notes').id;
+
+    expectStoreError(() => post(h, agent, space, poison, 'hello'), 'reserved_sequence');
+    expectStoreError(
+      () =>
+        h.store.postMessage({
+          sender: { kind: 'agent', id: agent },
+          target: { space, title: 'notes' },
+          body: 'hello',
+          attachments: [
+            {
+              id: 'attachment0000a' as AttachmentId,
+              filename: poison,
+              contentType: 'text/plain',
+              sizeBytes: 3,
+            },
+          ],
+        }),
+      'reserved_sequence',
+    );
+    expectStoreError(
+      () =>
+        h.store.recordEscalation({
+          agent,
+          conversation,
+          reason: poison,
+          idempotencyKey: key('e1'),
+        }),
+      'reserved_sequence',
+    );
+    expectStoreError(() => h.store.createAgent(poison), 'reserved_sequence');
+    expectStoreError(() => h.store.createSpace(poison), 'reserved_sequence');
+  });
+
+  it('binds the human too', () => {
+    const h = harness();
+    const { space } = scene(h);
+    expectStoreError(
+      () =>
+        h.store.postMessage({
+          sender: { kind: 'human' },
+          target: { space, title: 'notes' },
+          body: poison,
+        }),
+      'reserved_sequence',
+    );
+  });
+});
+
+describe('the read log', () => {
+  it('records one row per read call, with the parameters and the cursor', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    post(h, agent, space, 'notes', 'one');
+
+    const stream = h.store.readStream(agent, { limit: 5 });
+    h.store.readSpace({ kind: 'agent', id: agent }, space, { since: h.at() });
+
+    const log = h.store.listReadLog({ agent });
+    expect(log.map((e) => e.kind)).toEqual(['space', 'stream']);
+
+    const streamRow = log.find((e) => e.kind === 'stream');
+    expect(streamRow?.cursor).toBe(stream.nextCursor);
+    expect(streamRow?.itemCount).toBe(2);
+    expect(streamRow?.params).toEqual({ from: null, limit: 5 });
+
+    const spaceRow = log.find((e) => e.kind === 'space');
+    expect(spaceRow?.params).toMatchObject({ space, range: { since: h.at() } });
+  });
+
+  it('makes a jump visibly a jump', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    post(h, agent, space, 'notes', 'one');
+    h.store.readStream(agent, { from: { from: 'tip' } });
+
+    const entry = h.store.listReadLog({ agent })[0];
+    // A position log would have claimed this agent was handed everything
+    // behind the cursor; the parameters say otherwise.
+    expect(entry?.params).toEqual({ from: { from: 'tip' }, limit: 100 });
+    expect(entry?.itemCount).toBe(0);
+  });
+
+  it('reports the last stream position, and only from stream reads', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    expect(h.store.lastReadCursor(agent)).toBeUndefined();
+
+    const page = h.store.readStream(agent);
+    expect(h.store.lastReadCursor(agent)).toBe(page.nextCursor);
+
+    h.store.readSpace({ kind: 'agent', id: agent }, space);
+    expect(h.store.lastReadCursor(agent)).toBe(page.nextCursor);
+  });
+
+  it('records nothing for the human, who has no agent row', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    post(h, agent, space, 'notes', 'one');
+    h.store.readSpace({ kind: 'human' }, space);
+    expect(h.store.listReadLog()).toHaveLength(0);
+  });
+});
+
+describe('keys and authentication', () => {
+  it('returns the plaintext once and stores only a hash', () => {
+    const h = harness();
+    const agent = h.store.createAgent('alice').id;
+    const issued = h.store.issueKey(agent, 'laptop');
+
+    expect(issued.key.startsWith(`dgp_${agent}_`)).toBe(true);
+    const stored = h.store.database.prepare('SELECT * FROM api_key').all() as Record<
+      string,
+      unknown
+    >[];
+    expect(JSON.stringify(stored)).not.toContain(issued.key.split('_')[2]);
+    expect(h.store.listKeys(agent).map((k) => k.label)).toEqual(['laptop']);
+  });
+
+  it('verifies, revokes, and refuses a revoked key', () => {
+    const h = harness();
+    const agent = h.store.createAgent('alice').id;
+    const issued = h.store.issueKey(agent);
+
+    expect(h.store.verifyKey(issued.key)?.agent.id).toBe(agent);
+    h.store.revokeKey(issued.id);
+    expect(h.store.verifyKey(issued.key)).toBeUndefined();
+  });
+
+  it('counts failed attempts claiming an id, separately from last-seen', () => {
+    const h = harness();
+    const agent = h.store.createAgent('alice').id;
+    const issued = h.store.issueKey(agent);
+
+    h.store.verifyKey(`dgp_${agent}_wrong`);
+    h.store.verifyKey(`dgp_${agent}_alsowrong`);
+    let record = h.store.getAgent(agent);
+    expect(record?.failedAuthAttempts).toBe(2);
+    expect(record?.lastSeenAt).toBeNull();
+
+    h.advance(60);
+    h.store.verifyKey(issued.key);
+    record = h.store.getAgent(agent);
+    expect(record?.failedAuthAttempts).toBe(2);
+    expect(record?.lastSeenAt).toBe('2026-01-01T00:01:00.000Z');
+  });
+
+  it('shrugs off a key claiming an id that does not exist', () => {
+    const h = harness();
+    expect(h.store.verifyKey('dgp_nosuchagent000_secret')).toBeUndefined();
+    expect(h.store.verifyKey('not-a-key')).toBeUndefined();
+  });
+
+  it('revokes every key on archive and refuses to issue one to an archived role', () => {
+    const h = harness();
+    const agent = h.store.createAgent('alice').id;
+    const issued = h.store.issueKey(agent);
+
+    h.store.archiveAgent(agent);
+    expect(h.store.verifyKey(issued.key)).toBeUndefined();
+    expect(h.store.listKeys(agent).every((k) => k.revokedAt !== null)).toBe(true);
+    expectStoreError(() => h.store.issueKey(agent), 'invalid_request');
+
+    // Unarchiving brings the role back; the key is fresh, because a hashed one
+    // cannot be re-shown.
+    h.store.unarchiveAgent(agent);
+    const replacement = h.store.issueKey(agent);
+    expect(h.store.verifyKey(replacement.key)?.agent.id).toBe(agent);
+    expect(h.store.verifyKey(issued.key)).toBeUndefined();
+  });
+
+  it('hides archived roles from the active list', () => {
+    const h = harness();
+    const agent = h.store.createAgent('alice').id;
+    h.store.archiveAgent(agent);
+    expect(h.store.listAgents()).toHaveLength(0);
+    expect(h.store.listAgents({ includeArchived: true })).toHaveLength(1);
+  });
+});
+
+describe('listing peers', () => {
+  it('lists only agents sharing a space', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const peer = h.store.createAgent('bob').id;
+    h.store.grantMembership(peer, space);
+    h.store.createAgent('stranger');
+
+    expect(h.store.listAgentsSharingSpaceWith(agent).map((a) => a.displayName)).toEqual([
+      'alice',
+      'bob',
+    ]);
+  });
+
+  it('reports not found for a space the caller is not in', () => {
+    const h = harness();
+    const { agent } = scene(h);
+    const secret = h.store.createSpace('secret').id;
+    expectStoreError(() => h.store.listAgentsSharingSpaceWith(agent, secret), 'not_found');
+  });
+});
+
+describe('escalations', () => {
+  it('records, lists and marks notification state', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const conversation = h.store.resolveOrCreateConversation(space, 'notes').id;
+    const { escalation } = h.store.recordEscalation({
+      agent,
+      conversation,
+      reason: 'looks wrong',
+      idempotencyKey: key('e1'),
+    });
+
+    expect(escalation.notificationState).toBe('pending');
+    expect(h.store.listEscalations({ state: 'pending' })).toHaveLength(1);
+
+    h.advance(30);
+    const failed = h.store.markEscalationNotification(escalation.id, 'failed', {
+      error: 'connect ECONNREFUSED',
+      nextAttemptAt: '2026-01-01T00:01:00.000Z' as Timestamp,
+    });
+    expect(failed.attempts).toBe(1);
+    expect(failed.lastError).toBe('connect ECONNREFUSED');
+    expect(h.store.listEscalations({ state: 'pending' })).toHaveLength(0);
+
+    const sent = h.store.markEscalationNotification(escalation.id, 'sent');
+    expect(sent.attempts).toBe(2);
+    expect(sent.notificationState).toBe('sent');
+  });
+
+  it('refuses an escalation about a conversation the agent cannot see', () => {
+    const h = harness();
+    const { agent } = scene(h);
+    const secret = h.store.createSpace('secret').id;
+    const conversation = h.store.resolveOrCreateConversation(secret, 'notes').id;
+    expectStoreError(
+      () =>
+        h.store.recordEscalation({
+          agent,
+          conversation,
+          reason: 'looks wrong',
+          idempotencyKey: key('e1'),
+        }),
+      'not_found',
+    );
+  });
+});
+
+describe('sessions', () => {
+  it('creates, verifies, expires and deletes', () => {
+    const h = harness();
+    const issued = h.store.createSession(3600);
+    expect(h.store.verifySession(issued.token)?.id).toBe(issued.id);
+
+    const stored = h.store.database.prepare('SELECT token_hash FROM session').get() as {
+      token_hash: string;
+    };
+    expect(stored.token_hash).not.toBe(issued.token);
+
+    h.advance(3601);
+    expect(h.store.verifySession(issued.token)).toBeUndefined();
+    expect(h.store.deleteExpiredSessions()).toBe(1);
+
+    const second = h.store.createSession(3600);
+    expect(h.store.deleteSession(second.token)).toBe(true);
+    expect(h.store.verifySession(second.token)).toBeUndefined();
+  });
+});
+
+describe('posting', () => {
+  it('refuses a space the agent is not in, and says not found', () => {
+    const h = harness();
+    const { agent } = scene(h);
+    const secret = h.store.createSpace('secret').id;
+    expectStoreError(() => post(h, agent, secret, 'notes', 'hello'), 'not_found');
+  });
+
+  it('lets the human post anywhere, attributed by configuration', () => {
+    const h = harness();
+    const { space } = scene(h);
+    const posted = h.store.postMessage({
+      sender: { kind: 'human' },
+      target: { space, title: 'notes' },
+      body: 'hello',
+    });
+    expect(posted.message.sender).toEqual({ kind: 'human', displayName: 'the human' });
+  });
+
+  it('carries attachments and resolves them by id', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const posted = h.store.postMessage({
+      sender: { kind: 'agent', id: agent },
+      target: { space, title: 'notes' },
+      body: 'see attached',
+      attachments: [
+        {
+          id: 'attachment0000a' as AttachmentId,
+          filename: 'report.csv',
+          contentType: 'text/csv',
+          sizeBytes: 42,
+        },
+      ],
+    });
+    expect(posted.message.attachments).toHaveLength(1);
+    expect(h.store.getAttachment('attachment0000a' as AttachmentId)?.message).toBe(
+      posted.message.id,
+    );
+  });
+
+  it('refuses an empty body with no attachment', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    expectStoreError(() => post(h, agent, space, 'notes', '   '), 'invalid_request');
+  });
+});
