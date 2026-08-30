@@ -5,56 +5,11 @@ import { loadConfig } from './config.js';
 import { attachmentRoot, sweepUnreferenced } from './http/attachments.js';
 import { buildApp } from './http/app.js';
 import { hashPassword, readSecret } from './http/password.js';
-import type { EscalationQueue, PendingEscalation } from './notify/webhook.js';
+import { WriteSignals } from './http/signal.js';
+import { escalationQueue } from './notify/queue.js';
 import { Notifier } from './notify/webhook.js';
-import type { Store } from './store/index.js';
 import { openStore } from './store/index.js';
-import type { AttachmentId, Timestamp } from './types.js';
-
-/**
- * The notifier wants four verbs over pending escalations; the store keeps them
- * as rows with their own retry state. This is the whole of the adapter.
- */
-function escalationQueue(store: Store): EscalationQueue {
-  return {
-    listDue(now, limit) {
-      const due = store.listEscalations({
-        state: 'pending',
-        dueAt: new Date(now).toISOString() as Timestamp,
-        order: 'oldest',
-        limit,
-      }).escalations;
-      return due.map((record): PendingEscalation => {
-        const conversation = store.getConversation(record.conversation);
-        const space = conversation === undefined ? undefined : store.getSpace(conversation.space);
-        return {
-          id: record.id,
-          agentName: store.getAgent(record.agent)?.displayName ?? record.agent,
-          spaceName: space?.name ?? 'an unknown space',
-          conversationTitle: conversation?.title ?? 'an unknown conversation',
-          reason: record.reason,
-          raisedAt: record.createdAt,
-          attempts: record.attempts,
-        };
-      });
-    },
-    markSent(id) {
-      store.markEscalationNotification(id, 'sent');
-    },
-    markFailed(id, nextAttemptAt) {
-      // Still pending: a failure that is going to be retried is not a failed
-      // notification, and the store counts the attempt itself.
-      store.markEscalationNotification(id, 'pending', {
-        nextAttemptAt: new Date(nextAttemptAt).toISOString() as Timestamp,
-      });
-    },
-    markGivenUp(id) {
-      store.markEscalationNotification(id, 'failed', {
-        error: 'gave up after repeated delivery failures',
-      });
-    },
-  };
-}
+import type { AttachmentId } from './types.js';
 
 /** `dist/ui` beside the compiled server, or beneath the working directory. */
 function findUiRoot(): string | undefined {
@@ -115,12 +70,14 @@ async function main(): Promise<void> {
   });
   const uiRoot = findUiRoot();
   const guidePath = findGuide();
+  const writes = new WriteSignals();
   const app = await buildApp({
     store,
     config,
     ...(uiRoot === undefined ? {} : { uiRoot }),
     ...(guidePath === undefined ? {} : { guidePath }),
     logger: true,
+    writes,
   });
   app.log.info(
     { schemaVersion: store.schema.to, trustProxy: config.behindProxy, host: binding.host },
@@ -152,9 +109,14 @@ async function main(): Promise<void> {
     app.log.info({ count: swept.length }, 'collected attachment files no message references');
   }
 
-  const notifier = new Notifier(escalationQueue(store), {
-    ...(config.DOGPARK_WEBHOOK_URL === undefined ? {} : { webhookUrl: config.DOGPARK_WEBHOOK_URL }),
-  });
+  const notifier = new Notifier(
+    escalationQueue(store, () => writes.adminOnly()),
+    {
+      ...(config.DOGPARK_WEBHOOK_URL === undefined
+        ? {}
+        : { webhookUrl: config.DOGPARK_WEBHOOK_URL }),
+    },
+  );
   notifier.start((error: unknown) => {
     app.log.error({ err: error }, 'the escalation queue failed to drain');
   });

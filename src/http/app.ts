@@ -23,6 +23,12 @@ export interface AppOptions {
   /** The agent guide on disk. A missing one is simply not served. */
   readonly guidePath?: string | undefined;
   readonly logger?: FastifyServerOptions['logger'] | undefined;
+  /**
+   * Share the write signals with a writer outside the routes — the notifier,
+   * whose delivery-state flips the escalations screen shows. Omitted, the
+   * app makes its own.
+   */
+  readonly writes?: WriteSignals | undefined;
 }
 
 /** Twelve hours. The design says "a fixed lifetime" and does not pick one. */
@@ -54,7 +60,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     config,
     limits,
     files: createAttachmentFiles(attachmentRoot(config.DOGPARK_DATA_DIR)),
-    writes: new WriteSignals(),
+    writes: options.writes ?? new WriteSignals(),
     agentLimiter: createRateLimiter(limits.requestsPerMinute),
     loginLimiter: createRateLimiter(LOGINS_PER_MINUTE),
     failedAuthLimiter: createRateLimiter(FAILED_AUTHS_PER_MINUTE),
