@@ -23,6 +23,8 @@ export interface AppContext {
   readonly failedAuthLimiter: RateLimiter;
   readonly humanPosts: HumanIdempotency;
   readonly secureCookies: boolean;
+  /** Clamp a caller's asked-for page size to `limits.maxPageSize`. */
+  readonly pageLimit: (asked: number | undefined) => number;
   readonly sessionTtlSeconds: number;
   readonly now: () => Date;
 }

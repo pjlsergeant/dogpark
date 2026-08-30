@@ -34,15 +34,13 @@ import {
   rangeFromQuery,
   ReadLogQuery,
   SearchQuery,
+  toTarget,
 } from '../validation.js';
 import { sendAttachment } from './attachment.js';
 
 const HUMAN = { kind: 'human' } as const;
 
 export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
-  const pageLimit = (asked: number | undefined): number =>
-    Math.min(asked ?? ctx.limits.maxPageSize, ctx.limits.maxPageSize);
-
   const agentOr404 = (id: string): AgentRecord => {
     const record = ctx.store.getAgent(asAgentId(id));
     if (record === undefined) throw notFound('agent');
@@ -237,7 +235,7 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
           HUMAN,
           asConversationId(id),
           rangeFromQuery(query),
-          pageLimit(query.limit),
+          ctx.pageLimit(query.limit),
         );
       });
 
@@ -272,10 +270,7 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
 
           const result = ctx.store.postMessage({
             sender: HUMAN,
-            target:
-              'conversation' in payload.target
-                ? { conversation: asConversationId(payload.target.conversation) }
-                : { space: asSpaceId(payload.target.space), title: payload.target.title },
+            target: toTarget(payload.target),
             body: payload.body,
             ...(collected.attachments.length === 0 ? {} : { attachments: collected.attachments }),
           });
@@ -319,7 +314,7 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
           ...(query.since === undefined ? {} : { since: asTimestamp(query.since) }),
           ...(query.until === undefined ? {} : { until: asTimestamp(query.until) }),
           ...(query.after === undefined ? {} : { after: asReadLogCursor(query.after) }),
-          limit: pageLimit(query.limit),
+          limit: ctx.pageLimit(query.limit),
         });
         return {
           reads: page.entries.map((entry) => readLogRow(ctx.store, cache, entry)),
@@ -332,7 +327,7 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
         const query = parse(EscalationsQuery, request.query, 'query');
         const cache = new Map<string, Agent>();
         return ctx.store
-          .listEscalations({ limit: pageLimit(query.limit) })
+          .listEscalations({ limit: ctx.pageLimit(query.limit) })
           .map((record) => escalationRow(ctx.store, cache, record));
       });
 
@@ -343,7 +338,7 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
         return ctx.store
           .searchMessages(query.q, {
             ...(query.space === undefined ? {} : { space: asSpaceId(query.space) }),
-            limit: pageLimit(query.limit),
+            limit: ctx.pageLimit(query.limit),
           })
           .map((hit) => searchRow(ctx.store, hit));
       });

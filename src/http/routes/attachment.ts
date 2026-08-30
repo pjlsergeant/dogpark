@@ -40,7 +40,6 @@ export async function sendAttachment(
     .header('Content-Type', safeContentType(record.contentType))
     .header('Content-Disposition', contentDisposition(record.filename))
     .header('Content-Length', String(record.sizeBytes))
-    .header('X-Content-Type-Options', 'nosniff')
     .header('Content-Security-Policy', "default-src 'none'; sandbox")
     .header('Cache-Control', 'private, no-store')
     .send(stream);

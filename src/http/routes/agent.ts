@@ -17,14 +17,12 @@ import {
   rangeFromQuery,
   readFromQuery,
   StreamQuery,
+  toTarget,
 } from '../validation.js';
 import { sendAttachment } from './attachment.js';
 
 /** The agent API. Bearer only, and no CSRF: a bearer token is not a cookie. */
 export function agentRoutes(ctx: AppContext): FastifyPluginAsync {
-  const pageLimit = (asked: number | undefined): number =>
-    Math.min(asked ?? ctx.limits.maxPageSize, ctx.limits.maxPageSize);
-
   return async function routes(app: FastifyInstance): Promise<void> {
     app.addHook('onRequest', authenticateAgent(ctx));
 
@@ -53,7 +51,7 @@ export function agentRoutes(ctx: AppContext): FastifyPluginAsync {
       const self = requireAgent(request).agent;
       const query = parse(StreamQuery, request.query, 'query');
       const from = readFromQuery(query);
-      const limit = pageLimit(query.limit);
+      const limit = ctx.pageLimit(query.limit);
       const waitSeconds = Math.min(query.waitSeconds ?? 0, ctx.limits.maxWaitSeconds);
 
       const args: ReadStreamArgs = { ...(from === undefined ? {} : { from }), limit };
@@ -87,7 +85,7 @@ export function agentRoutes(ctx: AppContext): FastifyPluginAsync {
         { kind: 'agent', id: self.id },
         asConversationId(id),
         rangeFromQuery(query),
-        pageLimit(query.limit),
+        ctx.pageLimit(query.limit),
       );
     });
 
@@ -99,7 +97,7 @@ export function agentRoutes(ctx: AppContext): FastifyPluginAsync {
         { kind: 'agent', id: self.id },
         asSpaceId(id),
         rangeFromQuery(query),
-        pageLimit(query.limit),
+        ctx.pageLimit(query.limit),
       );
     });
 
@@ -120,10 +118,7 @@ export function agentRoutes(ctx: AppContext): FastifyPluginAsync {
         assertBodyFits(payload.body, ctx.limits.maxMessageBytes);
         const result = ctx.store.postMessage({
           sender: { kind: 'agent', id: self.id },
-          target:
-            'conversation' in payload.target
-              ? { conversation: asConversationId(payload.target.conversation) }
-              : { space: asSpaceId(payload.target.space), title: payload.target.title },
+          target: toTarget(payload.target),
           body: payload.body,
           ...(collected.attachments.length === 0 ? {} : { attachments: collected.attachments }),
           idempotencyKey: asIdempotencyKey(payload.idempotencyKey),

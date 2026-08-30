@@ -39,6 +39,7 @@ import {
 import { invalid, notFound, StoreError } from './errors.js';
 import { newId } from './ids.js';
 import { migrate } from './migrate.js';
+import type { MigrateResult } from './migrate.js';
 import {
   assertNoReservedSequence,
   assertNonEmpty,
@@ -435,6 +436,8 @@ export interface Store {
   close(): void;
   /** Escape hatch for the HTTP layer's health check. Not for queries. */
   readonly database: Db;
+  /** What `openStore` migrated the schema to on the way in. */
+  readonly schema: MigrateResult;
   readonly reservedSequence: string;
 
   // Agents
@@ -574,7 +577,7 @@ export function openStore(options: StoreOptions): Store {
   const now = (): Timestamp => clock().toISOString() as Timestamp;
   const humanDisplayName = options.humanDisplayName;
 
-  migrate(db, undefined, now);
+  const schema = migrate(db, undefined, now);
 
   // -------------------------------------------------------------------------
   // Statements
@@ -1750,6 +1753,7 @@ export function openStore(options: StoreOptions): Store {
 
   const store: Store = {
     database: db,
+    schema,
     reservedSequence: RESERVED_SEQUENCE,
     close() {
       db.close();

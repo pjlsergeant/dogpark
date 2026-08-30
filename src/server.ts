@@ -9,7 +9,7 @@ import { hashPassword } from './http/password.js';
 import type { EscalationQueue, PendingEscalation } from './notify/webhook.js';
 import { Notifier } from './notify/webhook.js';
 import type { Store } from './store/index.js';
-import { migrate, openStore } from './store/index.js';
+import { openStore } from './store/index.js';
 import type { AttachmentId, Timestamp } from './types.js';
 
 /**
@@ -17,20 +17,13 @@ import type { AttachmentId, Timestamp } from './types.js';
  * that ends them in that order reversed.
  */
 
-interface Binding {
-  readonly host: string;
-  readonly secureCookies: boolean;
-}
-
 /**
  * Where to listen follows from the proxy declaration: every interface when one
  * is in front, loopback when nothing is — the one place plaintext is honest
  * (ADR-0016).
  */
-export function resolveBinding(config: Config): Binding {
-  return config.behindProxy
-    ? { host: '0.0.0.0', secureCookies: true }
-    : { host: '127.0.0.1', secureCookies: false };
+export function resolveBinding(config: Config): { readonly host: string } {
+  return { host: config.behindProxy ? '0.0.0.0' : '127.0.0.1' };
 }
 
 /**
@@ -125,18 +118,15 @@ async function main(): Promise<void> {
     file: join(config.DOGPARK_DATA_DIR, 'dogpark.sqlite'),
     humanDisplayName: config.DOGPARK_DISPLAY_NAME,
   });
-  // `openStore` migrates on the way in; this reports the version it reached
-  // and applies nothing.
-  const schema = migrate(store.database);
-
+  const uiRoot = findUiRoot();
   const app = await buildApp({
     store,
     config,
-    ...(findUiRoot() === undefined ? {} : { uiRoot: findUiRoot() }),
+    ...(uiRoot === undefined ? {} : { uiRoot }),
     logger: true,
   });
   app.log.info(
-    { schemaVersion: schema.to, trustProxy: config.behindProxy, host: binding.host },
+    { schemaVersion: store.schema.to, trustProxy: config.behindProxy, host: binding.host },
     'dogpark starting',
   );
   if (config.behindProxy) {

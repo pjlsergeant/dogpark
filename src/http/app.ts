@@ -58,11 +58,10 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     loginLimiter: createRateLimiter(LOGINS_PER_MINUTE),
     failedAuthLimiter: createRateLimiter(FAILED_AUTHS_PER_MINUTE),
     humanPosts: createHumanIdempotency(),
-    // Only a deployment that has declared a TLS-terminating proxy can send a
-    // Secure cookie back at all; without one Dogpark binds loopback and a
-    // Secure cookie would simply never return, locking the human out of a
-    // development instance. See `resolveBinding` in server.ts.
+    // Only under a declared TLS proxy: on loopback a Secure cookie would never
+    // come back, locking the human out of a development instance (ADR-0016).
     secureCookies: config.behindProxy,
+    pageLimit: (asked) => Math.min(asked ?? limits.maxPageSize, limits.maxPageSize),
     sessionTtlSeconds: SESSION_TTL_SECONDS,
     now: () => new Date(),
   };
