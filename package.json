@@ -15,7 +15,7 @@
     "dev:ui": "vite --config ui/vite.config.ts",
     "storybook": "storybook dev -p 6006",
     "build-storybook": "storybook build",
-    "typecheck": "tsc --noEmit && tsc -p ui/tsconfig.json --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p ui/tsconfig.json --noEmit && tsc -p tsconfig.stories.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "format": "prettier --write .",

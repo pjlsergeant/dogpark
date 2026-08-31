@@ -23,11 +23,5 @@
     "allowSyntheticDefaultImports": true,
     "esModuleInterop": true
   },
-  "include": [
-    "src/**/*",
-    "test/**/*",
-    "vite.config.ts",
-    "../vitest.config.ts",
-    "../.storybook/**/*"
-  ]
+  "include": ["src/**/*", "vite.config.ts"]
 }
