@@ -318,9 +318,18 @@ function Thread({
   const annotationEpoch = useRef(0);
   const pollSerial = useRef(0);
   const pollApplied = useRef(0);
-  const acceptFromAction = (next: ConversationAnnotations): void => {
+  /**
+   * Actions race each other too: Pin A then Pin B, answered in reverse, would
+   * leave A on screen while the server holds B. The action begun last is the
+   * human's latest intent, so only its answer is shown; an earlier action's
+   * late answer still bumps the epoch — it is newer than any poll — but paints
+   * nothing. The composer's post answers are accepted as they come: a post
+   * conflicts with no pin, and its flags are the newest word on completion.
+   */
+  const actionSerial = useRef(0);
+  const acceptFromAction = (next: ConversationAnnotations, serial?: number): void => {
     annotationEpoch.current += 1;
-    setAnnotations(next);
+    if (serial === undefined || serial === actionSerial.current) setAnnotations(next);
   };
   const marked = useRef<MessageId | undefined>(undefined);
 
@@ -516,8 +525,9 @@ function Thread({
   }, [annotations]);
   const humanPin = annotations.pins.find((pin) => pin.actor.kind === 'human')?.message;
   const updateAnnotations = async (action: () => Promise<ConversationAnnotations>) => {
+    const serial = (actionSerial.current += 1);
     try {
-      acceptFromAction(await action());
+      acceptFromAction(await action(), serial);
       onPosted();
     } catch (cause) {
       setError(toApiError(cause));

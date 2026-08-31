@@ -4,12 +4,14 @@ import { ZipFile } from 'yazl';
 import type { Store } from '../store/index.js';
 import type {
   Conversation,
+  ConversationAnnotations,
   ConversationExport,
   ConversationId,
   Message,
   QueryCursor,
   Space,
   SpaceId,
+  Timestamp,
 } from '../types.js';
 import type { AppContext } from './context.js';
 import { notFound } from './errors.js';
@@ -17,9 +19,31 @@ import { notFound } from './errors.js';
 const HUMAN = { kind: 'human' } as const;
 const PAGE_SIZE = 200;
 
+/**
+ * One export is one snapshot. The bundle walks each conversation three times
+ * — markdown, JSON, attachments — as separate paged reads, so a post landing
+ * mid-export would otherwise put a message in the .json that the .md never
+ * saw. `takenAt` is the exclusive upper bound every walk reads under, and
+ * the annotations are taken once, so the documents in one archive agree.
+ */
 export interface ExportSource {
   readonly space: Space & { readonly description?: string | undefined };
   readonly conversations: readonly Conversation[];
+  readonly takenAt: Timestamp;
+  readonly annotations: ReadonlyMap<ConversationId, ConversationAnnotations>;
+}
+
+function snapshot(
+  ctx: AppContext,
+  space: ExportSource['space'],
+  conversations: readonly Conversation[],
+): ExportSource {
+  const takenAt = ctx.now().toISOString() as Timestamp;
+  const annotations = new Map<ConversationId, ConversationAnnotations>();
+  for (const conversation of conversations) {
+    annotations.set(conversation.id, ctx.store.getConversationAnnotations(conversation.id));
+  }
+  return { space, conversations, takenAt, annotations };
 }
 
 function safeName(value: string, fallback: string): string {
@@ -37,36 +61,42 @@ export function safeAttachmentBasename(filename: string): string {
   return safeName(leaf, 'attachment');
 }
 
-export function conversationExportSource(store: Store, id: ConversationId): ExportSource {
+export function conversationExportSource(ctx: AppContext, id: ConversationId): ExportSource {
+  const { store } = ctx;
   const conversation = store.getConversation(id);
   if (conversation === undefined) throw notFound('conversation');
   const space = store.getSpace(conversation.space);
   /* c8 ignore next -- a conversation cannot outlive its foreign-key parent. */
   if (space === undefined) throw new Error('conversation references a missing space');
   const description = store.getSpaceDescription(space.id);
-  return {
-    space: { ...space, ...(description === undefined ? {} : { description }) },
-    conversations: [conversation],
-  };
+  return snapshot(ctx, { ...space, ...(description === undefined ? {} : { description }) }, [
+    conversation,
+  ]);
 }
 
-export function spaceExportSource(store: Store, id: SpaceId): ExportSource {
+export function spaceExportSource(ctx: AppContext, id: SpaceId): ExportSource {
+  const { store } = ctx;
   const space = store.getSpace(id);
   if (space === undefined) throw notFound('space');
   const description = store.getSpaceDescription(id);
-  return {
-    space: { ...space, ...(description === undefined ? {} : { description }) },
-    conversations: store.listConversationsForExport(id),
-  };
+  return snapshot(
+    ctx,
+    { ...space, ...(description === undefined ? {} : { description }) },
+    store.listConversationsForExport(id),
+  );
 }
 
-async function* messages(store: Store, conversation: ConversationId): AsyncGenerator<Message> {
+async function* messages(
+  store: Store,
+  conversation: ConversationId,
+  takenAt: Timestamp,
+): AsyncGenerator<Message> {
   let after: QueryCursor | undefined;
   do {
     const page = store.readConversation(
       HUMAN,
       conversation,
-      { order: 'oldest', ...(after === undefined ? {} : { after }) },
+      { order: 'oldest', until: takenAt, ...(after === undefined ? {} : { after }) },
       PAGE_SIZE,
     );
     for (const message of page.messages) yield message;
@@ -75,16 +105,14 @@ async function* messages(store: Store, conversation: ConversationId): AsyncGener
   } while (true);
 }
 
+function annotationsOf(source: ExportSource, conversation: Conversation): ConversationAnnotations {
+  /* c8 ignore next -- the snapshot covers exactly the conversations it lists. */
+  return source.annotations.get(conversation.id) ?? { status: 'open', pins: [] };
+}
+
 function annotationLine(item: ConversationExport): string {
   const pins = item.annotations.pins.map((pin) => pin.actor.displayName).join(', ');
   return `Status: ${item.annotations.status}${pins === '' ? '; pins: none' : `; pins: ${pins}`}`;
-}
-
-async function attachmentExists(ctx: AppContext, id: string): Promise<boolean> {
-  const stream = await ctx.files.open(id);
-  if (stream === undefined) return false;
-  stream.destroy();
-  return true;
 }
 
 async function* markdownChunks(
@@ -99,17 +127,17 @@ async function* markdownChunks(
   for (const conversation of source.conversations) {
     const item: ConversationExport = {
       conversation,
-      annotations: ctx.store.getConversationAnnotations(conversation.id),
+      annotations: annotationsOf(source, conversation),
       messages: [],
     };
     yield `${source.conversations.length === 1 ? '#' : '##'} ${conversation.title}\n\n`;
     yield `Space: ${source.space.name}\n\n${annotationLine(item)}\n\n`;
-    for await (const message of messages(ctx.store, conversation.id)) {
+    for await (const message of messages(ctx.store, conversation.id, source.takenAt)) {
       yield `### ${message.sender.displayName} — ${message.sentAt}\n\n${message.body}\n\n`;
       if (message.attachments.length > 0) {
         yield `Attachments:\n`;
         for (const attachment of message.attachments) {
-          const available = await attachmentExists(ctx, attachment.id);
+          const available = (await ctx.files.pathOf(attachment.id)) !== undefined;
           const label = `${attachment.filename} (${attachment.contentType}, ${attachment.sizeBytes} bytes)`;
           const path = `attachments/${attachment.id}/${safeAttachmentBasename(attachment.filename)}`;
           yield available
@@ -131,10 +159,10 @@ async function* jsonChunks(ctx: AppContext, source: ExportSource): AsyncGenerato
     if (!firstConversation) yield ',';
     firstConversation = false;
     yield `{"conversation":${JSON.stringify(conversation)},"annotations":${JSON.stringify(
-      ctx.store.getConversationAnnotations(conversation.id),
+      annotationsOf(source, conversation),
     )},"messages":[`;
     let firstMessage = true;
-    for await (const message of messages(ctx.store, conversation.id)) {
+    for await (const message of messages(ctx.store, conversation.id, source.takenAt)) {
       if (!firstMessage) yield ',';
       firstMessage = false;
       yield JSON.stringify(message);
@@ -170,16 +198,19 @@ export function exportBundle(ctx: AppContext, source: ExportSource, rootName: st
     try {
       const added = new Set<string>();
       for (const conversation of source.conversations) {
-        for await (const message of messages(ctx.store, conversation.id)) {
+        for await (const message of messages(ctx.store, conversation.id, source.takenAt)) {
           for (const attachment of message.attachments) {
             if (added.has(attachment.id)) continue;
             added.add(attachment.id);
-            const stream = await ctx.files.open(attachment.id);
-            if (stream === undefined) continue;
-            zip.addReadStream(
-              stream,
+            const path = await ctx.files.pathOf(attachment.id);
+            if (path === undefined) continue;
+            // By path, not stream: yazl opens each file when the archive
+            // reaches it, so a bundle of many attachments holds one descriptor
+            // at a time rather than one per entry.
+            zip.addFile(
+              path,
               `attachments/${attachment.id}/${safeAttachmentBasename(attachment.filename)}`,
-              { compress: false, size: attachment.sizeBytes },
+              { compress: false },
             );
           }
         }

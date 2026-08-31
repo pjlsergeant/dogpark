@@ -22,6 +22,12 @@ export interface AttachmentFiles {
   /** Writes `source`, refusing at `maxBytes`. Returns what it turned out to be. */
   write(id: string, source: Readable, maxBytes: number): Promise<WrittenFile>;
   open(id: string): Promise<Readable | undefined>;
+  /**
+   * Where the bytes live, if they do. For a consumer that opens files in its
+   * own time — the export bundle adds hundreds of entries and must not hold a
+   * descriptor per entry until the archive reaches it.
+   */
+  pathOf(id: string): Promise<string | undefined>;
   /** Best effort: a file that cannot be removed is an unreferenced file. */
   discard(id: string): Promise<void>;
 }
@@ -75,6 +81,15 @@ export function createAttachmentFiles(root: string): AttachmentFiles {
       return { sizeBytes: written, contentDigest: `sha256:${digest.digest('hex')}` };
     },
 
+    async pathOf(id) {
+      const path = pathFor(root, id);
+      try {
+        await stat(path);
+        return path;
+      } catch {
+        return undefined;
+      }
+    },
     async open(id) {
       const path = pathFor(root, id);
       try {

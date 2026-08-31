@@ -424,16 +424,12 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
 
       guarded.get('/conversations/:id/export', async (request, reply) => {
         const { id } = request.params as { id: string };
-        return sendExport(
-          conversationExportSource(ctx.store, asConversationId(id)),
-          request,
-          reply,
-        );
+        return sendExport(conversationExportSource(ctx, asConversationId(id)), request, reply);
       });
 
       guarded.get('/spaces/:id/export', async (request, reply) => {
         const { id } = request.params as { id: string };
-        return sendExport(spaceExportSource(ctx.store, asSpaceId(id)), request, reply);
+        return sendExport(spaceExportSource(ctx, asSpaceId(id)), request, reply);
       });
 
       // ---------------------------------------------------------------------

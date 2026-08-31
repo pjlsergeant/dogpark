@@ -130,6 +130,9 @@ export function annotationStore(
           if (typeof outcome.annotationChanged !== 'boolean') {
             throw invalid('idempotency key was already used for a different request');
           }
+          // A replay applies nothing and reports nothing changed; the caller
+          // then reads the current state, which is the honest answer even when
+          // someone has moved it since (documented in http-api.md).
           return false;
         }
       }

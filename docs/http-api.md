@@ -54,6 +54,12 @@ reopening an open one, and unpinning without a pin are successful no-ops and
 append no journal row. A pin must name a message in the same conversation and
 only moves the caller's own pin.
 
+Every annotation action answers with the conversation's **current** state, and
+so does a replay of a used idempotency key: the replay applies nothing again
+and reports what is true now. A `complete` replayed after someone reopened the
+thread therefore answers `open` — that is the state, not a failure of the
+original call, and it is not an invitation to complete again with a fresh key.
+
 ## Admin API — `/api/admin/*`
 
 Session cookie: `HttpOnly`, `SameSite=Lax`, and `Secure` when a proxy is

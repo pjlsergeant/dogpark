@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { afterEach, beforeAll, describe, expect, test, vi } from 'vitest';
-import type { ConversationAnnotations, MessagePage } from '../api/index.js';
+import type { ConversationAnnotations, MessageId, MessagePage } from '../api/index.js';
 import { AppProvider } from '../app/api-context.js';
 import { ChangesProvider } from '../app/changes.js';
 import { ToastHost } from '../components/Toasts.js';
@@ -126,6 +126,46 @@ describe('Reader poll ordering', () => {
       await Promise.resolve();
     });
     expect(screen.getByRole('button', { name: 'Reopen' })).toBeTruthy();
+  });
+});
+
+describe('Reader action ordering', () => {
+  test('of two pins in flight, the one clicked last wins whatever order the answers land', async () => {
+    const pete = fixture.pete;
+    const pending = new Map<string, (annotations: ConversationAnnotations) => void>();
+    const api = fixtureApi({
+      pinMessage: (_conversation: string, message: string) =>
+        new Promise<ConversationAnnotations>((resolve) => {
+          pending.set(message, resolve);
+        }),
+    });
+    render(
+      <AppProvider value={{ api, session: { displayName: 'pete' }, logout: () => {} }}>
+        <ToastHost>
+          <ReaderScreen space={fixture.delivery.id} conversation={fixture.rotation.id} />
+        </ToastHost>
+      </AppProvider>,
+    );
+    const inArticle = (nodes: readonly HTMLElement[]): HTMLElement =>
+      nodes.find((node) => node.closest('article') !== null)!.closest('article')!;
+    const first = inArticle(await screen.findAllByText(/Nothing of mine in that window/));
+    const second = inArticle(screen.getAllByText(/Checks green/));
+    await userEvent.click(within(first).getByRole('button', { name: 'Pin' }));
+    await userEvent.click(within(second).getByRole('button', { name: 'Pin' }));
+    await waitFor(() => expect(pending.size).toBe(2));
+
+    const firstId = first.id.replace(/^m-/, '') as MessageId;
+    const secondId = second.id.replace(/^m-/, '') as MessageId;
+    await act(async () => {
+      pending.get(secondId)!({ status: 'open', pins: [{ message: secondId, actor: pete }] });
+      await Promise.resolve();
+    });
+    await act(async () => {
+      pending.get(firstId)!({ status: 'open', pins: [{ message: firstId, actor: pete }] });
+      await Promise.resolve();
+    });
+    expect(second.textContent).toContain('pinned by you');
+    expect(first.textContent).not.toContain('pinned by you');
   });
 });
 
