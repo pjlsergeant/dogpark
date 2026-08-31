@@ -35,9 +35,7 @@ afterEach(cleanup);
 function renderReader(overrides = {}) {
   const api = fixtureApi(overrides);
   render(
-    <AppProvider
-      value={{ api, session: { displayName: 'pete', examplePassword: false }, logout: () => {} }}
-    >
+    <AppProvider value={{ api, session: { displayName: 'pete' }, logout: () => {} }}>
       <ToastHost>
         <ReaderScreen space={fixture.delivery.id} conversation={fixture.rotation.id} />
       </ToastHost>
@@ -48,9 +46,7 @@ function renderReader(overrides = {}) {
 function renderCatchUpThread(overrides = {}, asOf?: string) {
   const api = fixtureApi(overrides);
   render(
-    <AppProvider
-      value={{ api, session: { displayName: 'pete', examplePassword: false }, logout: () => {} }}
-    >
+    <AppProvider value={{ api, session: { displayName: 'pete' }, logout: () => {} }}>
       <ToastHost>
         <ReaderScreen
           space={fixture.delivery.id}
@@ -430,9 +426,7 @@ describe('Reader catch-up marks', () => {
       },
     });
     render(
-      <AppProvider
-        value={{ api, session: { displayName: 'pete', examplePassword: false }, logout: () => {} }}
-      >
+      <AppProvider value={{ api, session: { displayName: 'pete' }, logout: () => {} }}>
         <ChangesProvider api={api}>
           <ToastHost>
             <ReaderScreen space={fixture.delivery.id} conversation={fixture.rotation.id} />
@@ -555,9 +549,7 @@ describe('Reader poll ordering', () => {
       },
     });
     render(
-      <AppProvider
-        value={{ api, session: { displayName: 'pete', examplePassword: false }, logout: () => {} }}
-      >
+      <AppProvider value={{ api, session: { displayName: 'pete' }, logout: () => {} }}>
         <ChangesProvider api={api}>
           <ToastHost>
             <ReaderScreen space={fixture.delivery.id} conversation={fixture.rotation.id} />
@@ -604,9 +596,7 @@ describe('Reader poll on an empty thread', () => {
       },
     });
     render(
-      <AppProvider
-        value={{ api, session: { displayName: 'pete', examplePassword: false }, logout: () => {} }}
-      >
+      <AppProvider value={{ api, session: { displayName: 'pete' }, logout: () => {} }}>
         <ChangesProvider api={api}>
           <ToastHost>
             <ReaderScreen space={fixture.delivery.id} conversation={fixture.rotation.id} />
@@ -631,9 +621,7 @@ describe('Reader action ordering', () => {
         }),
     });
     render(
-      <AppProvider
-        value={{ api, session: { displayName: 'pete', examplePassword: false }, logout: () => {} }}
-      >
+      <AppProvider value={{ api, session: { displayName: 'pete' }, logout: () => {} }}>
         <ToastHost>
           <ReaderScreen space={fixture.delivery.id} conversation={fixture.rotation.id} />
         </ToastHost>
@@ -685,9 +673,7 @@ describe('Reader composer ordering', () => {
       ),
     });
     render(
-      <AppProvider
-        value={{ api, session: { displayName: 'pete', examplePassword: false }, logout: () => {} }}
-      >
+      <AppProvider value={{ api, session: { displayName: 'pete' }, logout: () => {} }}>
         <ToastHost>
           <ReaderScreen space={fixture.delivery.id} conversation={fixture.rotation.id} />
         </ToastHost>

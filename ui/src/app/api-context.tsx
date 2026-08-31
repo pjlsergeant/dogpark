@@ -10,7 +10,8 @@ export interface Session {
    * shell keeps a banner up while it is; anyone who has read the README can
    * sign in.
    */
-  readonly examplePassword: boolean;
+  /** Optional so a test fixture need not know about the banner; only `true` shows it. */
+  readonly examplePassword?: boolean;
 }
 
 interface AppContextValue {
