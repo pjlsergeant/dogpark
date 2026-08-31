@@ -284,8 +284,14 @@ function Thread({
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
   const [renaming, setRenaming] = useState(false);
-  const [annotations, setAnnotations] = useState(
-    summary?.annotations ?? { status: 'open' as const, pins: [] },
+  /**
+   * Live: seeded from the thread list's row, so the header is right before
+   * the page lands. As-of: nothing until the reconstruction answers — the
+   * row is today's state, and a forensic view must not show it, not even
+   * briefly, and not at all if the reconstruction is refused.
+   */
+  const [annotations, setAnnotations] = useState<ConversationAnnotations | undefined>(
+    asOf === undefined ? (summary?.annotations ?? { status: 'open', pins: [] }) : undefined,
   );
   /**
    * Every full reload gets a number. A read that was already out when one
@@ -517,6 +523,8 @@ function Thread({
    */
   const asOfRefused = asOf !== undefined && error !== null && error.code === 'not_found';
   const shown = asOfRefused ? null : loaded;
+  /** What the header and pins render: nothing for a refused or pending as-of. */
+  const view = asOfRefused ? undefined : annotations;
   const messages = shown?.messages ?? [];
   const count = messages.length;
   const onFirstPage = shown?.pages === 1;
@@ -571,12 +579,12 @@ function Thread({
       ? (summary?.title ?? messages[0]?.conversationTitle)
       : (messages[0]?.conversationTitle ?? summary?.title)) ?? 'Conversation';
   const pinned = useMemo(() => {
-    const byMessage = new Map<string, (typeof annotations.pins)[number]['actor'][]>();
-    for (const pin of annotations.pins)
+    const byMessage = new Map<string, ConversationAnnotations['pins'][number]['actor'][]>();
+    for (const pin of view?.pins ?? [])
       byMessage.set(pin.message, [...(byMessage.get(pin.message) ?? []), pin.actor]);
     return byMessage;
-  }, [annotations]);
-  const humanPin = annotations.pins.find((pin) => pin.actor.kind === 'human')?.message;
+  }, [view]);
+  const humanPin = view?.pins.find((pin) => pin.actor.kind === 'human')?.message;
   const updateAnnotations = async (
     attempt: string,
     action: (key: string) => Promise<ConversationAnnotations>,
@@ -585,9 +593,17 @@ function Thread({
     // key and becomes a replay rather than a second application.
     const key = attemptKeys.current.get(attempt) ?? idempotencyKey();
     attemptKeys.current.set(attempt, key);
-    const seen = annotationArrivals.current;
+    // Noted when the request actually goes out — after its turn in the queue,
+    // not at the click — so an action that waited behind another is judged
+    // by what arrived during its own flight.
+    let seen = annotationArrivals.current;
     try {
-      acceptFromAction(await runAction(() => action(key)));
+      acceptFromAction(
+        await runAction(() => {
+          seen = annotationArrivals.current;
+          return action(key);
+        }),
+      );
       onPosted();
     } catch (cause) {
       // Keep the key for a replay only if nothing arrived meanwhile; state
@@ -602,7 +618,7 @@ function Thread({
       <header className="thread-head">
         <div>
           <h1>{heading}</h1>
-          {annotations.status === 'complete' && <Pill tone="neutral">complete</Pill>}
+          {view?.status === 'complete' && <Pill tone="neutral">complete</Pill>}
           {summary !== null && asOf === undefined && (
             <p className="muted small">
               opened by{' '}
@@ -622,15 +638,15 @@ function Thread({
                 className="btn"
                 onClick={() =>
                   void updateAnnotations(
-                    annotations.status === 'complete' ? 'reopen' : 'complete',
+                    annotations?.status === 'complete' ? 'reopen' : 'complete',
                     (key) =>
-                      annotations.status === 'complete'
+                      annotations?.status === 'complete'
                         ? api.reopenConversation(conversation, key)
                         : api.completeConversation(conversation, key),
                   )
                 }
               >
-                {annotations.status === 'complete' ? 'Reopen' : 'Complete'}
+                {annotations?.status === 'complete' ? 'Reopen' : 'Complete'}
               </button>
               <button type="button" className="btn btn-quiet" onClick={() => setRenaming(true)}>
                 Rename

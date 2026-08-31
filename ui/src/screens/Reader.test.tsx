@@ -2,7 +2,13 @@
 import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { afterEach, beforeAll, describe, expect, test, vi } from 'vitest';
-import type { ConversationAnnotations, MessageId, MessagePage } from '../api/index.js';
+import { ApiError } from '../api/index.js';
+import type {
+  ConversationAnnotations,
+  ConversationId,
+  MessageId,
+  MessagePage,
+} from '../api/index.js';
 import { AppProvider } from '../app/api-context.js';
 import { ChangesProvider } from '../app/changes.js';
 import { ToastHost } from '../components/Toasts.js';
@@ -169,6 +175,59 @@ describe('Reader catch-up marks', () => {
     renderCatchUpThread({ advanceReadMark }, fixture.conversationRead.id);
     await screen.findAllByText(/Do not touch production/);
     expect(advanceReadMark).not.toHaveBeenCalled();
+  });
+});
+
+describe('Reader as-of annotations', () => {
+  test('an as-of view shows no current annotations while pending, and none when refused', async () => {
+    let refuse: ((error: ApiError) => void) | undefined;
+    const api = fixtureApi({
+      // Today's row says complete and pinned; the forensic view must not.
+      listConversations: () =>
+        Promise.resolve(
+          fixture.conversations.map((row) =>
+            row.id === fixture.rotation.id
+              ? { ...row, annotations: { status: 'complete' as const, pins: row.annotations.pins } }
+              : row,
+          ),
+        ),
+      readConversation: (_id, query) =>
+        query?.asOf === undefined
+          ? Promise.resolve({
+              messages: [...fixture.rotationMessages].reverse(),
+              nextCursor: 'qc_end' as MessagePage['nextCursor'],
+              hasMore: false,
+            })
+          : new Promise<MessagePage>((_resolve, reject) => {
+              refuse = reject;
+            }),
+    });
+    // The list is on screen first, as when moving between threads in a space:
+    // the thread then mounts with today's row already in hand.
+    const app = (conversation: ConversationId | undefined, asOf?: string) => (
+      <AppProvider value={{ api, session: { displayName: 'pete' }, logout: () => {} }}>
+        <ToastHost>
+          <ReaderScreen space={fixture.delivery.id} conversation={conversation} asOf={asOf} />
+        </ToastHost>
+      </AppProvider>
+    );
+    const { rerender } = render(app(undefined));
+    await screen.findAllByText(fixture.rotation.title);
+    rerender(app(fixture.rotation.id, fixture.conversationRead.id));
+    const header = (await screen.findByRole('heading', { level: 1 })).closest('header')!;
+    await waitFor(() => expect(refuse).toBeDefined());
+    expect(within(header).queryByText('complete')).toBeNull();
+    expect(screen.queryByRole('navigation', { name: 'Pinned messages' })).toBeNull();
+
+    await act(async () => {
+      refuse!(new ApiError({ code: 'not_found', message: 'not for this agent then', status: 404 }));
+      await Promise.resolve();
+    });
+    await waitFor(() =>
+      expect(screen.queryByText(/not for this agent then|could not/i)).not.toBeNull(),
+    );
+    expect(within(header).queryByText('complete')).toBeNull();
+    expect(screen.queryByRole('navigation', { name: 'Pinned messages' })).toBeNull();
   });
 });
 
@@ -577,6 +636,56 @@ describe('Reader annotations', () => {
     });
     await waitFor(() => expect(keys).toHaveLength(2));
     expect(keys[1]).toBe(keys[0]);
+  });
+
+  test('an action that waited in the queue keeps its key when it fails, despite the arrival ahead of it', async () => {
+    const pete = fixture.pete;
+    const keys = new Map<string, string[]>();
+    let firstPin: ((annotations: ConversationAnnotations) => void) | undefined;
+    let secondFailed = false;
+    const api = fixtureApi({
+      pinMessage: (_conversation: string, message: MessageId, key: string) => {
+        keys.set(message, [...(keys.get(message) ?? []), key]);
+        if (keys.size === 1 && keys.get(message)!.length === 1) {
+          return new Promise<ConversationAnnotations>((resolve) => {
+            firstPin = resolve;
+          });
+        }
+        if (!secondFailed) {
+          secondFailed = true;
+          return Promise.reject(new Error('second pin lost'));
+        }
+        return Promise.resolve({ status: 'open' as const, pins: [{ message, actor: pete }] });
+      },
+    });
+    render(
+      <AppProvider value={{ api, session: { displayName: 'pete' }, logout: () => {} }}>
+        <ToastHost>
+          <ReaderScreen space={fixture.delivery.id} conversation={fixture.rotation.id} />
+        </ToastHost>
+      </AppProvider>,
+    );
+    const inArticle = (nodes: readonly HTMLElement[]): HTMLElement =>
+      nodes.find((node) => node.closest('article') !== null)!.closest('article')!;
+    const first = inArticle(await screen.findAllByText(/Nothing of mine in that window/));
+    const second = inArticle(screen.getAllByText(/Checks green/));
+    const secondId = second.id.replace(/^m-/, '');
+    await userEvent.click(within(first).getByRole('button', { name: 'Pin' }));
+    await waitFor(() => expect(firstPin).toBeDefined());
+    await userEvent.click(within(second).getByRole('button', { name: 'Pin' }));
+    // The first answers (an arrival); the queued second is then sent and fails.
+    await act(async () => {
+      firstPin!({
+        status: 'open',
+        pins: [{ message: first.id.replace(/^m-/, '') as MessageId, actor: pete }],
+      });
+      await Promise.resolve();
+    });
+    await screen.findByText(/second pin lost/);
+    // Its key survives: the retry replays rather than pinning afresh.
+    await userEvent.click(within(second).getByRole('button', { name: 'Pin' }));
+    await waitFor(() => expect(keys.get(secondId)).toHaveLength(2));
+    expect(keys.get(secondId)![1]).toBe(keys.get(secondId)![0]);
   });
 
   test("a failed attempt's key is not restored when state arrived during the attempt", async () => {
