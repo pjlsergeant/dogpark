@@ -13,7 +13,7 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-export const Populated: Story = {};
+export const Populated: Story = { parameters: { expectText: ['delivery'] } };
 
 export const NoSpacesYet: Story = {
   parameters: { api: fixtureApi({ listSpaces: () => Promise.resolve([]) }) },

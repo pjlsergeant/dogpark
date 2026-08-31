@@ -32,6 +32,11 @@ test('every component and screen has stories', () => {
   const missing = Object.keys(sources)
     .filter((path) => !path.endsWith('.test.tsx') && !path.endsWith('.stories.tsx'))
     .filter((path) => !(path.replace(/\.tsx$/, '.stories.tsx') in modules));
+  // A source exporting two screens satisfies the sibling rule with one story
+  // file, so the second screen's stories are demanded by name.
+  for (const extra of ['../src/screens/SpaceScreen.stories.tsx']) {
+    if (!(extra in modules)) missing.push(extra);
+  }
   expect(missing).toEqual([]);
 });
 
