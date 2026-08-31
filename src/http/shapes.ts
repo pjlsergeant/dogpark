@@ -1,14 +1,28 @@
-// Admin response bodies, as pinned by "Admin response shapes" in docs/http-api.md.
+// Admin response bodies. Each function's return type is the response schema's
+// inferred type (src/types.ts), so the compiler checks what is built here
+// against the one contract the smoke tests parse against.
 import type {
   AgentRecord,
-  ConversationSummary,
+  ConversationSummary as StoreConversationSummary,
   EscalationRecord,
   KeyRecord,
-  ReadLogEntry,
+  ReadLogEntry as StoreReadLogEntry,
   SearchHit,
   Store,
 } from '../store/index.js';
-import type { Agent, AgentId, ConversationId, SpaceId } from '../types.js';
+import type {
+  AdminAgent,
+  Agent,
+  AgentId,
+  ApiKeySummary,
+  ConversationId,
+  ConversationSummary,
+  Escalation,
+  ReadLogEntry,
+  SearchResult,
+  SpaceId,
+  SpaceMembers,
+} from '../types.js';
 
 function lookupAgent(store: Store, cache: Map<string, Agent>, id: AgentId): Agent {
   const cached = cache.get(id);
@@ -26,7 +40,7 @@ export function bare(agent: { readonly id: AgentId; readonly displayName: string
 }
 
 /** `keyId` everywhere a key summary appears — inside `GET /agents` too. */
-export function keySummary(key: KeyRecord): unknown {
+export function keySummary(key: KeyRecord): ApiKeySummary {
   return {
     keyId: key.id,
     label: key.label,
@@ -41,7 +55,7 @@ export function keySummary(key: KeyRecord): unknown {
  * prominently until it flips, which is the window where the count diagnoses
  * anything.
  */
-export function adminAgent(record: AgentRecord, keys: readonly KeyRecord[]): unknown {
+export function adminAgent(record: AgentRecord, keys: readonly KeyRecord[]): AdminAgent {
   return {
     id: record.id,
     displayName: record.displayName,
@@ -59,7 +73,7 @@ export function adminAgent(record: AgentRecord, keys: readonly KeyRecord[]): unk
  * open ones (ADR-0011). `history` is the closed ones — what the contract calls
  * past intervals.
  */
-export function spaceMembers(store: Store, space: SpaceId): unknown {
+export function spaceMembers(store: Store, space: SpaceId): SpaceMembers {
   const intervals = store.listMembershipIntervals({ space });
   const cache = new Map<string, Agent>();
   return {
@@ -74,7 +88,8 @@ export function spaceMembers(store: Store, space: SpaceId): unknown {
       .map((interval) => ({
         agent: lookupAgent(store, cache, interval.agent),
         grantedAt: interval.grantedAt,
-        revokedAt: interval.revokedAt,
+        // The filter above keeps only closed intervals, so this is never null.
+        revokedAt: interval.revokedAt as NonNullable<typeof interval.revokedAt>,
       })),
   };
 }
@@ -85,7 +100,7 @@ export function spaceMembers(store: Store, space: SpaceId): unknown {
  * `openedBy` and `lastSender` are whole `Sender`s, not names, so the UI
  * renders an agent's current name rather than one frozen at the time.
  */
-export function conversationRow(summary: ConversationSummary): unknown {
+export function conversationRow(summary: StoreConversationSummary): ConversationSummary {
   return {
     id: summary.id,
     space: summary.space,
@@ -107,7 +122,11 @@ export function conversationRow(summary: ConversationSummary): unknown {
  * The stream tip the row recorded is not exposed: like `label_seq`, it is
  * machinery for reconstruction rather than something the row asserts.
  */
-export function readLogRow(store: Store, cache: Map<string, Agent>, entry: ReadLogEntry): unknown {
+export function readLogRow(
+  store: Store,
+  cache: Map<string, Agent>,
+  entry: StoreReadLogEntry,
+): ReadLogEntry {
   const params = entry.params as { conversation?: unknown; space?: unknown } | null;
   const conversation =
     entry.kind === 'conversation' && typeof params?.conversation === 'string'
@@ -122,7 +141,7 @@ export function readLogRow(store: Store, cache: Map<string, Agent>, entry: ReadL
     agent: lookupAgent(store, cache, entry.agent),
     at: entry.readAt,
     kind: entry.kind,
-    parameters: entry.params,
+    parameters: (entry.params ?? {}) as Record<string, unknown>,
     cursor: entry.cursor,
     itemCount: entry.itemCount,
     ...(entry.collapsedCount > 1
@@ -136,15 +155,26 @@ export function readLogRow(store: Store, cache: Map<string, Agent>, entry: ReadL
   };
 }
 
+/**
+ * An escalation's conversation is guaranteed by a foreign key; the store's
+ * lookup is nullable for callers who might ask about a stranger, so the
+ * invariant is asserted here rather than widening the response shape.
+ */
+function present<T>(value: T | undefined, what: string): T {
+  /* c8 ignore next */
+  if (value === undefined) throw new Error(`a forensic row references a missing ${what}`);
+  return value;
+}
+
 export function escalationRow(
   store: Store,
   cache: Map<string, Agent>,
   record: EscalationRecord,
-): unknown {
+): Escalation {
   return {
-    id: record.id,
+    id: record.id as Escalation['id'],
     agent: lookupAgent(store, cache, record.agent),
-    conversation: store.getConversation(record.conversation),
+    conversation: present(store.getConversation(record.conversation), 'conversation'),
     reason: record.reason,
     raisedAt: record.createdAt,
     acknowledgedAt: record.acknowledgedAt,
@@ -158,7 +188,7 @@ export function escalationRow(
   };
 }
 
-export function searchRow(store: Store, hit: SearchHit): unknown {
+export function searchRow(store: Store, hit: SearchHit): SearchResult {
   return {
     message: hit.message,
     conversation: {
@@ -166,7 +196,7 @@ export function searchRow(store: Store, hit: SearchHit): unknown {
       space: hit.message.space,
       title: hit.message.conversationTitle,
     },
-    space: store.getSpace(hit.message.space),
+    space: present(store.getSpace(hit.message.space), 'space'),
     snippet: hit.snippet,
   };
 }

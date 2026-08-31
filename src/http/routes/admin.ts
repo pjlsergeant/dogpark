@@ -11,7 +11,6 @@ import {
   bare,
   conversationRow,
   escalationRow,
-  keySummary,
   readLogRow,
   searchRow,
   spaceMembers,
@@ -218,14 +217,6 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
         const renamed = withKeys(ctx.store.renameAgent(asAgentId(id), name));
         ctx.writes.adminOnly();
         return renamed;
-      });
-
-      guarded.get('/agents/:id/keys', async (request) => {
-        // A key that cannot be named cannot be revoked, and the plaintext is
-        // shown once — so the list is ids and dates, never material.
-        const { id } = request.params as { id: string };
-        const record = agentOr404(id);
-        return ctx.store.listKeys(record.id).map(keySummary);
       });
 
       guarded.post('/agents/:id/keys', async (request, reply) => {

@@ -5,7 +5,9 @@ here that turns out to be load-bearing should graduate to an ADR.
 
 ## Structure
 
-`src/types.ts` is the agent protocol, unchanged by implementation. Around it:
+`src/types.ts` is the protocol, now stated as the zod schemas the implementation
+enforces: every request and response body, with the TypeScript types inferred
+from them and the smoke tests parsing real responses through them. Around it:
 
 * `src/store/` — SQLite: schema, migrations, and the domain queries. The one
   query outside it is `/health`'s `SELECT 1`, through `Store.database`.

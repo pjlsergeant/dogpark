@@ -18,9 +18,9 @@ codes from `ErrorCode`. Anything the caller may not see is `not_found`, never
 | GET | `/conversations/:id/messages` | `since`, `until`, `after`, `order`, `limit` | `MessagePage` |
 | GET | `/spaces/:id/messages` | `since`, `until`, `after`, `order`, `limit` | `MessagePage` |
 | GET | `/agents` | `space` (optional) | `Agent[]` |
-| POST | `/messages` | `PostRequest` (JSON or multipart) | `PostResult` |
+| POST | `/messages` | `PostBody` (JSON or multipart) | `PostResult` |
 | GET | `/attachments/:id` | — | the file |
-| POST | `/escalations` | `EscalateRequest` | `204` |
+| POST | `/escalations` | `EscalateBody` | `204` |
 
 A title — opened by a post target or set by the admin rename — is at most 200
 characters; an escalation `reason` at most 2000. Bodies are bounded by
@@ -54,8 +54,7 @@ required because the SPA shares an origin with the agent API.
 | GET | `/spaces/:id/members` | current members, and past intervals |
 | PUT | `/spaces/:id/members/:agentId` | grant |
 | DELETE | `/spaces/:id/members/:agentId` | revoke |
-| GET | `/agents` | the whole roster, archived included; with last-seen, failed attempts claiming each id, and every key |
-| GET | `/agents/:id/keys` | the `keyId`s that `DELETE` needs |
+| GET | `/agents` | the whole roster, archived included; with last-seen, failed attempts claiming each id, and every key (with the `keyId`s that `DELETE` needs) |
 | POST | `/agents` | `{ name }`; returns the key **once** |
 | PATCH | `/agents/:id` | `{ name }` |
 | POST | `/agents/:id/keys` | issue another; returns it once |
@@ -80,70 +79,16 @@ cannot be named cannot be revoked.
 `GET /health` sits outside both prefixes and needs no credential: it answers
 `{ ok }` for a load balancer, and says nothing about what is inside.
 
-## Admin response shapes
+## Response shapes
 
-Written down because the smoke test and the implementation must agree, and
-"returns the key once" is not a shape.
-
-```
-POST /session, GET /session
-                   -> { csrfToken, displayName, expiresAt }
-POST /spaces       -> { id, name }
-GET  /spaces       -> [{ id, name, conversationCount, messageCount,
-                         lastActivityAt }]
-GET  /spaces/:id/members
-                   -> { current: [{ agent, grantedAt }],
-                        history: [{ agent, grantedAt, revokedAt }] }
-POST /agents, POST /agents/:id/keys, POST /agents/:id/unarchive
-                   -> { agent: { id, displayName }, keyId, key }  // key once
-GET  /agents       -> [{ id, displayName, archived, createdAt, lastSeenAt,
-                         failedAttemptsClaimingId, hasEverAuthenticated,
-                         keys: [{ keyId, label, createdAt, revokedAt }] }]
-GET  /reads?agent&since&until&limit&after
-                   -> { reads: [{ id, agent, kind, at, parameters, cursor,
-                                  itemCount, collapsedCount?, firstReadAt?,
-                                  conversation?, space? }],
-                        nextCursor, hasMore }
-                      // conversation { id, space, title } on a conversation
-                      // read, space { id, name } on a space read
-                      // collapsedCount and firstReadAt appear only on a row
-                      // standing for a compacted run of empty stream polls
-                      // (ADR-0005): how many reads it stands for, and when
-                      // the run began. The row is the last read of the run,
-                      // so `at` is when it ended
-GET  /reads/:id    -> one read row, shaped as above
-GET  /reads/:id/conversations/:conversationId/messages?since&until&after&order&limit
-                   -> MessagePage, rendered as of that read and ending at it:
-                      nothing past the stream position the row recorded is
-                      included. Exact for a row that recorded a position; a row
-                      that recorded none ends at the read's millisecond
-                      instead, which includes a message sent later in that same
-                      millisecond. Only for a space the read's agent belonged to
-                      at that moment; otherwise not_found, since the agent could
-                      have seen nothing of it. The human's display name is the
-                      one label not journaled, so it renders as it is now rather
-                      than as it stood at the read (ADR-0004)
-GET  /agents/:id/keys
-                   -> [{ keyId, label, createdAt, revokedAt }]
-GET  /escalations?order&after&limit
-                   -> { escalations: [{ id, agent, conversation, reason, raisedAt,
-                                        acknowledgedAt,
-                                        notification: { state, attempts, lastAttemptAt,
-                                                        nextAttemptAt, lastError } }],
-                        nextCursor, hasMore, unacknowledged, undelivered,
-                        webhookConfigured }
-POST /escalations/:id/ack
-                   -> one escalation row, shaped as above, now acknowledged
-GET  /search?q=&space=&order=&after=&limit=
-                   -> { results: [{ message, conversation, space, snippet }],
-                        nextCursor, hasMore }
-GET  /spaces/:id/conversations
-                   -> [{ id, space, title, openedBy, messageCount,
-                         lastActivityAt, lastSender }]
-PATCH /conversations/:id
-                   -> { id, space, title }
-POST /messages     -> PostResult                                 // as the human
-```
+The request and response bodies are stated as zod schemas in
+[`src/types.ts`](../src/types.ts) — the single source of truth the TypeScript
+types are inferred from. The server builds its responses against those inferred
+types (`src/http/shapes.ts`, checked by the compiler), the smoke tests
+`.parse()` real responses through the same schemas (`src/http/app.test.ts`),
+and the UI decodes with them (`ui/src/api`). This section used to redraw the
+admin shapes in ASCII, which drifted; the schema is the shape now. The notes
+below carry the semantics the shapes alone do not.
 
 `hasEverAuthenticated` exists so the UI can show failure counts prominently
 during onboarding and quietly afterwards, which is the only window where they

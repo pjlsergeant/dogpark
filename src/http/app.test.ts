@@ -4,11 +4,31 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { FastifyInstance, InjectOptions, LightMyRequestResponse } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { z } from 'zod';
 import type { Config } from '../config.js';
 import { loadConfig } from '../config.js';
 import type { Store } from '../store/index.js';
 import { openStore, RESERVED_SEQUENCE } from '../store/index.js';
 import type { AgentId, AttachmentId, ConversationId, SpaceId, Timestamp } from '../types.js';
+import {
+  AdminAgentSchema,
+  ChangesResponseSchema,
+  ConversationSchema,
+  ConversationSummarySchema,
+  EscalationSchema,
+  EscalationsResponseSchema,
+  IdentitySchema,
+  IssuedKeySchema,
+  MessagePageSchema,
+  PostResultSchema,
+  ReadLogEntrySchema,
+  ReadLogPageSchema,
+  SearchResponseSchema,
+  SessionCredentialsSchema,
+  SpaceSummarySchema,
+  SpaceMembersSchema,
+  StreamPageSchema,
+} from '../types.js';
 import { buildApp } from './app.js';
 import { contentDisposition, safeContentType, sweepUnreferenced } from './attachments.js';
 import { hashPassword } from './password.js';
@@ -180,12 +200,7 @@ describe('the HTTP surface', () => {
     it('answers identity with spaces, limits and the reserved sequence', async () => {
       const response = await asAgent(alpha.key, { method: 'GET', url: '/api/agent/identity' });
       expect(response.statusCode).toBe(200);
-      const body = response.json() as {
-        self: { id: string };
-        spaces: { id: string }[];
-        limits: { maxWaitSeconds: number };
-        reservedSequence: string;
-      };
+      const body = IdentitySchema.parse(response.json());
       expect(body.self.id).toBe(alpha.id);
       expect(body.spaces.map((s) => s.id)).toEqual([space]);
       expect(body.limits.maxWaitSeconds).toBe(2);
@@ -847,7 +862,7 @@ describe('the HTTP surface', () => {
         url: '/api/agent/stream?waitSeconds=2',
       });
       expect(response.statusCode).toBe(200);
-      expect((response.json() as { items: unknown[] }).items.length).toBeGreaterThan(0);
+      expect(StreamPageSchema.parse(response.json()).items.length).toBeGreaterThan(0);
       expect(Date.now() - started).toBeLessThan(500);
     });
 
@@ -974,22 +989,7 @@ describe('the HTTP surface', () => {
         url: `/api/admin/reads?agent=${alpha.id}`,
         headers: { cookie: session.cookie },
       });
-      const {
-        reads: rows,
-        nextCursor,
-        hasMore,
-      } = reads.json() as {
-        reads: {
-          agent: { id: string };
-          at: string;
-          kind: string;
-          parameters: { from: { from: string } };
-          cursor: string;
-          itemCount: number;
-        }[];
-        nextCursor: string | null;
-        hasMore: boolean;
-      };
+      const { reads: rows, nextCursor, hasMore } = ReadLogPageSchema.parse(reads.json());
       expect(rows).toHaveLength(1);
       // A real position, not a placeholder: the log is resumable.
       expect(nextCursor).toEqual(expect.any(String));
@@ -1162,16 +1162,15 @@ describe('the HTTP surface', () => {
         headers: { cookie: session.cookie },
       });
       expect(asOf.statusCode).toBe(200);
-      expect(
-        (asOf.json() as { messages: { conversationTitle: string }[] }).messages[0]
-          ?.conversationTitle,
-      ).toBe(handed?.conversationTitle);
+      expect(MessagePageSchema.parse(asOf.json()).messages[0]?.conversationTitle).toBe(
+        handed?.conversationTitle,
+      );
       const one = await h.app.inject({
         method: 'GET',
         url: `/api/admin/reads/${row?.id ?? ''}`,
         headers: { cookie: session.cookie },
       });
-      expect(one.json()).toMatchObject({
+      expect(ReadLogEntrySchema.parse(one.json())).toMatchObject({
         kind: 'conversation',
         conversation: { id: conversation, space, title: 'renamed since' },
       });
@@ -1199,7 +1198,7 @@ describe('the HTTP surface', () => {
       const cookie = String(response.headers['set-cookie']);
       expect(cookie).toContain('HttpOnly');
       expect(cookie).toContain('SameSite=Lax');
-      expect((response.json() as { csrfToken: string }).csrfToken).toEqual(expect.any(String));
+      expect(SessionCredentialsSchema.parse(response.json()).csrfToken).toEqual(expect.any(String));
     });
 
     it('marks the cookie Secure once a TLS-terminating proxy is declared', async () => {
@@ -1330,7 +1329,7 @@ describe('the HTTP surface', () => {
         payload: { name: 'gamma' },
       });
       expect(created.statusCode).toBe(201);
-      const body = created.json() as { agent: { id: string }; key: string; keyId: string };
+      const body = IssuedKeySchema.parse(created.json());
       expect(body.key.startsWith(`dgp_${body.agent.id}_`)).toBe(true);
 
       const listed = await h.app.inject({
@@ -1339,7 +1338,7 @@ describe('the HTTP surface', () => {
         headers: { cookie: session.cookie },
       });
       expect(JSON.stringify(listed.json())).not.toContain(body.key);
-      const rows = listed.json() as { id: string; hasEverAuthenticated: boolean }[];
+      const rows = z.array(AdminAgentSchema).parse(listed.json());
       expect(rows.find((r) => r.id === body.agent.id)?.hasEverAuthenticated).toBe(false);
     });
 
@@ -1410,34 +1409,10 @@ describe('the HTTP surface', () => {
         url: `/api/admin/spaces/${space}/members`,
         headers: { cookie: session.cookie },
       });
-      const body = members.json() as {
-        current: { agent: { id: string }; grantedAt: string }[];
-        history: { agent: { id: string }; revokedAt: string }[];
-      };
+      const body = SpaceMembersSchema.parse(members.json());
       expect(body.current.map((m) => m.agent.id)).toEqual([alpha.id]);
       expect(body.history.map((m) => m.agent.id)).toEqual([beta.id]);
       expect(body.history[0]?.revokedAt).toEqual(expect.any(String));
-    });
-
-    it('lists an agent\u2019s keys by id, and never their material', async () => {
-      const session = await login(h);
-      const keys = await h.app.inject({
-        method: 'GET',
-        url: `/api/admin/agents/${alpha.id}/keys`,
-        headers: { cookie: session.cookie },
-      });
-      expect(keys.statusCode).toBe(200);
-      const rows = keys.json() as { keyId: string; revokedAt: string | null }[];
-      expect(rows).toHaveLength(1);
-      expect(rows[0]?.keyId).toEqual(expect.any(String));
-      expect(JSON.stringify(rows)).not.toContain(alpha.key);
-
-      const unknown = await h.app.inject({
-        method: 'GET',
-        url: '/api/admin/agents/0000000000000000/keys',
-        headers: { cookie: session.cookie },
-      });
-      expect(unknown.statusCode).toBe(404);
     });
 
     it('reads a thread backwards from the newest, and pages older with after', async () => {
@@ -1456,7 +1431,7 @@ describe('the HTTP surface', () => {
 
       const first = await backwards();
       expect(first.statusCode).toBe(200);
-      const page = first.json() as MessagePageBody;
+      const page = MessagePageSchema.parse(first.json());
       // Newest first, which is the whole point: the last thing said is the
       // first thing read.
       expect(page.messages.map((m) => m.body)).toEqual(['three', 'two']);
@@ -1496,7 +1471,10 @@ describe('the HTTP surface', () => {
         payload: { title: 'the weekly figures' },
       });
       expect(renamed.statusCode).toBe(200);
-      expect(renamed.json()).toMatchObject({ id: conversation, title: 'the weekly figures' });
+      expect(ConversationSchema.parse(renamed.json())).toMatchObject({
+        id: conversation,
+        title: 'the weekly figures',
+      });
 
       // Titles address a thread (ADR-0012), so two threads in one space cannot
       // share one. A clash is invalid_request like every other name clash;
@@ -1526,14 +1504,7 @@ describe('the HTTP surface', () => {
         headers: { cookie: session.cookie },
       });
       expect(response.statusCode).toBe(200);
-      const threads = response.json() as {
-        id: string;
-        title: string;
-        messageCount: number;
-        lastActivityAt: string | null;
-        lastSender: { kind: string; displayName: string } | null;
-        openedBy: { kind: string; displayName: string };
-      }[];
+      const threads = z.array(ConversationSummarySchema).parse(response.json());
 
       const busy = threads.find((t) => t.id === conversation);
       expect(busy?.messageCount).toBe(1);
@@ -1577,6 +1548,7 @@ describe('the HTTP surface', () => {
       const first = await post();
       const second = await post();
       expect(first.statusCode).toBe(200);
+      expect(PostResultSchema.parse(first.json()).conversation.title).toBe('from the human');
       const idOf = (r: LightMyRequestResponse): string =>
         (r.json() as { message: { id: string } }).message.id;
       expect(idOf(second)).toBe(idOf(first));
@@ -1607,18 +1579,7 @@ describe('the HTTP surface', () => {
         unacknowledged,
         undelivered,
         webhookConfigured,
-      } = inbox.json() as {
-        escalations: {
-          agent: { id: string };
-          conversation: { id: string };
-          raisedAt: string;
-          acknowledgedAt: string | null;
-          notification: { state: string };
-        }[];
-        unacknowledged: number;
-        undelivered: number;
-        webhookConfigured: boolean;
-      };
+      } = EscalationsResponseSchema.parse(inbox.json());
       expect(rows).toHaveLength(1);
       expect(rows[0]?.agent.id).toBe(alpha.id);
       expect(rows[0]?.conversation.id).toBe(conversation);
@@ -1636,10 +1597,7 @@ describe('the HTTP surface', () => {
         url: '/api/admin/search?q=figures',
         headers: { cookie: session.cookie },
       });
-      const { results: hits, hasMore } = found.json() as {
-        results: { message: { body: string }; space: { id: string } }[];
-        hasMore: boolean;
-      };
+      const { results: hits, hasMore } = SearchResponseSchema.parse(found.json());
       expect(hits).toHaveLength(1);
       expect(hits[0]?.space.id).toBe(space);
       expect(hasMore).toBe(false);
@@ -1710,7 +1668,7 @@ describe('the HTTP surface', () => {
         headers: { cookie: session.cookie, 'x-csrf-token': session.csrf },
       });
       expect(acked.statusCode).toBe(200);
-      expect((acked.json() as { acknowledgedAt: string | null }).acknowledgedAt).not.toBe(null);
+      expect(EscalationSchema.parse(acked.json()).acknowledgedAt).not.toBe(null);
 
       const after = await inbox();
       expect(after.unacknowledged).toBe(0);
@@ -1896,7 +1854,7 @@ describe("the human's long poll and space counts", () => {
   afterEach(() => teardown(h));
 
   const versionOf = (response: LightMyRequestResponse): string =>
-    (response.json() as { version: string }).version;
+    ChangesResponseSchema.parse(response.json()).version;
 
   const human = async (): Promise<{
     cookie: string;
@@ -2094,12 +2052,7 @@ describe("the human's long poll and space counts", () => {
     await me.post('/api/admin/messages', { target: { space: acme.id, title: 'one' }, body: 'b' });
     await me.post('/api/admin/messages', { target: { space: acme.id, title: 'two' }, body: 'c' });
 
-    const listed = (await me.get('/api/admin/spaces')).json() as {
-      name: string;
-      conversationCount: number;
-      messageCount: number;
-      lastActivityAt: string | null;
-    }[];
+    const listed = z.array(SpaceSummarySchema).parse((await me.get('/api/admin/spaces')).json());
     expect(listed.map((s) => s.name)).toEqual(['acme', 'quiet']);
     expect(listed[0]).toMatchObject({ conversationCount: 2, messageCount: 3 });
     expect(listed[0]?.lastActivityAt).toEqual(expect.any(String));
