@@ -84,4 +84,29 @@ describe('DOGPARK_TRUST_PROXY', () => {
       /is not an address or range/,
     );
   });
+
+  it('accepts the proxy-addr keywords, alone and mixed with literals', () => {
+    for (const keyword of ['loopback', 'linklocal', 'uniquelocal']) {
+      expect(loadConfig({ ...base, DOGPARK_TRUST_PROXY: keyword }).trustProxy).toEqual([keyword]);
+    }
+    expect(
+      loadConfig({ ...base, DOGPARK_TRUST_PROXY: 'uniquelocal, 203.0.113.7' }).trustProxy,
+    ).toEqual(['uniquelocal', '203.0.113.7']);
+  });
+
+  it('takes the keywords lowercase only, and names them when a word is not one', () => {
+    expect(() => loadConfig({ ...base, DOGPARK_TRUST_PROXY: 'UniqueLocal' })).toThrow(
+      /loopback, linklocal, uniquelocal/,
+    );
+    expect(() => loadConfig({ ...base, DOGPARK_TRUST_PROXY: 'yes' })).toThrow(
+      /loopback, linklocal, uniquelocal/,
+    );
+  });
+});
+
+describe('the listen address', () => {
+  it('is every interface in both modes, so a container is reachable without a proxy', () => {
+    expect(loadConfig(base).listenHost).toBe('0.0.0.0');
+    expect(loadConfig({ ...base, DOGPARK_TRUST_PROXY: '127.0.0.1' }).listenHost).toBe('0.0.0.0');
+  });
 });

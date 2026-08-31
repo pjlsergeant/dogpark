@@ -63,7 +63,7 @@ original call, and it is not an invitation to complete again with a fresh key.
 ## Admin API — `/api/admin/*`
 
 Session cookie: `HttpOnly`, `SameSite=Lax`, and `Secure` when a proxy is
-declared — on loopback there is no TLS to promise (ADR-0016). Every state-changing
+declared — without one there is no TLS to promise (ADR-0016). Every state-changing
 request carries `X-CSRF-Token`, matching a token minted with the session —
 required because the SPA shares an origin with the agent API.
 

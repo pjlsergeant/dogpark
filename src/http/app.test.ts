@@ -2117,6 +2117,25 @@ describe('the HTTP surface', () => {
       });
       expect(response.statusCode).toBe(200);
     });
+
+    it('believes a uniquelocal neighbour, since the keyword is proxy-addr vocabulary', async () => {
+      // `uniquelocal` covers 172.16/12, so a proxy on a Docker network is
+      // trusted and its `X-Forwarded-Proto: https` proves TLS.
+      const proxied = await harness({ DOGPARK_TRUST_PROXY: 'uniquelocal' });
+      try {
+        const agent = proxied.store.createAgent('gamma');
+        const key = proxied.store.issueKey(agent.id).key;
+        const believed = await proxied.app.inject({
+          method: 'GET',
+          url: '/api/agent/identity',
+          remoteAddress: '172.16.0.4',
+          headers: { 'x-forwarded-proto': 'https', authorization: `Bearer ${key}` },
+        });
+        expect(believed.statusCode).toBe(200);
+      } finally {
+        await teardown(proxied);
+      }
+    });
   });
 
   // -------------------------------------------------------------------------

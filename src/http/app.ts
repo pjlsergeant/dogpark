@@ -67,8 +67,9 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     agentLimiter: createRateLimiter(limits.requestsPerMinute),
     loginLimiter: createRateLimiter(LOGINS_PER_MINUTE),
     failedAuthLimiter: createRateLimiter(FAILED_AUTHS_PER_MINUTE),
-    // Only under a declared TLS proxy: on loopback a Secure cookie would never
-    // come back, locking the human out of a development instance (ADR-0016).
+    // Only under a declared TLS proxy: over plaintext a Secure cookie would
+    // never come back, locking the human out of a development instance
+    // (ADR-0016).
     secureCookies: config.behindProxy,
     pageLimit: (asked) => Math.min(asked ?? limits.maxPageSize, limits.maxPageSize),
     sessionTtlSeconds: SESSION_TTL_SECONDS,

@@ -70,9 +70,9 @@ async function main(): Promise<void> {
   }
 
   const config = loadConfig();
-  // Every interface when a proxy is in front, loopback when nothing is — the
-  // one place plaintext is honest (ADR-0016).
-  const binding = { host: config.behindProxy ? '0.0.0.0' : '127.0.0.1' };
+  // Every interface, in both modes: exposure is the deployer's port publish,
+  // as for every containerised service (ADR-0016).
+  const binding = { host: config.listenHost };
 
   const store = openStore({
     file: join(config.DOGPARK_DATA_DIR, 'dogpark.sqlite'),
@@ -121,9 +121,11 @@ async function main(): Promise<void> {
     );
   } else {
     app.log.warn(
-      'DOGPARK_TRUST_PROXY=no: listening on loopback only and issuing non-Secure ' +
-        "session cookies. Set it to the proxy's address when a TLS-terminating proxy " +
-        'is in front.',
+      'DOGPARK_TRUST_PROXY=no: no proxy declared, so X-Forwarded-* is ignored, session ' +
+        'cookies are not Secure, and plaintext is accepted. This listens on every ' +
+        "interface, so publish the port only where plaintext is acceptable (a laptop's " +
+        "127.0.0.1). Set DOGPARK_TRUST_PROXY to the proxy's address when a TLS-terminating " +
+        'proxy is in front.',
     );
   }
 

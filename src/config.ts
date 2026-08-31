@@ -4,11 +4,20 @@ import { MAX_PAGE_LIMIT } from './store/limits.js';
 import { assertValidName } from './store/text.js';
 
 /**
- * One address or CIDR range, checked here so a typo is a startup diagnostic
- * naming the value rather than Fastify's `TypeError: invalid IP address`
- * while the app is being built.
+ * The keywords `@fastify/proxy-addr` understands alongside literals — the
+ * Express `trust proxy` vocabulary. Their meaning is the resolver's, not
+ * Dogpark's; we only let them through. Matched lowercase only, deliberately:
+ * one spelling keeps a config value diffable and a typo a startup diagnostic.
+ */
+const PROXY_KEYWORDS = ['loopback', 'linklocal', 'uniquelocal'] as const;
+
+/**
+ * One address, CIDR range, or keyword, checked here so a typo is a startup
+ * diagnostic naming the value rather than Fastify's `TypeError: invalid IP
+ * address` while the app is being built.
  */
 function proxyAddressProblem(entry: string): string | undefined {
+  if ((PROXY_KEYWORDS as readonly string[]).includes(entry)) return undefined;
   const [address, prefix, ...rest] = entry.split('/');
   if (address === undefined || rest.length > 0) return `"${entry}" is not an address or range`;
   const family = isIP(address);
@@ -49,8 +58,10 @@ const Schema = z.object({
 
   /**
    * What is in front of Dogpark: either `no`, or a comma-separated list of
-   * addresses or CIDR ranges permitted to set `X-Forwarded-*`. A list rather
-   * than a boolean, and no default (ADR-0016).
+   * addresses, CIDR ranges, or the keywords `loopback`, `linklocal`,
+   * `uniquelocal` (`@fastify/proxy-addr`'s vocabulary, mixable with literals)
+   * permitted to set `X-Forwarded-*`. Keywords are matched lowercase only. A
+   * list rather than a boolean, and no default (ADR-0016).
    */
   DOGPARK_TRUST_PROXY: z
     .string()
@@ -65,7 +76,8 @@ const Schema = z.object({
         ctx.addIssue({
           code: 'custom',
           message:
-            'must be "no" or a comma-separated list of proxy addresses or CIDR ranges: ' +
+            'must be "no", or a comma-separated list of proxy addresses, CIDR ranges, or the ' +
+            'keywords loopback, linklocal, uniquelocal: ' +
             problems.join('; '),
         });
       }
@@ -98,6 +110,12 @@ export type Config = z.infer<typeof Schema> & {
   /** False, or the addresses permitted to set `X-Forwarded-*`. */
   readonly trustProxy: false | readonly string[];
   readonly behindProxy: boolean;
+  /**
+   * Always every interface, in both modes: exposure is the deployer's port
+   * publish, as for every containerised service (ADR-0016). A field rather
+   * than a literal in `server.ts` so the decision is unit-testable.
+   */
+  readonly listenHost: string;
 };
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -109,5 +127,5 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const declared = parsed.data.DOGPARK_TRUST_PROXY.trim();
   const trustProxy =
     declared === 'no' ? (false as const) : declared.split(',').map((p) => p.trim());
-  return { ...parsed.data, trustProxy, behindProxy: trustProxy !== false };
+  return { ...parsed.data, trustProxy, behindProxy: trustProxy !== false, listenHost: '0.0.0.0' };
 }
