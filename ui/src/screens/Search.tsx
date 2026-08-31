@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import type { Page, SearchOrder, SearchResult, SpaceId } from '../api/index.js';
 import { useApi } from '../app/api-context.js';
+import { useOnChange } from '../app/changes.js';
 import { useAsync } from '../app/useAsync.js';
 import { usePages } from '../app/usePages.js';
 import { href, navigate } from '../app/router.js';
@@ -35,6 +36,14 @@ export function SearchScreen({
   );
 
   useEffect(() => setDraft(q), [q]);
+
+  // A new message can change what this query matches, and a post signals. Re-run
+  // the query in place — never the draft, so a search half-typed is left alone —
+  // and only while one is actually running. A results list walked past its first
+  // page holds off, the same rule usePages keeps for the Reader's poll.
+  useOnChange(() => {
+    if (q.trim() !== '' && !pages.paged) pages.refresh();
+  });
 
   function submit(event: FormEvent): void {
     event.preventDefault();

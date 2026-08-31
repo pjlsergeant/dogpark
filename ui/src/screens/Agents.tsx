@@ -17,6 +17,7 @@ import { useCallback, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { AdminAgent, AgentId, ApiKeySummary, IssuedKey } from '../api/index.js';
 import { useApi } from '../app/api-context.js';
+import { useOnChange } from '../app/changes.js';
 import { useAsync } from '../app/useAsync.js';
 import { href, navigate } from '../app/router.js';
 import {
@@ -130,6 +131,12 @@ export function AgentsScreen({ selected }: { selected?: AgentId | undefined }): 
   const api = useApi();
   const notify = useNotify();
   const agents = useAsync(() => api.listAgents(), [api]);
+  // Grants, revokes, roster and key changes all signal, so this roster follows
+  // them. Two facts on it deliberately do not: `lastSeenAt` and the
+  // auth-failure counters change on every authenticated request, and signalling
+  // those would make /changes a metronome — so they refresh only when this
+  // screen loads on its own, and can sit a poll behind until then.
+  useOnChange(agents.reload);
   const [creating, setCreating] = useState(false);
   const [renaming, setRenaming] = useState<AdminAgent | null>(null);
   const [issuing, setIssuing] = useState<AdminAgent | null>(null);

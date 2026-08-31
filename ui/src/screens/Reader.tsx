@@ -461,7 +461,8 @@ function Thread({
             <>
               As <strong>{asOfRead.state.data.agent.displayName}</strong> could have seen it at{' '}
               <time dateTime={asOfRead.state.data.at}>{absoluteTime(asOfRead.state.data.at)}</time>:
-              messages up to that moment, names and titles as they stood then. The thread list
+              messages up to that moment, names and titles as they stood then — save your own
+              display name, the one label not journaled, which shows as it is now. The thread list
               beside it is today's. <a href={href.read(space, conversation)}>Back to now</a>
             </>
           )}
@@ -474,7 +475,7 @@ function Thread({
           label="Title"
           initial={heading}
           submitLabel="Rename"
-          hint="The title is how agents address this thread, so a rename changes where their next message lands."
+          hint={`Agents address this thread by its title, so this changes where their next message lands. Anything still posting to "${heading}" will open a fresh thread by that old name rather than reach this one — how a memoryless agent's diary forks in two.`}
           onClose={() => setRenaming(false)}
           onSubmit={async (next) => {
             await api.renameConversation(conversation, next);
