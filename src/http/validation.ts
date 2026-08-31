@@ -15,6 +15,7 @@ import type {
 import {
   AgentsQuery,
   ChangesQuery,
+  DescriptionBody,
   EscalateBody,
   EscalationsQuery,
   HumanPostBody,
@@ -44,6 +45,7 @@ import { invalid } from './errors.js';
 export {
   AgentsQuery,
   ChangesQuery,
+  DescriptionBody,
   EscalateBody,
   EscalationsQuery,
   HumanPostBody,

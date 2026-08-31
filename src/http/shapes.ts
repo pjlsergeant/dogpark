@@ -55,7 +55,11 @@ export function keySummary(key: KeyRecord): ApiKeySummary {
  * prominently until it flips, which is the window where the count diagnoses
  * anything.
  */
-export function adminAgent(record: AgentRecord, keys: readonly KeyRecord[]): AdminAgent {
+export function adminAgent(
+  record: AgentRecord,
+  keys: readonly KeyRecord[],
+  description?: string,
+): AdminAgent {
   return {
     id: record.id,
     displayName: record.displayName,
@@ -65,6 +69,7 @@ export function adminAgent(record: AgentRecord, keys: readonly KeyRecord[]): Adm
     failedAttemptsClaimingId: record.failedAuthAttempts,
     hasEverAuthenticated: record.lastSeenAt !== null,
     keys: keys.map(keySummary),
+    ...(description === undefined ? {} : { description }),
   };
 }
 
@@ -79,10 +84,14 @@ export function spaceMembers(store: Store, space: SpaceId): SpaceMembers {
   return {
     current: intervals
       .filter((interval) => interval.revokedAt === null)
-      .map((interval) => ({
-        agent: lookupAgent(store, cache, interval.agent),
-        grantedAt: interval.grantedAt,
-      })),
+      .map((interval) => {
+        const note = store.getMembershipNote(interval.agent, space);
+        return {
+          agent: lookupAgent(store, cache, interval.agent),
+          grantedAt: interval.grantedAt,
+          ...(note === undefined ? {} : { note }),
+        };
+      }),
     history: intervals
       .filter((interval) => interval.revokedAt !== null)
       .map((interval) => ({

@@ -164,6 +164,27 @@ export type Conversation = z.infer<typeof ConversationSchema>;
 export const AgentSchema = z.object({ id: branded<AgentId>(), displayName: z.string() }).readonly();
 export type Agent = z.infer<typeof AgentSchema>;
 
+export const AgentListingSchema = z
+  .object({
+    id: branded<AgentId>(),
+    displayName: z.string(),
+    description: z.string().optional(),
+    /** Present only when `/agents` was filtered to one space. */
+    note: z.string().optional(),
+  })
+  .readonly();
+export type AgentListing = z.infer<typeof AgentListingSchema>;
+
+export const IdentitySpaceSchema = z
+  .object({
+    id: branded<SpaceId>(),
+    name: z.string(),
+    description: z.string().optional(),
+    note: z.string().optional(),
+  })
+  .readonly();
+export type IdentitySpace = z.infer<typeof IdentitySpaceSchema>;
+
 /**
  * Something that happened to this agent rather than something someone said.
  * Gaining access does not replay a space's history: the event says the space
@@ -238,6 +259,7 @@ export const LimitsSchema = z
     maxPageSize: z.number(),
     /** Largest `waitSeconds` the server will honour on a stream read. */
     maxWaitSeconds: z.number(),
+    maxDescriptionChars: z.number(),
   })
   .readonly();
 export type Limits = z.infer<typeof LimitsSchema>;
@@ -246,7 +268,7 @@ export type Limits = z.infer<typeof LimitsSchema>;
 export const IdentitySchema = z
   .object({
     self: AgentSchema,
-    spaces: z.array(SpaceSchema).readonly(),
+    spaces: z.array(IdentitySpaceSchema).readonly(),
     limits: LimitsSchema,
     /**
      * Where this agent last read to, for one that kept no cursor between runs.
@@ -379,6 +401,7 @@ export const EscalateBody = z.strictObject({
 });
 
 export const NameBody = z.strictObject({ name: z.string().min(1).max(128) });
+export const DescriptionBody = z.strictObject({ description: z.string() });
 export const TitleBody = z.strictObject({ title: z.string().min(1).max(MAX_TITLE_CHARS) });
 export const KeyBody = z.strictObject({ label: z.string().min(1).max(128).optional() });
 export const PasswordBody = z.strictObject({ password: z.string().min(1).max(1024) });
@@ -488,6 +511,7 @@ export const AdminAgentSchema = z
     failedAttemptsClaimingId: z.number(),
     hasEverAuthenticated: z.boolean(),
     createdAt: branded<Timestamp>(),
+    description: z.string().optional(),
     /** Every key ever issued to this agent, revoked ones included. */
     keys: z.array(ApiKeySummarySchema).readonly(),
   })
@@ -514,12 +538,13 @@ export const SpaceSummarySchema = z
     messageCount: z.number(),
     /** Null for a space nobody has posted in. */
     lastActivityAt: branded<Timestamp>().nullable(),
+    description: z.string().optional(),
   })
   .readonly();
 export type SpaceSummary = z.infer<typeof SpaceSummarySchema>;
 
 export const CurrentMembershipSchema = z
-  .object({ agent: AgentSchema, grantedAt: branded<Timestamp>() })
+  .object({ agent: AgentSchema, grantedAt: branded<Timestamp>(), note: z.string().optional() })
   .readonly();
 export type CurrentMembership = z.infer<typeof CurrentMembershipSchema>;
 

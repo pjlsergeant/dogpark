@@ -6,6 +6,7 @@ import type { AttachmentId, Timestamp } from '../types.js';
 import { agentStore } from './agents.js';
 import { conversationResolver, conversationStore } from './conversations.js';
 import { createContext } from './context.js';
+import { descriptionStore } from './descriptions.js';
 import { escalationStore } from './escalations.js';
 import { newId } from './ids.js';
 import { messageStore } from './messages.js';
@@ -21,7 +22,7 @@ export { RESERVED_SEQUENCE } from './text.js';
 // The two pieces of key handling the HTTP layer shares with the store.
 export { constantTimeEquals } from './hash.js';
 export { splitKey } from './ids.js';
-export { MAX_PAGE_LIMIT } from './limits.js';
+export { MAX_DESCRIPTION_CHARS, MAX_PAGE_LIMIT } from './limits.js';
 export { migrate, MIGRATIONS } from './migrate.js';
 export type { Migration, MigrateResult } from './migrate.js';
 export type { EscalationCursor, ReadLogCursor, SearchCursor } from './cursors.js';
@@ -72,7 +73,18 @@ export function openStore(options: StoreOptions): Store {
   const readLog = readLogStore(ctx);
   const escalations = escalationStore(ctx);
   const sessions = sessionStore(ctx);
-  assertDisjoint(base, agents, spaces, conversations, messages, readLog, escalations, sessions);
+  const descriptions = descriptionStore(ctx);
+  assertDisjoint(
+    base,
+    agents,
+    spaces,
+    conversations,
+    messages,
+    readLog,
+    escalations,
+    sessions,
+    descriptions,
+  );
 
   return {
     ...base,
@@ -83,6 +95,7 @@ export function openStore(options: StoreOptions): Store {
     ...readLog,
     ...escalations,
     ...sessions,
+    ...descriptions,
   };
 }
 

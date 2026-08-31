@@ -49,6 +49,12 @@ may not see reports **not found**, so error codes cannot map the fleet
 **Bootstrap.** `identity()` returns the agent's own id and name, its spaces,
 the limits it must respect, and the reserved sequence.
 
+**Orientation text.** The human may attach a description to a space or agent,
+and a note to an agent-space membership. These are append-only assertions in
+the shared sequence. Agents pull current values through `identity()` and the
+roster; they never ride message pages or the stream, and those listing reads
+remain outside the read log.
+
 **Reading.** `readStream()` returns everything visible to the agent, across
 every space, in one sequence with one cursor (ADR-0009). The agent owns the
 cursor and it is the only thing that advances, so reads are at-least-once and

@@ -29,7 +29,15 @@ export function agentRoutes(ctx: AppContext): FastifyPluginAsync {
       const lastReadCursor = ctx.store.lastReadCursor(self.id);
       const identity: Identity = {
         self: { id: self.id, displayName: self.displayName },
-        spaces: ctx.store.listSpacesForAgent(self.id),
+        spaces: ctx.store.listSpacesForAgent(self.id).map((space) => {
+          const description = ctx.store.getSpaceDescription(space.id);
+          const note = ctx.store.getMembershipNote(self.id, space.id);
+          return {
+            ...space,
+            ...(description === undefined ? {} : { description }),
+            ...(note === undefined ? {} : { note }),
+          };
+        }),
         limits: ctx.limits,
         ...(lastReadCursor === undefined ? {} : { lastReadCursor }),
         reservedSequence: ctx.store.reservedSequence,
@@ -102,10 +110,16 @@ export function agentRoutes(ctx: AppContext): FastifyPluginAsync {
     app.get('/agents', async (request) => {
       const self = requireAgent(request);
       const query = parse(AgentsQuery, request.query, 'query');
-      return ctx.store.listAgentsSharingSpaceWith(
-        self.id,
-        query.space === undefined ? undefined : asSpaceId(query.space),
-      );
+      const space = query.space === undefined ? undefined : asSpaceId(query.space);
+      return ctx.store.listAgentsSharingSpaceWith(self.id, space).map((agent) => {
+        const description = ctx.store.getAgentDescription(agent.id);
+        const note = space === undefined ? undefined : ctx.store.getMembershipNote(agent.id, space);
+        return {
+          ...agent,
+          ...(description === undefined ? {} : { description }),
+          ...(note === undefined ? {} : { note }),
+        };
+      });
     });
 
     app.post('/messages', async (request) => {

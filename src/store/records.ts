@@ -367,6 +367,12 @@ export interface Store {
     readonly agent?: AgentId | undefined;
     readonly space?: SpaceId | undefined;
   }): readonly MembershipInterval[];
+  setSpaceDescription(space: SpaceId, body: string): void;
+  getSpaceDescription(space: SpaceId): string | undefined;
+  setAgentDescription(agent: AgentId, body: string): void;
+  getAgentDescription(agent: AgentId): string | undefined;
+  setMembershipNote(agent: AgentId, space: SpaceId, body: string): void;
+  getMembershipNote(agent: AgentId, space: SpaceId): string | undefined;
 
   // Conversations
   /** Test fixtures only: production opens threads through `postMessage`. */

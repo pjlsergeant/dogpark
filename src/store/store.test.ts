@@ -167,6 +167,40 @@ describe('membership is append-only intervals', () => {
   });
 });
 
+describe('operator descriptions', () => {
+  it('appends normalized values and derives the current value, with empty meaning absent', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+
+    h.store.setSpaceDescription(space, '  A place\n\tfor work  ');
+    expect(h.store.getSpaceDescription(space)).toBe('A place for work');
+    h.store.setSpaceDescription(space, 'replacement');
+    expect(h.store.getSpaceDescription(space)).toBe('replacement');
+    h.store.setSpaceDescription(space, '   ');
+    expect(h.store.getSpaceDescription(space)).toBeUndefined();
+
+    const rows = h.store.database
+      .prepare('SELECT body FROM description WHERE kind = ? AND subject_id = ? ORDER BY seq')
+      .all('space', space) as { body: string }[];
+    expect(rows.map((row) => row.body)).toEqual(['A place for work', 'replacement', '']);
+
+    h.store.setMembershipNote(agent, space, 'specific reason');
+    expect(h.store.getMembershipNote(agent, space)).toBe('specific reason');
+  });
+
+  it('rejects overlong descriptions and notes for closed memberships', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    expectStoreError(() => h.store.setAgentDescription(agent, 'x'.repeat(1001)), 'invalid_request');
+    h.store.revokeMembership(agent, space);
+    const error = expectStoreError(
+      () => h.store.setMembershipNote(agent, space, 'too late'),
+      'invalid_request',
+    );
+    expect(error.message).toContain('open membership');
+  });
+});
+
 describe('messages are immutable', () => {
   // ADR-0004. Asserted against what a reader gets back, because a test of the
   // method names would pass just as happily beside a `reviseMessage`.

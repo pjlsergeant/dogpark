@@ -6,6 +6,8 @@ import { invalid } from './errors.js';
  * so the advertised limit is always the honoured one.
  */
 export const MAX_PAGE_LIMIT = 1000;
+/** Shared character cap for every operator-authored description and note. */
+export const MAX_DESCRIPTION_CHARS = 1000;
 
 const DEFAULT_LIMIT = 100;
 

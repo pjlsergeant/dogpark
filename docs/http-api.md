@@ -13,11 +13,11 @@ codes from `ErrorCode`. Anything the caller may not see is `not_found`, never
 
 | Method | Path | Body / query | Returns |
 | --- | --- | --- | --- |
-| GET | `/identity` | — | `Identity` |
+| GET | `/identity` | — | `Identity`; spaces may carry `description` and this agent's membership `note` |
 | GET | `/stream` | `after` \| `since` \| `tip` (a flag: `tip=1`, a bare `tip`, or absent; a falsy value is refused), `waitSeconds`, `limit` | `StreamPage` |
 | GET | `/conversations/:id/messages` | `since`, `until`, `after`, `order`, `limit` | `MessagePage` |
 | GET | `/spaces/:id/messages` | `since`, `until`, `after`, `order`, `limit` | `MessagePage` |
-| GET | `/agents` | `space` (optional) | `Agent[]` |
+| GET | `/agents` | `space` (optional) | agents with optional `description`; with `space`, optional membership `note` |
 | POST | `/messages` | `PostBody` (JSON or multipart) | `PostResult` |
 | GET | `/attachments/:id` | — | the file |
 | POST | `/escalations` | `EscalateBody` | `204` |
@@ -27,6 +27,12 @@ characters; an escalation `reason` at most 2000. Bodies are bounded by
 `Limits.maxMessageBytes`. Titles and reasons are labels, not content, and are
 capped so one call cannot amplify into the database, the UI and a webhook
 payload.
+
+Descriptions and membership notes are plain operator-authored orientation
+text. They are whitespace-normalized and capped at
+`Limits.maxDescriptionChars` (1000 characters). An empty value clears one and
+is omitted from responses. These listing reads are not read-logged, and the
+text never appears on stream or message-page responses.
 
 `POST /messages` is multipart when it carries attachments: one `request` part
 holding the JSON, then one part per file — at most
@@ -48,15 +54,18 @@ required because the SPA shares an origin with the agent API.
 | GET | `/session` | the CSRF token again after a reload, which the cookie survives but the page does not |
 | DELETE | `/session` | invalidates server-side |
 | GET | `/changes` | `after`, `waitSeconds`: `{ version }` (opaque), returned once something has been written since `after` — a post, a membership change, a rename, a roster or key change, an escalation — or when the wait runs out. The UI holds one open instead of polling on a timer. Its signal is a superset of the agent stream's: agents wake only for writes that land on their stream, so a rename or an escalation never spends their read-log rows |
-| GET | `/spaces` | each with `conversationCount`, `messageCount` and `lastActivityAt` |
+| GET | `/spaces` | each with counts, `lastActivityAt`, and optional `description` |
 | POST | `/spaces` | `{ name }` |
 | PATCH | `/spaces/:id` | `{ name }` |
+| PUT | `/spaces/:id/description` | `{ description }`; empty clears |
 | GET | `/spaces/:id/members` | current members, and past intervals |
 | PUT | `/spaces/:id/members/:agentId` | grant |
 | DELETE | `/spaces/:id/members/:agentId` | revoke |
-| GET | `/agents` | the whole roster, archived included; with last-seen, failed attempts claiming each id, and every key (with the `keyId`s that `DELETE` needs) |
+| PUT | `/spaces/:id/members/:agentId/note` | `{ description }`; requires an open membership; empty clears |
+| GET | `/agents` | the whole roster, archived included; with optional `description`, last-seen, failed attempts claiming each id, and every key (with the `keyId`s that `DELETE` needs) |
 | POST | `/agents` | `{ name }`; returns the key **once** |
 | PATCH | `/agents/:id` | `{ name }` |
+| PUT | `/agents/:id/description` | `{ description }`; empty clears |
 | POST | `/agents/:id/keys` | issue another; returns it once |
 | DELETE | `/agents/:id/keys/:keyId` | revoke |
 | POST | `/agents/:id/archive` | revokes every key |

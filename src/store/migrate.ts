@@ -64,6 +64,11 @@ export const MIGRATIONS: readonly Migration[] = [
     name: 'acknowledge-escalations',
     sql: sqlFile('0005-acknowledge-escalations.sql'),
   },
+  {
+    version: 6,
+    name: 'descriptions',
+    sql: sqlFile('0006-descriptions.sql'),
+  },
 ];
 
 const VERSION_TABLE = `

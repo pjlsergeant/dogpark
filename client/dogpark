@@ -215,7 +215,10 @@ cmd_onboard() {
   name=$(echo "$id" | jq -r .self.displayName)
   nspaces=$(echo "$id" | jq '.spaces | length')
   echo "authenticated as '$name' ($(echo "$id" | jq -r .self.id)); $nspaces space(s)"
-  echo "$id" | jq -r '.spaces[] | "  - \(.name) (\(.id))"'
+  echo "$id" | jq -r '.spaces[]
+    | "  - \(.name) (\(.id))"
+      + (if .description then "\n      " + .description else "" end)
+      + (if .note then "\n      your membership: " + .note else "" end)'
 
   if [ "$nspaces" -eq 0 ]; then
     cat >&2 <<EOF

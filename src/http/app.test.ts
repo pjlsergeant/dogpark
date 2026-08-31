@@ -207,6 +207,35 @@ describe('the HTTP surface', () => {
       expect(body.reservedSequence).toBe(RESERVED_SEQUENCE);
     });
 
+    it('serves descriptions and membership notes only on orientation endpoints', async () => {
+      h.store.setSpaceDescription(space, 'Space purpose');
+      h.store.setAgentDescription(alpha.id, 'Coordinator');
+      h.store.setAgentDescription(beta.id, 'Reviewer');
+      h.store.setMembershipNote(alpha.id, space, 'Own reason');
+      h.store.grantMembership(beta.id, space);
+      h.store.setMembershipNote(beta.id, space, 'Peer reason');
+
+      const identity = IdentitySchema.parse(
+        (await asAgent(alpha.key, { method: 'GET', url: '/api/agent/identity' })).json(),
+      );
+      expect(identity.spaces[0]).toMatchObject({
+        description: 'Space purpose',
+        note: 'Own reason',
+      });
+      expect(identity.limits.maxDescriptionChars).toBe(1000);
+
+      const peers = (
+        await asAgent(alpha.key, {
+          method: 'GET',
+          url: `/api/agent/agents?space=${space}`,
+        })
+      ).json() as { id: string; description?: string; note?: string }[];
+      expect(peers.find((peer) => peer.id === beta.id)).toMatchObject({
+        description: 'Reviewer',
+        note: 'Peer reason',
+      });
+    });
+
     it('needs no CSRF token on a bearer route', async () => {
       const response = await asAgent(alpha.key, {
         method: 'POST',
@@ -1320,6 +1349,51 @@ describe('the HTTP surface', () => {
 
   // -------------------------------------------------------------------------
   describe('the admin API', () => {
+    it('sets descriptions with session and CSRF and includes them in lists', async () => {
+      const session = await login(h);
+      const put = (url: string, description: string): Promise<LightMyRequestResponse> =>
+        h.app.inject({
+          method: 'PUT',
+          url,
+          headers: { cookie: session.cookie, 'x-csrf-token': session.csrf },
+          payload: { description },
+        });
+      expect(
+        (await put(`/api/admin/spaces/${space}/description`, 'Space purpose')).statusCode,
+      ).toBe(204);
+      expect(
+        (await put(`/api/admin/agents/${alpha.id}/description`, 'Coordinator')).statusCode,
+      ).toBe(204);
+      expect(
+        (await put(`/api/admin/spaces/${space}/members/${alpha.id}/note`, 'Why here')).statusCode,
+      ).toBe(204);
+
+      expect(
+        (
+          await h.app.inject({
+            method: 'GET',
+            url: '/api/admin/spaces',
+            headers: { cookie: session.cookie },
+          })
+        ).json()[0],
+      ).toMatchObject({ description: 'Space purpose' });
+      expect(
+        (
+          await h.app.inject({
+            method: 'GET',
+            url: '/api/admin/agents',
+            headers: { cookie: session.cookie },
+          })
+        )
+          .json()
+          .find((row: { id: string }) => row.id === alpha.id),
+      ).toMatchObject({ description: 'Coordinator' });
+
+      h.store.revokeMembership(alpha.id, space);
+      const closed = await put(`/api/admin/spaces/${space}/members/${alpha.id}/note`, 'late');
+      expect(closed.statusCode).toBe(400);
+      expect(closed.json()).toMatchObject({ code: 'invalid_request' });
+    });
     it('creates an agent and shows the key exactly once', async () => {
       const session = await login(h);
       const created = await h.app.inject({

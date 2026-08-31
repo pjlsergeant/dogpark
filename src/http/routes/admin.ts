@@ -24,6 +24,7 @@ import {
   asSpaceId,
   asTimestamp,
   ChangesQuery,
+  DescriptionBody,
   EscalationsQuery,
   HumanPostBody,
   KeyBody,
@@ -48,7 +49,7 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
   };
 
   const withKeys = (record: AgentRecord): AdminAgent =>
-    adminAgent(record, ctx.store.listKeys(record.id));
+    adminAgent(record, ctx.store.listKeys(record.id), ctx.store.getAgentDescription(record.id));
 
   return async function routes(app: FastifyInstance): Promise<void> {
     // -----------------------------------------------------------------------
@@ -113,7 +114,10 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
       // ---------------------------------------------------------------------
 
       guarded.get('/spaces', async (): Promise<readonly SpaceSummary[]> =>
-        ctx.store.listSpaceSummaries(),
+        ctx.store.listSpaceSummaries().map((space) => {
+          const description = ctx.store.getSpaceDescription(space.id);
+          return { ...space, ...(description === undefined ? {} : { description }) };
+        }),
       );
 
       /**
@@ -162,6 +166,14 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
         return space;
       });
 
+      guarded.put('/spaces/:id/description', async (request, reply) => {
+        const { id } = request.params as { id: string };
+        const { description } = parse(DescriptionBody, request.body, 'request body');
+        ctx.store.setSpaceDescription(asSpaceId(id), description);
+        ctx.writes.adminOnly();
+        return reply.code(204).send();
+      });
+
       // Titles are mutable and references are what get stored (ADR-0014), so
       // a rename moves no message and breaks no mention.
       guarded.patch('/conversations/:id', async (request) => {
@@ -193,6 +205,14 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
         return reply.code(204).send();
       });
 
+      guarded.put('/spaces/:id/members/:agentId/note', async (request, reply) => {
+        const { id, agentId } = request.params as { id: string; agentId: string };
+        const { description } = parse(DescriptionBody, request.body, 'request body');
+        ctx.store.setMembershipNote(asAgentId(agentId), asSpaceId(id), description);
+        ctx.writes.adminOnly();
+        return reply.code(204).send();
+      });
+
       // ---------------------------------------------------------------------
       // Agents and keys
       // ---------------------------------------------------------------------
@@ -219,6 +239,14 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
         const renamed = withKeys(ctx.store.renameAgent(asAgentId(id), name));
         ctx.writes.adminOnly();
         return renamed;
+      });
+
+      guarded.put('/agents/:id/description', async (request, reply) => {
+        const { id } = request.params as { id: string };
+        const { description } = parse(DescriptionBody, request.body, 'request body');
+        ctx.store.setAgentDescription(asAgentId(id), description);
+        ctx.writes.adminOnly();
+        return reply.code(204).send();
       });
 
       guarded.post('/agents/:id/keys', async (request, reply) => {
