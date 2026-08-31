@@ -11,6 +11,7 @@ import { descriptionStore } from './descriptions.js';
 import { escalationStore } from './escalations.js';
 import { newId } from './ids.js';
 import { messageStore } from './messages.js';
+import { humanReadMarkStore } from './human-read-marks.js';
 import { migrate } from './migrate.js';
 import { readLogStore } from './read-log.js';
 import type { Store, StoreOptions } from './records.js';
@@ -80,6 +81,7 @@ export function openStore(options: StoreOptions): Store {
   const escalations = escalationStore(ctx);
   const sessions = sessionStore(ctx);
   const descriptions = descriptionStore(ctx);
+  const humanReadMarks = humanReadMarkStore(ctx);
   assertDisjoint(
     base,
     agents,
@@ -91,6 +93,7 @@ export function openStore(options: StoreOptions): Store {
     sessions,
     descriptions,
     annotations,
+    humanReadMarks,
   );
 
   return {
@@ -104,6 +107,7 @@ export function openStore(options: StoreOptions): Store {
     ...sessions,
     ...descriptions,
     ...annotations,
+    ...humanReadMarks,
   };
 }
 

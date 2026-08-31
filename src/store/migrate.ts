@@ -74,6 +74,11 @@ export const MIGRATIONS: readonly Migration[] = [
     name: 'conversation-annotations',
     sql: sqlFile('0007-conversation-annotations.sql'),
   },
+  {
+    version: 8,
+    name: 'human-read-mark',
+    sql: sqlFile('0008-human-read-mark.sql'),
+  },
 ];
 
 const VERSION_TABLE = `

@@ -15,6 +15,7 @@ import {
   ChangesResponseSchema,
   ConversationSchema,
   ConversationSummarySchema,
+  HumanCatchUpPageSchema,
   EscalationSchema,
   EscalationsResponseSchema,
   IdentitySchema,
@@ -2135,5 +2136,34 @@ describe("the human's long poll and space counts", () => {
       messageCount: 0,
       lastActivityAt: null,
     });
+  });
+
+  it('lists catch-up rows and advances a human read mark', async () => {
+    const me = await human();
+    const space = (await me.post('/api/admin/spaces', { name: 'catch-up' })).json() as {
+      id: string;
+    };
+    const posted = (
+      await me.post('/api/admin/messages', {
+        target: { space: space.id, title: 'news' },
+        body: 'hello',
+      })
+    ).json() as { conversation: { id: string } };
+
+    const page = HumanCatchUpPageSchema.parse((await me.get('/api/admin/catch-up')).json());
+    expect(page.conversations[0]).toMatchObject({ title: 'news', unreadCount: 1 });
+    expect(
+      (
+        await me.send('POST', '/api/admin/read-mark', {
+          conversation: posted.conversation.id,
+          seq: page.conversations[0]!.latestActivitySeq,
+        })
+      ).statusCode,
+    ).toBe(204);
+    expect(
+      HumanCatchUpPageSchema.parse((await me.get('/api/admin/catch-up')).json()).conversations,
+    ).toEqual([]);
+    const spaces = z.array(SpaceSummarySchema).parse((await me.get('/api/admin/spaces')).json());
+    expect(spaces[0]?.unreadCount).toBe(0);
   });
 });

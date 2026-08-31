@@ -24,6 +24,8 @@ import type {
   SpaceId,
   StreamPage,
   Timestamp,
+  QueryCursor,
+  ConversationStatus,
 } from '../types.js';
 import type { EscalationCursor, ReadLogCursor, SearchCursor } from './cursors.js';
 import type { MigrateResult } from './migrate.js';
@@ -69,6 +71,25 @@ export interface SpaceSummary extends Space {
   readonly messageCount: number;
   /** When the last message in any of its threads landed. Null for a space nobody has posted in. */
   readonly lastActivityAt: Timestamp | null;
+  readonly unreadCount: number;
+}
+
+export interface HumanCatchUpConversation {
+  readonly id: ConversationId;
+  readonly space: Space;
+  readonly title: string;
+  readonly unreadCount: number;
+  readonly latestActivitySeq: number;
+  readonly latestActivityAt: Timestamp;
+  readonly lastSender: Sender;
+  readonly status: ConversationStatus;
+  readonly hasPins: boolean;
+}
+
+export interface HumanCatchUpPage {
+  readonly conversations: readonly HumanCatchUpConversation[];
+  readonly nextCursor: QueryCursor | null;
+  readonly hasMore: boolean;
 }
 
 export interface MembershipInterval {
@@ -394,6 +415,11 @@ export interface Store {
    * surface's — no call enumerates a space's conversations for an agent.
    */
   listConversationSummaries(space: SpaceId): readonly ConversationSummary[];
+  advanceHumanReadMark(conversation: ConversationId, seq: number): boolean;
+  listHumanCatchUp(options?: {
+    readonly after?: QueryCursor | undefined;
+    readonly limit?: number | undefined;
+  }): HumanCatchUpPage;
   getConversationAnnotations(conversation: ConversationId): ConversationAnnotations;
   getConversationAnnotationsAsOf(
     conversation: ConversationId,

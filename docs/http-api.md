@@ -67,7 +67,7 @@ required because the SPA shares an origin with the agent API.
 | GET | `/session` | the CSRF token again after a reload, which the cookie survives but the page does not |
 | DELETE | `/session` | invalidates server-side |
 | GET | `/changes` | `after`, `waitSeconds`: `{ version }` (opaque), returned once something has been written since `after` — a post, a membership change, a rename, a roster or key change, an escalation — or when the wait runs out. The UI holds one open instead of polling on a timer. Its signal is a superset of the agent stream's: agents wake only for writes that land on their stream, so a rename or an escalation never spends their read-log rows |
-| GET | `/spaces` | each with counts, `lastActivityAt`, and optional `description` |
+| GET | `/spaces` | each with counts, `unreadCount`, `lastActivityAt`, and optional `description` |
 | POST | `/spaces` | `{ name }` |
 | PATCH | `/spaces/:id` | `{ name }` |
 | PUT | `/spaces/:id/description` | `{ description }`; empty clears |
@@ -84,6 +84,8 @@ required because the SPA shares an origin with the agent API.
 | POST | `/agents/:id/archive` | revokes every key |
 | POST | `/agents/:id/unarchive` | issues a fresh key; returns it once |
 | GET | `/spaces/:id/conversations` | the human's thread list |
+| GET | `/catch-up` | conversations with unread messages, newest activity first; `after`, `limit` |
+| POST | `/read-mark` | `{ conversation, seq }`; advances the human's displayed-through mark, forward only |
 | PATCH | `/conversations/:id` | `{ title }`; renames a thread (ADR-0014) |
 | GET | `/conversations/:id/messages` | `order=newest` pages back from the end |
 | POST | `/conversations/:id/complete` | complete as the human; optional `{ idempotencyKey }` |
@@ -123,6 +125,13 @@ diagnose anything.
 `openedBy` (who first posted to the subject line) and `lastSender` are whole
 `Sender`s rather than names, so a thread list renders an agent's *current* name
 rather than one frozen at the time.
+
+Human read marks are mutable convenience cursors, not forensic read-log rows.
+`/catch-up` returns space and title, unread count, latest activity sequence and
+time, last speaker, completion status, and whether any current pin exists.
+Completed conversations appear only while they have unread messages. Opening a
+thread should advance its mark only after the Reader has actually displayed
+through that sequence; attempts to move a mark backward are successful no-ops.
 
 `/escalations` pages like `/reads`: a keyset cursor over `(created_at, id)`,
 `order` defaulting to `newest`; the cursor names its order and the other order

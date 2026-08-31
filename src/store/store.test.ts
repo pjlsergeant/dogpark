@@ -201,6 +201,63 @@ describe('operator descriptions', () => {
   });
 });
 
+describe('human catch-up marks', () => {
+  it('advances marks forward only and lists unread conversations newest first', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const first = post(h, agent, space, 'older', 'one');
+    h.advance(1);
+    post(h, agent, space, 'newer', 'two');
+    const older = h.store.getConversation(first.conversation) as NonNullable<
+      ReturnType<Store['getConversation']>
+    >;
+
+    expect(h.store.listHumanCatchUp({ limit: 10 }).conversations.map((row) => row.title)).toEqual([
+      'newer',
+      'older',
+    ]);
+    const olderTip = h.store
+      .listHumanCatchUp({ limit: 10 })
+      .conversations.find((row) => row.id === older.id)!.latestActivitySeq;
+    expect(h.store.advanceHumanReadMark(older.id, olderTip)).toBe(true);
+    expect(h.store.advanceHumanReadMark(older.id, olderTip - 1)).toBe(false);
+    expect(h.store.listHumanCatchUp({ limit: 10 }).conversations.map((row) => row.title)).toEqual([
+      'newer',
+    ]);
+
+    post(h, agent, space, 'older', 'three');
+    const row = h.store
+      .listHumanCatchUp({ limit: 10 })
+      .conversations.find((item) => item.id === older.id);
+    expect(row).toMatchObject({ unreadCount: 1, latestActivityAt: h.at() });
+  });
+
+  it('includes completed threads only with unread activity, reports pins, and pages', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const quiet = post(h, agent, space, 'quiet', 'done');
+    h.store.completeConversation({ kind: 'human' }, quiet.conversation);
+    const quietTip = h.store.listHumanCatchUp().conversations[0]!.latestActivitySeq;
+    h.store.advanceHumanReadMark(quiet.conversation, quietTip);
+
+    const active = post(h, agent, space, 'active', 'read me');
+    h.store.pinMessage({ kind: 'human' }, active.conversation, active.id);
+    h.store.completeConversation({ kind: 'human' }, active.conversation);
+    const first = h.store.listHumanCatchUp({ limit: 1 });
+    expect(first.conversations).toHaveLength(1);
+    expect(first.conversations[0]).toMatchObject({
+      title: 'active',
+      unreadCount: 1,
+      hasPins: true,
+      status: 'complete',
+    });
+    expect(first.hasMore).toBe(false);
+    expect(h.store.listSpaceSummaries()).toEqual([
+      expect.objectContaining({ id: space, unreadCount: 1 }),
+    ]);
+  });
+});
+
 describe('conversation annotations', () => {
   it('derives sticky status and one movable pin per actor, including as-of state', () => {
     const h = harness();

@@ -26,7 +26,13 @@ export const WithoutDescriptions: Story = {
     api: fixtureApi({
       listSpaces: () =>
         Promise.resolve([
-          { ...fixture.sandbox, conversationCount: 0, messageCount: 0, lastActivityAt: null },
+          {
+            ...fixture.sandbox,
+            conversationCount: 0,
+            messageCount: 0,
+            unreadCount: 0,
+            lastActivityAt: null,
+          },
         ]),
     }),
   },

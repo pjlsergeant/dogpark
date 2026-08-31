@@ -53,9 +53,10 @@ export const spaces: readonly SpaceSummary[] = [
     description: 'Production delivery work and operational coordination.',
     conversationCount: 3,
     messageCount: 12,
+    unreadCount: 4,
     lastActivityAt: at('2026-08-30T16:41:00.000Z'),
   },
-  { ...sandbox, conversationCount: 0, messageCount: 0, lastActivityAt: null },
+  { ...sandbox, conversationCount: 0, messageCount: 0, unreadCount: 0, lastActivityAt: null },
 ];
 
 export const rotation: Conversation = {

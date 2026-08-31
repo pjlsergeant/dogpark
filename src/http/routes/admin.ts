@@ -1,6 +1,13 @@
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { AgentRecord } from '../../store/index.js';
-import type { AdminAgent, Agent, AttachmentId, MessageId, SpaceSummary } from '../../types.js';
+import type {
+  AdminAgent,
+  Agent,
+  AttachmentId,
+  MessageId,
+  QueryCursor,
+  SpaceSummary,
+} from '../../types.js';
 import { authenticateHuman, csrfTokenFor, requireSession, SESSION_COOKIE } from '../auth.js';
 import type { AppContext } from '../context.js';
 import { notFound, unauthenticated } from '../errors.js';
@@ -25,11 +32,13 @@ import {
   asSpaceId,
   asTimestamp,
   ChangesQuery,
+  CatchUpQuery,
   DescriptionBody,
   EscalationsQuery,
   HumanPostBody,
   HumanAnnotationActionBody,
   HumanPinBody,
+  HumanReadMarkBody,
   KeyBody,
   NameBody,
   parse,
@@ -302,6 +311,24 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
       guarded.get('/spaces/:id/conversations', async (request) => {
         const { id } = request.params as { id: string };
         return ctx.store.listConversationSummaries(asSpaceId(id)).map(conversationRow);
+      });
+
+      guarded.get('/catch-up', async (request) => {
+        const query = parse(CatchUpQuery, request.query, 'query');
+        return ctx.store.listHumanCatchUp({
+          ...(query.after === undefined ? {} : { after: query.after as QueryCursor }),
+          limit: ctx.pageLimit(query.limit),
+        });
+      });
+
+      guarded.post('/read-mark', async (request, reply) => {
+        const body = parse(HumanReadMarkBody, request.body, 'request body');
+        const changed = ctx.store.advanceHumanReadMark(
+          asConversationId(body.conversation),
+          body.seq,
+        );
+        if (changed) ctx.writes.adminOnly();
+        return reply.code(204).send();
       });
 
       guarded.get('/conversations/:id/messages', async (request) => {

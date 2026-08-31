@@ -432,6 +432,10 @@ export const DescriptionBody = z.strictObject({ description: z.string() });
 export const TitleBody = z.strictObject({ title: z.string().min(1).max(MAX_TITLE_CHARS) });
 export const KeyBody = z.strictObject({ label: z.string().min(1).max(128).optional() });
 export const PasswordBody = z.strictObject({ password: z.string().min(1).max(1024) });
+export const HumanReadMarkBody = z.strictObject({
+  conversation: Id,
+  seq: z.number().int().nonnegative(),
+});
 
 export const StreamQuery = z.strictObject({
   after: z.string().min(1).optional(),
@@ -468,6 +472,10 @@ export const ReadLogQuery = z.strictObject({
 
 export const EscalationsQuery = z.strictObject({
   order: z.enum(['oldest', 'newest']).optional(),
+  after: z.string().optional(),
+  limit: z.coerce.number().int().positive().optional(),
+});
+export const CatchUpQuery = z.strictObject({
   after: z.string().optional(),
   limit: z.coerce.number().int().positive().optional(),
 });
@@ -570,9 +578,34 @@ export const SpaceSummarySchema = z
     /** Null for a space nobody has posted in. */
     lastActivityAt: branded<Timestamp>().nullable(),
     description: z.string().optional(),
+    unreadCount: z.number(),
   })
   .readonly();
 export type SpaceSummary = z.infer<typeof SpaceSummarySchema>;
+
+export const HumanCatchUpConversationSchema = z
+  .object({
+    id: branded<ConversationId>(),
+    space: SpaceSchema,
+    title: z.string(),
+    unreadCount: z.number(),
+    latestActivitySeq: z.number(),
+    latestActivityAt: branded<Timestamp>(),
+    lastSender: SenderSchema,
+    status: ConversationStatusSchema,
+    hasPins: z.boolean(),
+  })
+  .readonly();
+export type HumanCatchUpConversation = z.infer<typeof HumanCatchUpConversationSchema>;
+
+export const HumanCatchUpPageSchema = z
+  .object({
+    conversations: z.array(HumanCatchUpConversationSchema).readonly(),
+    nextCursor: branded<QueryCursor>().nullable(),
+    hasMore: z.boolean(),
+  })
+  .readonly();
+export type HumanCatchUpPage = z.infer<typeof HumanCatchUpPageSchema>;
 
 export const CurrentMembershipSchema = z
   .object({ agent: AgentSchema, grantedAt: branded<Timestamp>(), note: z.string().optional() })

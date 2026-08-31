@@ -37,6 +37,19 @@ export interface SpaceSummaryRow extends SpaceRow {
   conversation_count: number;
   message_count: number;
   last_sent_at: string | null;
+  unread_count: number;
+}
+
+export interface HumanCatchUpRow extends ConversationRow {
+  space_name: string;
+  unread_count: number;
+  latest_seq: number;
+  latest_at: string;
+  last_sender_kind: string;
+  last_sender_agent_id: string | null;
+  last_sender_name: string | null;
+  status: string;
+  has_pins: number;
 }
 
 export interface AgentNameRow {
@@ -293,7 +306,10 @@ export function prepareStatements(db: Db) {
         '       (SELECT COUNT(*) FROM message m JOIN conversation c ON c.id = m.conversation_id ' +
         '         WHERE c.space_id = s.id) AS message_count, ' +
         '       (SELECT MAX(m.sent_at) FROM message m JOIN conversation c ON c.id = m.conversation_id ' +
-        '         WHERE c.space_id = s.id) AS last_sent_at ' +
+        '         WHERE c.space_id = s.id) AS last_sent_at, ' +
+        '       (SELECT COUNT(*) FROM message m JOIN conversation c ON c.id = m.conversation_id ' +
+        '         LEFT JOIN human_read_mark r ON r.conversation_id = c.id ' +
+        '        WHERE c.space_id = s.id AND m.seq > COALESCE(r.seq, 0)) AS unread_count ' +
         '  FROM space s ORDER BY s.name',
     ),
 
@@ -546,6 +562,26 @@ export function prepareStatements(db: Db) {
         ' WHERE c.space_id = @space ' +
         ' GROUP BY c.id ' +
         ' ORDER BY last_seq DESC, c.created_at DESC, c.id',
+    ),
+    advanceHumanReadMark: prepare<{ conversation: string; seq: number; at: string }, unknown>(
+      'INSERT INTO human_read_mark (conversation_id, seq, updated_at) VALUES (@conversation, @seq, @at) ' +
+        'ON CONFLICT (conversation_id) DO UPDATE SET seq = excluded.seq, updated_at = excluded.updated_at ' +
+        'WHERE excluded.seq > human_read_mark.seq',
+    ),
+    humanCatchUp: prepare<{ after: number | null; limit: number }, HumanCatchUpRow>(
+      'WITH tips AS (' +
+        ' SELECT c.id, MAX(m.seq) AS latest_seq FROM conversation c JOIN message m ON m.conversation_id = c.id GROUP BY c.id' +
+        ') SELECT c.id, c.space_id, c.title, s.name AS space_name, ' +
+        ' (SELECT COUNT(*) FROM message unread WHERE unread.conversation_id = c.id AND unread.seq > COALESCE(r.seq, 0)) AS unread_count, ' +
+        ' tips.latest_seq, m.sent_at AS latest_at, m.sender_kind AS last_sender_kind, ' +
+        ' m.sender_agent_id AS last_sender_agent_id, a.display_name AS last_sender_name, ' +
+        " COALESCE((SELECT CASE ca.kind WHEN 'completed' THEN 'complete' ELSE 'open' END FROM conversation_annotation ca WHERE ca.conversation_id = c.id AND ca.kind IN ('completed','reopened') ORDER BY ca.seq DESC LIMIT 1), 'open') AS status, " +
+        " EXISTS(SELECT 1 FROM conversation_annotation pin WHERE pin.conversation_id = c.id AND pin.kind = 'pinned' AND NOT EXISTS (SELECT 1 FROM conversation_annotation later WHERE later.conversation_id = c.id AND later.actor_kind = pin.actor_kind AND later.actor_agent_id IS pin.actor_agent_id AND later.kind IN ('pinned','unpinned') AND later.seq > pin.seq)) AS has_pins " +
+        ' FROM tips JOIN conversation c ON c.id = tips.id JOIN space s ON s.id = c.space_id ' +
+        ' JOIN message m ON m.seq = tips.latest_seq LEFT JOIN agent a ON a.id = m.sender_agent_id ' +
+        ' LEFT JOIN human_read_mark r ON r.conversation_id = c.id ' +
+        ' WHERE tips.latest_seq > COALESCE(r.seq, 0) AND (@after IS NULL OR tips.latest_seq < @after) ' +
+        ' ORDER BY tips.latest_seq DESC LIMIT @limit',
     ),
     // Relevance is bm25 `rank` (lower is better), with seq breaking ties so
     // the order is total and a keyset cursor can continue it. FTS5 allows
