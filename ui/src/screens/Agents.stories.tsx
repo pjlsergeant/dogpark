@@ -18,7 +18,7 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-export const Roster: Story = {};
+export const Roster: Story = { parameters: { expectText: ['dp1', 'dp4'] } };
 
 /** One open: its facts, every key it has ever had, and what can be done to it. */
 export const Managing: Story = {

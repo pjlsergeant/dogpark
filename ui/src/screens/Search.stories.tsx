@@ -17,7 +17,11 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-export const Results: Story = {};
+export const Results: Story = {
+  parameters: {
+    expectText: ['Staging is on the new credentials and the old key is revoked.'],
+  },
+};
 
 /** Limited to one space, ordered newest first. */
 export const NarrowedToASpace: Story = {

@@ -16,7 +16,7 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-export const EveryAgent: Story = {};
+export const EveryAgent: Story = { parameters: { expectText: ['dp1'] } };
 
 /** One agent, which is how a question about one agent is actually asked. */
 export const OneAgent: Story = {

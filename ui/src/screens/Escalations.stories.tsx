@@ -18,7 +18,11 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 /** All three delivery states at once, and the badge counting the undelivered. */
-export const Inbox: Story = {};
+export const Inbox: Story = {
+  parameters: {
+    expectText: ['The rollback SQL in this thread would drop a role that production also uses.'],
+  },
+};
 
 /** Everything was delivered, so there is nothing to chase. */
 export const AllDelivered: Story = {

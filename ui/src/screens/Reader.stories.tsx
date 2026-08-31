@@ -23,6 +23,9 @@ export const PickASpace: Story = {};
 /** A thread being wrapped up, over two days. */
 export const AThread: Story = {
   args: { space: fixture.delivery.id, conversation: fixture.rotation.id },
+  // The pete line lives only in the message pane: a reader stuck on the
+  // thread list cannot satisfy it.
+  parameters: { expectText: [fixture.rotation.title, 'Do not touch production'] },
 };
 
 /** Arriving from a search result, landing on the message it named. */

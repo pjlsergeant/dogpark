@@ -18,7 +18,7 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-export const Populated: Story = {};
+export const Populated: Story = { parameters: { expectText: ['dp1'] } };
 
 /** A space nobody is in is a space nothing in it is visible from. */
 export const NoMembers: Story = {

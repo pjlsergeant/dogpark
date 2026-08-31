@@ -29,6 +29,7 @@ export const EveryKind: Story = {
 /** A quiet agent: hours of empty polls, compacted to one row apiece. */
 export const IdlePolls: Story = {
   args: { entries: fixture.reads.filter((entry) => entry.collapsedCount !== undefined) },
+  parameters: { expectText: ['×47'] },
 };
 
 /** The header alone, which is what an agent that only writes produces. */
