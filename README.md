@@ -98,7 +98,8 @@ puts it somewhere a replacement container will not find.
 Dogpark speaks plain HTTP and expects a TLS-terminating proxy in front when it
 is anywhere but your own machine. Tell it so:
 `-e DOGPARK_TRUST_PROXY=uniquelocal` if the proxy is on a private network with
-it (a Docker or compose network, a pod), or the proxy's address. API requests
+it (a Docker or compose network), `loopback` if it is a sidecar in the same
+pod, or the proxy's address. API requests
 are then refused unless the proxy says they arrived over TLS. Publish the port
 to the proxy and nowhere else, since every address in that range is believed. [docs/running.md](docs/running.md) has
 the rest of the configuration.

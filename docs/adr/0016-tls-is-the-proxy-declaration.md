@@ -26,8 +26,8 @@ declaration. The default is every IPv4 interface (`0.0.0.0`), because that is
 the only default that reaches a container: a loopback-only default would leave
 an unpublished port unreachable even from another container on the same
 network. Keeping plaintext off the host's network is then the port publish
-(`-p 127.0.0.1:`) or, for a source build with no publish,
-`DOGPARK_HOST=127.0.0.1`. Neither hides a container from the others on its
+(`-p 127.0.0.1:`) or, for a source build with no publish, starting it with
+`DOGPARK_HOST=127.0.0.1` — the default is every IPv4 interface either way. Neither hides a container from the others on its
 Docker network; that is the network's own business.
 
 A missing header is refused, not waved through. Whatever can reach the bound
@@ -65,5 +65,5 @@ to bind loopback only, which made the container image unreachable —
 `docker run -p 8080:8080 -e DOGPARK_TRUST_PROXY=no` started and could not be
 reached from the host, and another container on the same network could not
 reach an unpublished port either. The bind address is now `DOGPARK_HOST`
-(default `0.0.0.0`); a source build with no proxy sets `DOGPARK_HOST=127.0.0.1`
-to keep plaintext off the network. The three things `no` means are unchanged._
+(default `0.0.0.0`); the default does not change for a source build, so one with no proxy should
+be started with `DOGPARK_HOST=127.0.0.1` to keep plaintext off the network. The three things `no` means are unchanged._

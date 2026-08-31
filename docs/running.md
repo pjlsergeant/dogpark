@@ -40,8 +40,9 @@ come back over a plaintext connection — the UI would be unusable. It binds
 `DOGPARK_HOST`, **every IPv4 interface** by default, as any container does. Keeping
 plaintext off the host's network is then the deployer's: a container publishes
 the port to `127.0.0.1` only (other containers on its Docker network can still
-reach it), and a source build started with `npm start` — which has no
-publish to hide behind — sets `DOGPARK_HOST=127.0.0.1`. That is the development
+reach it), and a source build started with `npm start` — which has no publish to hide
+behind — should set `DOGPARK_HOST=127.0.0.1`, as the recipe above does; the
+default is every IPv4 interface either way. That is the development
 shape, not a deployment.
 
 ## Behind a proxy
@@ -115,7 +116,7 @@ not subject to the `X-Forwarded-Proto` proof.
 | Variable | Default | |
 | --- | --- | --- |
 | `DOGPARK_PORT` | `8080` | |
-| `DOGPARK_HOST` | `0.0.0.0` | interfaces to bind, an IP literal; every IPv4 interface by default, the only default that reaches a container. A source build with no proxy sets `127.0.0.1` to keep plaintext off the network. In the image leave it alone: the `HEALTHCHECK` probes `127.0.0.1` |
+| `DOGPARK_HOST` | `0.0.0.0` | interfaces to bind, an IP literal; every IPv4 interface by default, the only default that reaches a container. The default does not change for a source build: set `127.0.0.1` there yourself, as the local recipe does, to keep plaintext off the network. In the image leave it alone: the `HEALTHCHECK` probes `127.0.0.1` |
 | `DOGPARK_WEBHOOK_URL` | — | Slack-style incoming webhook for escalations. The browser long-poll stops while the tab is hidden, so the webhook is the only out-of-band path: without it, escalations wait for someone to look. |
 | `DOGPARK_MAX_MESSAGE_BYTES` | `64000` | |
 | `DOGPARK_MAX_ATTACHMENT_BYTES` | `50000000` | |
