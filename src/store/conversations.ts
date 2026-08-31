@@ -52,6 +52,7 @@ export function conversationStore(
   Store,
   | 'resolveOrCreateConversation'
   | 'getConversation'
+  | 'listConversationsForExport'
   | 'renameConversation'
   | 'listConversationSummaries'
 > {
@@ -114,6 +115,11 @@ export function conversationStore(
     getConversation(conversation) {
       const row = st.getConversation.get({ id: conversation });
       return row === undefined ? undefined : toConversation(row);
+    },
+
+    listConversationsForExport(space) {
+      requireSpaceRow(space);
+      return st.conversationsForExport.all({ space }).map(toConversation);
     },
 
     renameConversation(conversation, title) {

@@ -489,6 +489,36 @@ export const SearchQuery = z.strictObject({
 });
 
 // ---------------------------------------------------------------------------
+// Human export protocol. Kept together so concurrent protocol additions can
+// merge without interleaving fields in existing request/response schemas.
+// ---------------------------------------------------------------------------
+
+export const ExportQuery = z.strictObject({
+  format: z.enum(['markdown', 'json', 'bundle']),
+});
+export type ExportFormat = z.infer<typeof ExportQuery>['format'];
+
+export const ExportSpaceSchema = z
+  .object({ id: branded<SpaceId>(), name: z.string(), description: z.string().optional() })
+  .readonly();
+export const ConversationExportSchema = z
+  .object({
+    conversation: ConversationSchema,
+    annotations: ConversationAnnotationsSchema,
+    messages: z.array(MessageSchema).readonly(),
+  })
+  .readonly();
+export type ConversationExport = z.infer<typeof ConversationExportSchema>;
+
+export const ExportDocumentSchema = z
+  .object({
+    space: ExportSpaceSchema,
+    conversations: z.array(ConversationExportSchema).readonly(),
+  })
+  .readonly();
+export type ExportDocument = z.infer<typeof ExportDocumentSchema>;
+
+// ---------------------------------------------------------------------------
 // Agent-surface response bodies
 // ---------------------------------------------------------------------------
 

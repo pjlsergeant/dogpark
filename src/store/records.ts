@@ -408,6 +408,8 @@ export interface Store {
     createdBy?: Reader | undefined,
   ): Conversation;
   getConversation(conversation: ConversationId): Conversation | undefined;
+  /** Whole-space export order: the sequence of each conversation's first message. */
+  listConversationsForExport(space: SpaceId): readonly Conversation[];
   renameConversation(conversation: ConversationId, title: string): Conversation;
   /**
    * The thread list: every conversation in a space with its message count,
