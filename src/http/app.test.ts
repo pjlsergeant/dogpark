@@ -16,6 +16,7 @@ import {
   ConversationSchema,
   ConversationSummarySchema,
   HumanCatchUpPageSchema,
+  ExportDocumentSchema,
   EscalationSchema,
   EscalationsResponseSchema,
   IdentitySchema,
@@ -1382,7 +1383,8 @@ describe('the HTTP surface', () => {
         });
         expect(json.statusCode).toBe(200);
         expect(json.headers['content-disposition']).toContain('.json');
-        expect(json.json()).toMatchObject({
+        expect(json.headers['content-type']).toContain('application/json');
+        expect(ExportDocumentSchema.parse(json.json())).toMatchObject({
           space: { id: space, name: 'money-and-life' },
           conversations: [
             {

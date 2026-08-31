@@ -417,7 +417,7 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
           return reply.type('text/markdown; charset=utf-8').send(exportMarkdown(ctx, source));
         }
         if (format === 'json') {
-          return reply.type('application/json').send(await exportJson(ctx, source));
+          return reply.type('application/json').send(exportJson(ctx, source));
         }
         return reply.type('application/zip').send(exportBundle(ctx, source, root));
       };

@@ -427,9 +427,14 @@ export interface Store {
     readonly limit?: number | undefined;
   }): HumanCatchUpPage;
   getConversationAnnotations(conversation: ConversationId): ConversationAnnotations;
+  /**
+   * Annotation state as a past read could have seen it: at a recorded tip
+   * seq, or — for a legacy row that recorded none — strictly before the same
+   * millisecond ceiling the message reconstruction falls back to.
+   */
   getConversationAnnotationsAsOf(
     conversation: ConversationId,
-    tip: number,
+    cutoff: { readonly tip: number } | { readonly before: Timestamp },
     labelSeq?: number,
   ): ConversationAnnotations;
   completeConversation(

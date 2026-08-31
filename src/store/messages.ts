@@ -457,24 +457,23 @@ export function messageStore(
       // that same millisecond is included. A recorded 0 is not that row — it
       // is a read of an empty stream, and its exact ceiling is 0.
       let plan;
+      let cutoff: { tip: number } | { before: Timestamp };
       if (position.tip_seq !== null) {
         plan = planQuery(range, limit, position.tip_seq);
+        cutoff = { tip: position.tip_seq };
       } else {
         const ceiling = new Date(Date.parse(position.read_at) + 1).toISOString() as Timestamp;
         const asked =
           range?.until === undefined ? undefined : normalizeTimestamp('until', range.until);
         const until = asked === undefined || asked > ceiling ? ceiling : asked;
         plan = planQuery({ ...range, until }, limit);
+        cutoff = { before: ceiling };
       }
       return pageMessages(
         conversationRows(conversation, plan),
         plan,
         newRenderCache(position.label_seq),
-        annotations.getConversationAnnotationsAsOf(
-          conversation,
-          position.tip_seq ?? Number.MAX_SAFE_INTEGER,
-          position.label_seq,
-        ),
+        annotations.getConversationAnnotationsAsOf(conversation, cutoff, position.label_seq),
       );
     },
   );

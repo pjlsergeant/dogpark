@@ -37,10 +37,17 @@ export function annotationStore(
   | 'unpinConversation'
 > {
   const { db, st, now, nextSeq, humanDisplayName, isCurrentMember } = ctx;
-  const rows = db.prepare<{ conversation: string; tip: number | null }, AnnotationRow>(
+  // Two cutoffs, never both: a tip seq for a read that recorded one, or the
+  // clock for a legacy row (`before` is the exclusive millisecond ceiling the
+  // message reconstruction uses, so the two views agree on the same instant).
+  const rows = db.prepare<
+    { conversation: string; tip: number | null; before: string | null },
+    AnnotationRow
+  >(
     'SELECT seq, kind, actor_kind, actor_agent_id, message_id ' +
       'FROM conversation_annotation WHERE conversation_id = @conversation ' +
-      'AND (@tip IS NULL OR seq <= @tip) ORDER BY seq',
+      'AND (@tip IS NULL OR seq <= @tip) AND (@before IS NULL OR created_at < @before) ' +
+      'ORDER BY seq',
   );
   const insert = db.prepare(
     'INSERT INTO conversation_annotation ' +
@@ -50,13 +57,13 @@ export function annotationStore(
 
   function state(
     conversation: ConversationId,
-    tip: number | null,
+    cutoff: { tip: number | null; before: string | null },
     labelSeq?: number,
   ): ConversationAnnotations {
     if (st.getConversation.get({ id: conversation }) === undefined) throw notFound('conversation');
     let status: 'open' | 'complete' = 'open';
     const pins = new Map<string, AnnotationRow>();
-    for (const row of rows.all({ conversation, tip })) {
+    for (const row of rows.all({ conversation, ...cutoff })) {
       if (row.kind === 'completed') status = 'complete';
       else if (row.kind === 'reopened') status = 'open';
       else {
@@ -127,7 +134,7 @@ export function annotationStore(
         }
       }
 
-      const before = state(conversation, null);
+      const before = state(conversation, { tip: null, before: null });
       const ownPin = before.pins.find((pin) =>
         actor.kind === 'human'
           ? pin.actor.kind === 'human'
@@ -170,10 +177,14 @@ export function annotationStore(
 
   return {
     getConversationAnnotations(conversation) {
-      return state(conversation, null);
+      return state(conversation, { tip: null, before: null });
     },
-    getConversationAnnotationsAsOf(conversation, tip, labelSeq) {
-      return state(conversation, tip, labelSeq);
+    getConversationAnnotationsAsOf(conversation, cutoff, labelSeq) {
+      return state(
+        conversation,
+        'tip' in cutoff ? { tip: cutoff.tip, before: null } : { tip: null, before: cutoff.before },
+        labelSeq,
+      );
     },
     completeConversation(actor, conversation, key) {
       return actionTx(actor, conversation, 'completed', undefined, key);

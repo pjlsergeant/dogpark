@@ -12,6 +12,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type {
   ApiError,
+  ConversationAnnotations,
   ConversationId,
   ConversationSummary,
   MessageId,
@@ -306,10 +307,26 @@ function Thread({
   /** Counts full loads, so the scroll effect can tell one from an append. */
   const [arrivals, setArrivals] = useState(0);
   const [unreadTarget, setUnreadTarget] = useState<MessageId | undefined>(undefined);
+  /**
+   * Annotations arrive from three places — a full load, the newest-page poll,
+   * and an action's own response — and nothing orders their arrival. An
+   * action's response is the newest truth the moment it lands, so it bumps
+   * this epoch; a load or poll that began under an older epoch applies its
+   * annotations to nothing. Polls also carry a serial, so two polls that both
+   * began under the current epoch cannot land in the wrong order.
+   */
+  const annotationEpoch = useRef(0);
+  const pollSerial = useRef(0);
+  const pollApplied = useRef(0);
+  const acceptFromAction = (next: ConversationAnnotations): void => {
+    annotationEpoch.current += 1;
+    setAnnotations(next);
+  };
   const marked = useRef<MessageId | undefined>(undefined);
 
   const load = useCallback(async () => {
     const mine = (generation.current += 1);
+    const epoch = annotationEpoch.current;
     reloading.current = true;
     setBusy(true);
     setError(null);
@@ -325,7 +342,9 @@ function Thread({
         setUnreadTarget(result.target);
       }
       setLoaded(thread);
-      if (thread.annotations !== undefined) setAnnotations(thread.annotations);
+      if (thread.annotations !== undefined && epoch === annotationEpoch.current) {
+        setAnnotations(thread.annotations);
+      }
       setArrivals((n) => n + 1);
     } catch (cause) {
       if (mine === generation.current) setError(toApiError(cause));
@@ -380,11 +399,20 @@ function Thread({
    */
   const pollNewest = useCallback(async () => {
     const mine = generation.current;
+    const epoch = annotationEpoch.current;
+    const serial = (pollSerial.current += 1);
     try {
       const page = await api.readConversation(conversation, { order: 'newest' });
       if (mine !== generation.current) return;
       const newest = [...page.messages].reverse();
-      if (page.annotations !== undefined) setAnnotations(page.annotations);
+      if (
+        page.annotations !== undefined &&
+        epoch === annotationEpoch.current &&
+        serial > pollApplied.current
+      ) {
+        pollApplied.current = serial;
+        setAnnotations(page.annotations);
+      }
       setLoaded((current) => {
         if (current === null) return current;
         const held = new Set(current.messages.map((m) => m.id));
@@ -487,9 +515,9 @@ function Thread({
     return byMessage;
   }, [annotations]);
   const humanPin = annotations.pins.find((pin) => pin.actor.kind === 'human')?.message;
-  const updateAnnotations = async (action: () => Promise<typeof annotations>) => {
+  const updateAnnotations = async (action: () => Promise<ConversationAnnotations>) => {
     try {
-      setAnnotations(await action());
+      acceptFromAction(await action());
       onPosted();
     } catch (cause) {
       setError(toApiError(cause));
@@ -676,7 +704,7 @@ function Thread({
             void load();
             onPosted();
           }}
-          onAnnotations={setAnnotations}
+          onAnnotations={acceptFromAction}
         />
       )}
     </>

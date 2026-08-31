@@ -277,7 +277,7 @@ describe('conversation annotations', () => {
       status: 'complete',
       pins: [{ message: second.id, actor: { kind: 'agent', id: agent } }],
     });
-    expect(h.store.getConversationAnnotationsAsOf(conversation, tip.seq)).toMatchObject({
+    expect(h.store.getConversationAnnotationsAsOf(conversation, { tip: tip.seq })).toMatchObject({
       status: 'complete',
       pins: [{ message: first.id, actor: { kind: 'agent', id: agent } }],
     });
@@ -1365,6 +1365,15 @@ describe('a read is bounded by the stream tip it recorded', () => {
     expect(
       h.store.readConversationAsOf(read, first.conversation)?.messages.map((m) => m.body),
     ).toEqual(['before the read', 'after the read']);
+
+    // Annotations fall back to the same clock: a completion a millisecond
+    // later is after the read, and the legacy view must not show it.
+    h.advance(1);
+    h.store.completeConversation({ kind: 'agent', id: agent }, first.conversation);
+    expect(h.store.getConversationAnnotations(first.conversation).status).toBe('complete');
+    expect(h.store.readConversationAsOf(read, first.conversation)?.annotations?.status).toBe(
+      'open',
+    );
   });
 });
 

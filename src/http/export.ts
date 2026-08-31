@@ -6,13 +6,11 @@ import type {
   Conversation,
   ConversationExport,
   ConversationId,
-  ExportDocument,
   Message,
   QueryCursor,
   Space,
   SpaceId,
 } from '../types.js';
-import { ExportDocumentSchema } from '../types.js';
 import type { AppContext } from './context.js';
 import { notFound } from './errors.js';
 
@@ -146,10 +144,14 @@ async function* jsonChunks(ctx: AppContext, source: ExportSource): AsyncGenerato
   yield ']}';
 }
 
-export async function exportJson(ctx: AppContext, source: ExportSource): Promise<ExportDocument> {
-  const text: string[] = [];
-  for await (const chunk of jsonChunks(ctx, source)) text.push(chunk);
-  return ExportDocumentSchema.parse(JSON.parse(text.join('')));
+/**
+ * Streamed like the other two formats: a whole space is never held in memory
+ * twice over. The document's shape is `ExportDocumentSchema`, which the route
+ * test parses the response against, so the schema stays load-bearing without
+ * a parse on the hot path.
+ */
+export function exportJson(ctx: AppContext, source: ExportSource): Readable {
+  return Readable.from(jsonChunks(ctx, source));
 }
 
 export function exportMarkdown(ctx: AppContext, source: ExportSource): Readable {

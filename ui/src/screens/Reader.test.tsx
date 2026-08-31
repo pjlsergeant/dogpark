@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { afterEach, beforeAll, describe, expect, test, vi } from 'vitest';
-import type { ConversationAnnotations } from '../api/index.js';
+import type { ConversationAnnotations, MessagePage } from '../api/index.js';
 import { AppProvider } from '../app/api-context.js';
+import { ChangesProvider } from '../app/changes.js';
 import { ToastHost } from '../components/Toasts.js';
 import { fixtureApi } from '../stories/harness.js';
 import * as fixture from '../stories/fixtures.js';
@@ -73,6 +74,58 @@ describe('Reader catch-up marks', () => {
     renderCatchUpThread({ advanceReadMark }, fixture.conversationRead.id);
     await screen.findAllByText(/Do not touch production/);
     expect(advanceReadMark).not.toHaveBeenCalled();
+  });
+});
+
+describe('Reader poll ordering', () => {
+  test('a poll that began before an action cannot revert what the action returned', async () => {
+    const open: MessagePage = {
+      messages: [...fixture.rotationMessages].reverse(),
+      nextCursor: 'qc_end' as MessagePage['nextCursor'],
+      hasMore: false,
+      annotations: { status: 'open', pins: [] },
+    };
+    let resolvePoll: ((page: MessagePage) => void) | undefined;
+    let reads = 0;
+    let changes = 0;
+    const api = fixtureApi({
+      readConversation: () => {
+        reads += 1;
+        return reads === 1
+          ? Promise.resolve(open)
+          : new Promise<MessagePage>((resolve) => {
+              resolvePoll = resolve;
+            });
+      },
+      completeConversation: vi.fn(() =>
+        Promise.resolve({ status: 'complete' as const, pins: [] as const }),
+      ),
+      // One change wakes the poll; then the long poll hangs like the real one.
+      awaitChanges: () => {
+        changes += 1;
+        return changes === 1 ? Promise.resolve('v1') : new Promise<string>(() => {});
+      },
+    });
+    render(
+      <AppProvider value={{ api, session: { displayName: 'pete' }, logout: () => {} }}>
+        <ChangesProvider api={api}>
+          <ToastHost>
+            <ReaderScreen space={fixture.delivery.id} conversation={fixture.rotation.id} />
+          </ToastHost>
+        </ChangesProvider>
+      </AppProvider>,
+    );
+    await waitFor(() => expect(reads).toBe(2));
+    await userEvent.click(await screen.findByRole('button', { name: 'Complete' }));
+    await waitFor(() => expect(api.completeConversation).toHaveBeenCalledTimes(1));
+    await screen.findByRole('button', { name: 'Reopen' });
+
+    // The stale poll lands after the action: the thread stays complete.
+    await act(async () => {
+      resolvePoll?.(open);
+      await Promise.resolve();
+    });
+    expect(screen.getByRole('button', { name: 'Reopen' })).toBeTruthy();
   });
 });
 
