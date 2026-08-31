@@ -12,3 +12,6 @@ dist/
 # bodies, and is 2.6GB of it.
 core
 core.*
+
+# Agent worktrees and session state
+.claude/
