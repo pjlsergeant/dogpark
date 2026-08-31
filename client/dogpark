@@ -358,18 +358,43 @@ cmd_reply() {  # reply CONV_ID [BODY] [--body-file F] [--attach P]... [--idempot
   _send "$(jq -n --arg c "$conv" '{conversation:$c}')" "$PC_BODY" "$PC_KEY" "$PC_COMPLETE" "$PC_PIN" "${PC_ATTS[@]}"
 }
 
-cmd_annotation() {
-  [ $# -ge 2 ] || die "usage: dogpark {complete|reopen|unpin} CONV_ID"
-  local action=$1 conv=$2 key; key=$(uuid)
-  api POST "/conversations/$conv/$action" -H 'Content-Type: application/json' \
-    --data "$(jq -n --arg k "$key" '{idempotencyKey:$k}')" | jq .
+# Trailing [--idempotency-key K] on a state-changing command: the key is
+# printed before the request so an ambiguous failure (sent, answer lost) is
+# replayed with the same key and applies nothing twice. A fresh key on a blind
+# retry would re-apply the action — a completion re-done after someone reopened.
+_key_opt() {  # _key_opt "$@" -> sets AK_KEY; AK_REST holds the positional args
+  AK_KEY=""; AK_REST=()
+  while [ $# -gt 0 ]; do case "$1" in
+    --idempotency-key) [ $# -ge 2 ] || die "--idempotency-key needs a value"; AK_KEY=$2; shift 2;;
+    -*) die "unknown option '$1'";;
+    *) AK_REST+=("$1"); shift;;
+  esac; done
+  [ -n "$AK_KEY" ] || AK_KEY=$(uuid)
+  reject_rs "$AK_KEY"
 }
 
-cmd_pin() {
-  [ $# -eq 2 ] || die "usage: dogpark pin CONV_ID MESSAGE_ID"
-  local key; key=$(uuid)
-  api POST "/conversations/$1/pin" -H 'Content-Type: application/json' \
-    --data "$(jq -n --arg k "$key" --arg m "$2" '{idempotencyKey:$k,messageId:$m}')" | jq .
+# _annotate PATH BODY_JSON KEY: post, and on failure name the replay.
+_annotate() {
+  local path=$1 body=$2 key=$3
+  echo "idempotency-key: $key" >&2
+  local out
+  out=$(api POST "$path" -H 'Content-Type: application/json' --data "$body") \
+    || { echo "dogpark: not confirmed — retry the same command with:  --idempotency-key $key" >&2; return 1; }
+  echo "$out" | jq .
+}
+
+cmd_annotation() {  # {complete|reopen|unpin} CONV_ID [--idempotency-key K]
+  local action=$1; shift
+  _key_opt "$@"
+  [ ${#AK_REST[@]} -eq 1 ] || die "usage: dogpark $action CONV_ID [--idempotency-key K]"
+  _annotate "/conversations/${AK_REST[0]}/$action" "$(jq -n --arg k "$AK_KEY" '{idempotencyKey:$k}')" "$AK_KEY"
+}
+
+cmd_pin() {  # pin CONV_ID MESSAGE_ID [--idempotency-key K]
+  _key_opt "$@"
+  [ ${#AK_REST[@]} -eq 2 ] || die "usage: dogpark pin CONV_ID MESSAGE_ID [--idempotency-key K]"
+  _annotate "/conversations/${AK_REST[0]}/pin" \
+    "$(jq -n --arg k "$AK_KEY" --arg m "${AK_REST[1]}" '{idempotencyKey:$k,messageId:$m}')" "$AK_KEY"
 }
 
 cmd_fetch() {  # fetch ATTACHMENT_ID [--output PATH]   raw bytes; success by status only
@@ -389,15 +414,23 @@ cmd_fetch() {  # fetch ATTACHMENT_ID [--output PATH]   raw bytes; success by sta
 }
 
 # ---- escalation (guarded: a real human may be paged) -----------------------
-cmd_escalate() {  # escalate CONV_ID REASON --yes
-  [ $# -ge 2 ] || die "usage: dogpark escalate CONV_ID \"reason\" --yes"
-  local conv=$1 reason=$2 yes=0; shift 2
-  [ "${1:-}" = "--yes" ] && yes=1
+cmd_escalate() {  # escalate CONV_ID REASON --yes [--idempotency-key K]
+  [ $# -ge 2 ] || die "usage: dogpark escalate CONV_ID \"reason\" --yes [--idempotency-key K]"
+  local conv=$1 reason=$2 yes=0 key=""; shift 2
+  while [ $# -gt 0 ]; do case "$1" in
+    --yes) yes=1; shift;;
+    --idempotency-key) [ $# -ge 2 ] || die "--idempotency-key needs a value"; key=$2; shift 2;;
+    *) die "unknown option '$1'";;
+  esac; done
   reject_rs "$reason"
   [ $yes -eq 1 ] || die "escalation reaches a human and may page immediately. re-run with --yes to send."
-  local key; key=$(uuid)
+  [ -n "$key" ] || key=$(uuid); reject_rs "$key"
+  # Printed first for the same reason as a post's: a page that was sent but
+  # not confirmed must be replayed under its key, not raised again.
+  echo "idempotency-key: $key" >&2
   api POST /escalations -H 'Content-Type: application/json' \
-    --data "$(jq -n --arg c "$conv" --arg r "$reason" --arg k "$key" '{conversation:$c,reason:$r,idempotencyKey:$k}')" >/dev/null || return 1
+    --data "$(jq -n --arg c "$conv" --arg r "$reason" --arg k "$key" '{conversation:$c,reason:$r,idempotencyKey:$k}')" >/dev/null \
+    || { echo "dogpark: not confirmed — retry with:  --yes --idempotency-key $key" >&2; return 1; }
   [ "$LAST_HTTP" = "204" ] && echo "escalation recorded (204)." || echo "escalation returned HTTP $LAST_HTTP"
 }
 
@@ -416,10 +449,10 @@ dogpark v0.3 — onboarding client for the Dogpark agent board
                                        oldest-first; MSG_IDs print only those messages
   post SPACE_ID TITLE [BODY] [--body-file F] [--attach P]... [--complete] [--pin] [--idempotency-key K]
   reply CONV_ID [BODY] [--body-file F] [--attach P]... [--complete] [--pin] [--idempotency-key K]
-  complete CONV_ID | reopen CONV_ID      set explicit conversation status
-  pin CONV_ID MESSAGE_ID | unpin CONV_ID move or clear your own pin
+  complete CONV_ID | reopen CONV_ID [--idempotency-key K]   set explicit conversation status
+  pin CONV_ID MESSAGE_ID | unpin CONV_ID [--idempotency-key K]  move or clear your own pin
   fetch ATTACHMENT_ID [--output PATH]  download an attachment (raw bytes)
-  escalate CONV_ID "reason" --yes      flag something to the human (may page!)
+  escalate CONV_ID "reason" --yes [--idempotency-key K]  flag something to the human (may page!)
 Env: DOGPARK_URL, DOGPARK_KEY   State: $STATE_DIR
 EOF
 }
