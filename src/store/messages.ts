@@ -37,6 +37,7 @@ import type {
   PostMessageResult,
   Reader,
   ReadStreamArgs,
+  SnapshotPosition,
   Store,
 } from './records.js';
 import { createRenderer } from './render.js';
@@ -87,7 +88,7 @@ export function messageStore(
   | 'searchMessages'
   | 'getAttachment'
   | 'readConversationAsOf'
-  | 'currentTip'
+  | 'snapshotPosition'
 > {
   const { db, st, now, nextSeq, toConversation, requireAgentRow, isCurrentMember } = ctx;
   const { newRenderCache, mentionName, toMessage, toEvent } = createRenderer(ctx);
@@ -485,7 +486,7 @@ export function messageStore(
       conversation: ConversationId,
       range: Range | undefined,
       limit: number | undefined,
-      ceiling: number | undefined,
+      snapshot: SnapshotPosition | undefined,
     ): MessagePage => {
       const row = st.getConversation.get({ id: conversation });
       if (row === undefined) throw notFound('conversation');
@@ -493,10 +494,23 @@ export function messageStore(
       // history here, including what the stream skipped.
       requireReadAccess(reader, row.space_id as SpaceId, 'conversation');
 
-      const plan = planQuery(range, limit, ceiling);
+      // A snapshot read renders under the labels in force at its position too,
+      // so a rename landing mid-export cannot split one document against itself.
+      const plan = planQuery(range, limit, snapshot?.tip);
       const page = {
-        ...pageMessages(conversationRows(conversation, plan), plan),
-        annotations: annotations.getConversationAnnotations(conversation),
+        ...pageMessages(
+          conversationRows(conversation, plan),
+          plan,
+          newRenderCache(snapshot?.labelSeq),
+        ),
+        annotations:
+          snapshot === undefined
+            ? annotations.getConversationAnnotations(conversation)
+            : annotations.getConversationAnnotationsAsOf(
+                conversation,
+                { tip: snapshot.tip },
+                snapshot.labelSeq,
+              ),
       };
       if (reader.kind === 'agent') {
         recordRead(
@@ -555,11 +569,11 @@ export function messageStore(
       return readStreamTx(agent, args ?? {});
     },
 
-    readConversation(reader, conversation, range, limit, ceiling) {
-      return readConversationTx(reader, conversation, range, limit, ceiling);
+    readConversation(reader, conversation, range, limit, snapshot) {
+      return readConversationTx(reader, conversation, range, limit, snapshot);
     },
-    currentTip() {
-      return tip();
+    snapshotPosition() {
+      return { tip: tip(), labelSeq: st.currentLabelSeq.get()?.seq ?? 0 };
     },
 
     readSpace(reader, space, range, limit) {

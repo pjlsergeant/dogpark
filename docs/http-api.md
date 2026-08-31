@@ -120,8 +120,10 @@ rows. Both endpoints require `format=markdown`, `format=json`, or
 
 Markdown contains current conversation and space labels, the space description
 at the start of a space export, current completion and pin state (including pin
-actor names), and sender/timestamp message blocks. Mention references render at
-the agents' current names (ADR-0014). Every attachment remains listed as
+actor names), and sender/timestamp message blocks. An export is one snapshot
+at the stream tip it began under: message rendering — sender names, mentions
+(ADR-0014), pin actors — is as it stood at that tip, so a rename or a post
+landing mid-export cannot split one document against itself. Every attachment remains listed as
 metadata. Missing bytes are called out instead of failing the export.
 
 JSON is an `ExportDocument`: the protocol `Space`, `Conversation`,

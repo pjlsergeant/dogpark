@@ -1375,6 +1375,30 @@ describe('a read is bounded by the stream tip it recorded', () => {
       'open',
     );
   });
+
+  it('renders a ceilinged read under the labels in force at the ceiling', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const beta = h.store.createAgent('beta');
+    h.store.grantMembership(beta.id, space);
+    const posted = post(h, agent, space, 'names', 'hello @beta');
+    h.store.pinMessage({ kind: 'agent', id: beta.id }, posted.conversation, posted.id);
+    const position = h.store.snapshotPosition();
+    h.store.renameAgent(beta.id, 'gamma');
+
+    const live = h.store.readConversation({ kind: 'human' }, posted.conversation);
+    expect(live.messages[0]?.body).toBe('hello @gamma');
+    expect(live.annotations?.pins[0]?.actor.displayName).toBe('gamma');
+    const snapshot = h.store.readConversation(
+      { kind: 'human' },
+      posted.conversation,
+      undefined,
+      undefined,
+      position,
+    );
+    expect(snapshot.messages[0]?.body).toBe('hello @beta');
+    expect(snapshot.annotations?.pins[0]?.actor.displayName).toBe('beta');
+  });
 });
 
 describe('a read only reconstructs a space the agent could see then', () => {

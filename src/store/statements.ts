@@ -239,6 +239,11 @@ export function prepareStatements(db: Db) {
       'SELECT label FROM label_history WHERE kind = @kind AND subject_id = @subject ' +
         'AND seq > @labelSeq ORDER BY seq ASC LIMIT 1',
     ),
+    // The label position a read-log row records (see recordRead), for a
+    // snapshot taken outside the read log.
+    currentLabelSeq: prepare<[], { seq: number }>(
+      'SELECT COALESCE(MAX(seq), 0) AS seq FROM label_history',
+    ),
     // `tip_seq` is null when the row never recorded a tip (0004); a stored 0 is
     // a real one — the read ran before any sequence was allocated.
     readLabelSeq: prepare<

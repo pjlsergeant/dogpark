@@ -347,6 +347,16 @@ export interface StoreOptions {
   readonly now?: (() => Date) | undefined;
 }
 
+/**
+ * A position in the store's two orderings: the stream tip (an inclusive bound
+ * on messages and annotations) and the label-history position that renders
+ * labels as they stood then. The same pair a read-log row records.
+ */
+export interface SnapshotPosition {
+  readonly tip: number;
+  readonly labelSeq: number;
+}
+
 export interface Store {
   close(): void;
   /** Escape hatch for the HTTP layer's health check. Not for queries. */
@@ -469,20 +479,22 @@ export interface Store {
    * means "more in the direction you are travelling" — older ones, backwards.
    */
   /**
-   * `ceiling` is an inclusive seq bound for a caller taking a snapshot — the
-   * export reads every conversation under the tip it saw when it began, so
-   * three walks over one thread agree. The clock could not say that: two
-   * writes share a millisecond, and `until` is exclusive.
+   * `snapshot` pins a read to a position taken earlier — the export reads
+   * every conversation under the tip it saw when it began, so three walks
+   * over one thread agree. The clock could not say that: two writes share a
+   * millisecond, and `until` is exclusive. Labels render as they stood at the
+   * position's label seq, and the page's annotations are as of it, exactly as
+   * a read-log row reconstructs.
    */
   readConversation(
     reader: Reader,
     conversation: ConversationId,
     range?: Range | undefined,
     limit?: number | undefined,
-    ceiling?: number | undefined,
+    snapshot?: SnapshotPosition | undefined,
   ): MessagePage;
-  /** The largest seq allocated so far: the stream's tip, as a snapshot bound. */
-  currentTip(): number;
+  /** Where the store stands now, for a caller about to take a snapshot read. */
+  snapshotPosition(): SnapshotPosition;
   readSpace(
     reader: Reader,
     space: SpaceId,
