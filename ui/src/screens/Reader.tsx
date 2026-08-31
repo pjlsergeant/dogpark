@@ -430,8 +430,17 @@ function Thread({
         if (added.length === 0) return current;
         // No overlap means more than a page arrived and appending would leave
         // a hole — unless nothing was held, in which case the newest page is
-        // simply the thread's first page and there is nothing to be behind.
-        if (held.size > 0 && added.length === newest.length) return current;
+        // simply the thread's first page, paging metadata included: what lies
+        // behind it is reachable the ordinary way.
+        if (held.size === 0) {
+          return {
+            ...current,
+            messages: newest,
+            nextCursor: page.nextCursor,
+            hasMore: page.hasMore,
+          };
+        }
+        if (added.length === newest.length) return current;
         return { ...current, messages: [...current.messages, ...added] };
       });
     } catch {

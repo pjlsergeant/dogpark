@@ -137,7 +137,13 @@ describe('Reader poll on an empty thread', () => {
       hasMore: false,
       annotations: { status: 'open', pins: [] },
     };
-    const full: MessagePage = { ...empty, messages: [...fixture.rotationMessages].reverse() };
+    // The page that arrives is a full one with history behind it.
+    const full: MessagePage = {
+      ...empty,
+      messages: [...fixture.rotationMessages].reverse(),
+      nextCursor: 'qc_older' as MessagePage['nextCursor'],
+      hasMore: true,
+    };
     let reads = 0;
     let changes = 0;
     const api = fixtureApi({
@@ -158,6 +164,7 @@ describe('Reader poll on an empty thread', () => {
     );
     await waitFor(() => expect(reads).toBe(2));
     await screen.findAllByText(/Checks green/);
+    expect(screen.getByRole('button', { name: 'Load older messages' })).toBeTruthy();
   });
 });
 
