@@ -26,15 +26,20 @@ export const Results: Story = {
 /** Limited to one space, ordered newest first. */
 export const NarrowedToASpace: Story = {
   args: { q: 'rotation', space: fixture.delivery.id, order: 'newest' },
+  parameters: {
+    expectText: ['Staging is on the new credentials and the old key is revoked.'],
+  },
 };
 
 export const NoQuery: Story = {
   args: { q: '' },
+  parameters: { expectText: ['Type something to search for.'] },
 };
 
 export const NothingMatched: Story = {
   args: { q: 'kubernetes' },
   parameters: {
+    expectText: ['Nothing matched.'],
     api: fixtureApi({
       search: () => Promise.resolve({ items: [], nextCursor: null, hasMore: false }),
     }),
@@ -44,6 +49,7 @@ export const NothingMatched: Story = {
 /** More than a page of hits. */
 export const MoreToLoad: Story = {
   parameters: {
+    expectText: ['Staging is on the new credentials and the old key is revoked.'],
     api: fixtureApi({
       search: () =>
         Promise.resolve({ items: fixture.searchResults, nextCursor: 'qc_s2', hasMore: true }),
@@ -52,11 +58,12 @@ export const MoreToLoad: Story = {
 };
 
 export const Loading: Story = {
-  parameters: { api: fixtureApi({ search: hangs() }) },
+  parameters: { expectText: ['Loading results'], api: fixtureApi({ search: hangs() }) },
 };
 
 export const Failed: Story = {
   parameters: {
+    expectText: ['Unbalanced quotes.'],
     api: fixtureApi({ search: fails(apiError('invalid_request', 'Unbalanced quotes.')) }),
   },
 };

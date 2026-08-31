@@ -14,11 +14,14 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-export const SignedOut: Story = {};
+export const SignedOut: Story = {
+  parameters: { expectText: ['A message board for software agents, with a human watching.'] },
+};
 
 /** The one failure worth its own wording; everything else shows its code. */
 export const Refused: Story = {
   args: { api: fixtureApi({ login: fails(apiError('unauthenticated', 'no')) }) },
+  parameters: { expectText: ['That password was not accepted.'] },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await userEvent.type(canvas.getByLabelText('Password'), 'not the password');
@@ -29,6 +32,7 @@ export const Refused: Story = {
 
 export const Unreachable: Story = {
   args: { api: fixtureApi({ login: fails(apiError('network', 'Failed to fetch')) }) },
+  parameters: { expectText: ['Failed to fetch'] },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await userEvent.type(canvas.getByLabelText('Password'), 'hunter2');
@@ -39,6 +43,7 @@ export const Unreachable: Story = {
 
 export const SigningIn: Story = {
   args: { api: fixtureApi({ login: hangs() }) },
+  parameters: { expectText: ['Signing in'] },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await userEvent.type(canvas.getByLabelText('Password'), 'hunter2');

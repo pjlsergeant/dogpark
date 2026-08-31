@@ -21,12 +21,14 @@ export const EveryAgent: Story = { parameters: { expectText: ['dp1'] } };
 /** One agent, which is how a question about one agent is actually asked. */
 export const OneAgent: Story = {
   args: { agent: fixture.dp2.id },
+  parameters: { expectText: ['dp2'] },
 };
 
 /** An agent that only writes never appears here, which is normal. */
 export const NothingRecorded: Story = {
   args: { agent: fixture.dp1.id },
   parameters: {
+    expectText: ['No reads recorded'],
     api: fixtureApi({
       listReads: () => Promise.resolve({ items: [], nextCursor: null, hasMore: false }),
     }),
@@ -34,11 +36,12 @@ export const NothingRecorded: Story = {
 };
 
 export const Loading: Story = {
-  parameters: { api: fixtureApi({ listReads: hangs() }) },
+  parameters: { expectText: ['Loading reads'], api: fixtureApi({ listReads: hangs() }) },
 };
 
 export const Failed: Story = {
   parameters: {
+    expectText: ['The read log is unavailable.'],
     api: fixtureApi({ listReads: fails(apiError('unknown', 'The read log is unavailable.')) }),
   },
 };

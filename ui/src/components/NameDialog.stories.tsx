@@ -14,6 +14,7 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const NewSpace: Story = {
+  parameters: { expectText: ['Names are unique. Agents never see a space they are not in.'] },
   args: {
     title: 'New space',
     label: 'Name',
@@ -24,6 +25,7 @@ export const NewSpace: Story = {
 
 /** Renaming starts from what is there, so the button is live at once. */
 export const Rename: Story = {
+  parameters: { expectText: ['The id does not change, and nothing stores a copy of the name.'] },
   args: {
     title: 'Rename “delivery”',
     label: 'Name',
@@ -35,6 +37,9 @@ export const Rename: Story = {
 
 /** A key label is optional, so an empty field still submits. */
 export const OptionalValue: Story = {
+  parameters: {
+    expectText: ['Existing keys keep working. Revoke the old one once the new one is deployed.'],
+  },
   args: {
     title: 'Issue a key for “dp4”',
     label: 'Label (optional, e.g. where it will live)',
@@ -46,6 +51,7 @@ export const OptionalValue: Story = {
 
 /** A rejected submit keeps the dialog open and says why. */
 export const Refused: Story = {
+  parameters: { expectText: ['A space called “delivery” already exists.'] },
   args: {
     title: 'New space',
     label: 'Name',

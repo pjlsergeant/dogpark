@@ -32,10 +32,13 @@ function Raise(): ReactNode {
 
 export const Quiet: Story = {
   args: { children: <Raise /> },
+  // Nothing has been raised yet, so only the triggers are on screen.
+  parameters: { expectText: ['Something worked'] },
 };
 
 export const Confirmation: Story = {
   args: { children: <Raise /> },
+  parameters: { expectText: ['Renamed.'] },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await userEvent.click(canvas.getByRole('button', { name: 'Something worked' }));
@@ -46,6 +49,7 @@ export const Confirmation: Story = {
 /** A failure stays on screen more than twice as long as a confirmation. */
 export const Failure: Story = {
   args: { children: <Raise /> },
+  parameters: { expectText: ['rate_limited — 40 requests a minute. Retry after 12s.'] },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await userEvent.click(canvas.getByRole('button', { name: 'Something did not' }));

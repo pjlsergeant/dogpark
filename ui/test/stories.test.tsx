@@ -4,10 +4,15 @@
  * The look book is only worth having if it still stands up, and a story that
  * throws is a component that throws. This says nothing about how anything
  * looks — that is what the browser is for — only that each state named in a
- * story is a state the component can actually reach. A story that names the
- * text it should show (`parameters: { expectText }`) is additionally held to
- * showing it, which is what separates "rendered the data" from "rendered a
- * spinner forever".
+ * story is a state the component can actually reach.
+ *
+ * Non-empty HTML is the floor every story clears. On top of it, every story
+ * owes a word on its own text: either it names the string that proves its data
+ * rendered (`parameters: { expectText }`, a string or a list of them) and is
+ * held to showing it, or it declares it has none (`expectText: null`) for a
+ * state that is genuinely text-free. Silence — neither one — is a failure, so
+ * a new story cannot quietly settle for "React emitted a character": it has to
+ * say what separates "rendered the data" from "rendered a spinner forever".
  */
 import { describe, expect, test } from 'vitest';
 import { act, render } from '@testing-library/react';
@@ -50,8 +55,29 @@ for (const [path, module] of Object.entries(modules)) {
         await act(async () => {});
         if (Story.play !== undefined) await Story.play({ canvasElement: container });
         expect(container.innerHTML.trim()).not.toBe('');
-        const expected = Story.parameters['expectText'] as string | readonly string[] | undefined;
-        for (const text of typeof expected === 'string' ? [expected] : (expected ?? [])) {
+        const expected = Story.parameters['expectText'] as
+          string | readonly string[] | null | undefined;
+        // Every story either names the text that proves its data rendered or
+        // declares it has none. Silence is not an option: a bare story asserts
+        // only that React emitted a character, which the innerHTML floor above
+        // already covers.
+        if (expected === undefined) {
+          throw new Error(
+            `Story "${path.replace('../src/', '')} > ${name}" must set parameters.expectText: ` +
+              `name the text that proves your data rendered, or declare ` +
+              `\`expectText: null\` for a state with none.`,
+          );
+        }
+        const texts = typeof expected === 'string' ? [expected] : (expected ?? []);
+        if (expected !== null) {
+          // A non-null expectText is a promise to name real text: no empty
+          // string, no empty list, no blank entries dressed up as an assertion.
+          expect(
+            Array.isArray(expected) ? expected.length : (expected as string).length,
+          ).toBeGreaterThan(0);
+          for (const text of texts) expect(text.trim()).not.toBe('');
+        }
+        for (const text of texts) {
           expect(container.textContent).toContain(text);
         }
       });

@@ -23,16 +23,20 @@ const sendButton = (canvasElement: HTMLElement): HTMLButtonElement =>
 /** In a thread: a body is the whole requirement. */
 export const InAThread: Story = {
   args: { conversation: fixture.rotation.id },
+  parameters: { expectText: ['Send'] },
   play: ({ canvasElement }) => {
     expect(sendButton(canvasElement).disabled).toBe(true);
   },
 };
 
 /** A new thread needs a subject line as well, so Send waits on both. */
-export const NewThread: Story = {};
+export const NewThread: Story = { parameters: { expectText: ['Start thread'] } };
 
 export const Written: Story = {
   args: { conversation: fixture.rotation.id },
+  // The draft lives in the textarea's value, not the DOM text, so what proves
+  // this state is the live Send button rather than the words typed into it.
+  parameters: { expectText: ['Send'] },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await userEvent.type(canvas.getByLabelText('Message'), 'Checks green. Closing this one out.');
@@ -43,6 +47,7 @@ export const Written: Story = {
 /** The preview, which is the same renderer the thread uses. */
 export const Previewing: Story = {
   args: { conversation: fixture.rotation.id },
+  parameters: { expectText: ['replica reconnected'] },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await userEvent.type(
@@ -59,6 +64,7 @@ export const Previewing: Story = {
  */
 export const ControlCharacter: Story = {
   args: { conversation: fixture.rotation.id },
+  parameters: { expectText: ['This text contains a control character.'] },
   play: ({ canvasElement }) => {
     const body = within(canvasElement).getByLabelText('Message');
     fireEvent.change(body, { target: { value: 'the log said \u0007 and then stopped' } });
@@ -70,6 +76,7 @@ export const ControlCharacter: Story = {
 export const PostFailed: Story = {
   args: { conversation: fixture.rotation.id },
   parameters: {
+    expectText: ['Message exceeds 64 kB.'],
     api: fixtureApi({
       post: () => Promise.reject(apiError('too_large', 'Message exceeds 64 kB.')),
     }),

@@ -30,6 +30,7 @@ export const Inbox: Story = {
  */
 export const NoWebhook: Story = {
   parameters: {
+    expectText: ['The rollback SQL in this thread would drop a role that production also uses.'],
     api: fixtureApi({
       listEscalations: () =>
         Promise.resolve({
@@ -47,6 +48,7 @@ export const NoWebhook: Story = {
 /** Everything was delivered, so there is nothing to chase. */
 export const AllDelivered: Story = {
   parameters: {
+    expectText: ['The rollback SQL in this thread would drop a role that production also uses.'],
     api: fixtureApi({
       listEscalations: () =>
         Promise.resolve({
@@ -63,6 +65,7 @@ export const AllDelivered: Story = {
 
 export const Quiet: Story = {
   parameters: {
+    expectText: ['Nothing has been escalated.'],
     api: fixtureApi({
       listEscalations: () =>
         Promise.resolve({
@@ -80,6 +83,7 @@ export const Quiet: Story = {
 /** More than one page of them, which is what a bad week looks like. */
 export const Backlog: Story = {
   parameters: {
+    expectText: ['The rollback SQL in this thread would drop a role that production also uses.'],
     api: fixtureApi({
       listEscalations: () =>
         Promise.resolve({
@@ -95,11 +99,15 @@ export const Backlog: Story = {
 };
 
 export const Loading: Story = {
-  parameters: { api: fixtureApi({ listEscalations: hangs() }) },
+  parameters: {
+    expectText: ['Loading escalations'],
+    api: fixtureApi({ listEscalations: hangs() }),
+  },
 };
 
 export const Failed: Story = {
   parameters: {
+    expectText: ['The server did not answer.'],
     api: fixtureApi({ listEscalations: fails(apiError('unknown', 'The server did not answer.')) }),
   },
 };

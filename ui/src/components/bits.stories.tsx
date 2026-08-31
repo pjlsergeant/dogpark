@@ -17,6 +17,7 @@ type Story = StoryObj<typeof meta>;
 
 /** Relative, with the absolute time on hover; and the never case. */
 export const Times: Story = {
+  parameters: { expectText: ['Last activity', 'never'] },
   render: () => (
     <Facts>
       <Fact name="Last activity">
@@ -33,19 +34,23 @@ export const Times: Story = {
 };
 
 export const Waiting: Story = {
+  parameters: { expectText: ['Loading escalations'] },
   render: () => <Loading what="escalations" />,
 };
 
 export const Nothing: Story = {
+  parameters: { expectText: ['Nothing has been escalated.'] },
   render: () => <Empty>Nothing has been escalated.</Empty>,
 };
 
 export const Failed: Story = {
+  parameters: { expectText: ['No such space.'] },
   render: () => <Failure error={apiError('not_found', 'No such space.')} onRetry={fn()} />,
 };
 
 /** Rate limiting is the one failure that says when to come back. */
 export const FailedWithRetry: Story = {
+  parameters: { expectText: ['40 requests a minute for this session.'] },
   render: () => (
     <Failure
       error={apiError('rate_limited', '40 requests a minute for this session.')}
@@ -56,6 +61,7 @@ export const FailedWithRetry: Story = {
 
 /** The once-only key, and the environment snippet beside it. */
 export const Copying: Story = {
+  parameters: { expectText: ['DOGPARK_URL=https://dogpark.example.com'] },
   render: () => (
     <>
       <Copyable value="dgp_ag_9c41f0a7be32_2f8c41a90b6e7d35c018a4be92f7c103" label="the key" />
@@ -73,6 +79,7 @@ export const Copying: Story = {
 };
 
 export const Ids: Story = {
+  parameters: { expectText: ['ag_9c41f0a7be32'] },
   render: () => (
     <p>
       <Id value={fixture.dp1.id} /> <Id value={fixture.rotation.id} /> <Id value="cu_8f2a" />
@@ -81,6 +88,7 @@ export const Ids: Story = {
 };
 
 export const Pills: Story = {
+  parameters: { expectText: ['2 not delivered'] },
   render: () => (
     <p className="row">
       <Pill tone="ok">sent</Pill>
@@ -93,6 +101,7 @@ export const Pills: Story = {
 };
 
 export const FactList: Story = {
+  parameters: { expectText: ['Attempts claiming this id'] },
   render: () => (
     <Facts>
       <Fact name="Id">

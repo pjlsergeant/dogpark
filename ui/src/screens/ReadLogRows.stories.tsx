@@ -20,6 +20,7 @@ type Story = StoryObj<typeof meta>;
 /** Every kind at once: a span, a collapsed run, a jump, and the three queries. */
 export const EveryKind: Story = {
   args: { entries: fixture.reads },
+  parameters: { expectText: ['×47'] },
   play: ({ canvasElement }) => {
     expect(canvasElement.querySelectorAll('.jump')).toHaveLength(1);
     expect(canvasElement.textContent).toContain('×47');
@@ -35,4 +36,6 @@ export const IdlePolls: Story = {
 /** The header alone, which is what an agent that only writes produces. */
 export const NoRows: Story = {
   args: { entries: [] },
+  // No rows, so the column header is the whole of what there is to show.
+  parameters: { expectText: ['Cursor returned'] },
 };
