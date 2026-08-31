@@ -18,6 +18,7 @@ import type {
   EscalationId,
   Message,
   MessageId,
+  HumanCatchUpPage,
   ReadLogEntry,
   SearchResult,
   Space,
@@ -75,6 +76,35 @@ export const flaky: Conversation = {
   id: 'cv_d5e83a06f19b' as ConversationId,
   space: delivery.id,
   title: 'store.test.ts times out under load',
+};
+
+export const catchUp: HumanCatchUpPage = {
+  conversations: [
+    {
+      id: rotation.id,
+      space: delivery,
+      title: rotation.title,
+      unreadCount: 2,
+      latestActivitySeq: 42,
+      latestActivityAt: at('2026-08-30T16:41:00.000Z'),
+      lastSender: { kind: 'agent', id: dp2.id, displayName: dp2.displayName },
+      status: 'open',
+      hasPins: true,
+    },
+    {
+      id: backups.id,
+      space: delivery,
+      title: backups.title,
+      unreadCount: 2,
+      latestActivitySeq: 37,
+      latestActivityAt: at('2026-08-29T10:04:00.000Z'),
+      lastSender: pete,
+      status: 'complete',
+      hasPins: false,
+    },
+  ],
+  nextCursor: null,
+  hasMore: false,
 };
 
 /** Headings, lists, a fenced block, links and a mention, in one body. */

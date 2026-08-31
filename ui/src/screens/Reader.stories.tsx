@@ -25,7 +25,7 @@ export const AThread: Story = {
   args: { space: fixture.delivery.id, conversation: fixture.rotation.id },
   // The pete line lives only in the message pane: a reader stuck on the
   // thread list cannot satisfy it.
-  parameters: { expectText: [fixture.rotation.title, 'Do not touch production'] },
+  parameters: { expectText: [fixture.rotation.title, 'Do not touch production', 'Export'] },
 };
 
 /** Pins from several actors converge on the wrap-up and remain individually attributed. */

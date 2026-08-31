@@ -79,6 +79,8 @@ export function fixtureApi(overrides: Partial<DogparkAdminApi> = {}): DogparkAdm
 
     listConversations: (space: SpaceId) =>
       Promise.resolve(space === fixture.delivery.id ? fixture.conversations : []),
+    listCatchUp: () => Promise.resolve(fixture.catchUp),
+    advanceReadMark: () => Promise.resolve(),
     readConversation: (id: ConversationId, query) => {
       const messages = fixture.messagesByConversation.get(id) ?? [];
       return Promise.resolve(
@@ -127,6 +129,7 @@ export function fixtureApi(overrides: Partial<DogparkAdminApi> = {}): DogparkAdm
       Promise.resolve({ items: fixture.searchResults, nextCursor: null, hasMore: false }),
 
     attachmentHref: (id) => `/api/admin/attachments/${id}`,
+    exportUrl: (kind, id, format) => `/api/admin/${kind}s/${id}/export?format=${format}`,
   };
   return { ...base, ...overrides };
 }

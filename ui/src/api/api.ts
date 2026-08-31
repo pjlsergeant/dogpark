@@ -18,6 +18,7 @@ import type {
   EscalationPage,
   HumanPostRequest,
   HumanPostResult,
+  HumanCatchUpPage,
   IssuedKey,
   MessagePage,
   MessageId,
@@ -31,6 +32,8 @@ import type {
   SpaceSummary,
   SpaceId,
   SpaceMembers,
+  ExportFormat,
+  ExportKind,
 } from './types.js';
 export interface ConversationQuery {
   readonly after?: string | undefined;
@@ -88,6 +91,8 @@ export interface DogparkAdminApi {
   // Reading ---------------------------------------------------------------
   listConversations(space: SpaceId): Promise<readonly ConversationSummary[]>;
   readConversation(id: ConversationId, query?: ConversationQuery): Promise<MessagePage>;
+  listCatchUp(after?: string | undefined): Promise<HumanCatchUpPage>;
+  advanceReadMark(conversation: ConversationId, seq: number): Promise<void>;
   renameConversation(id: ConversationId, title: string): Promise<Conversation>;
   post(request: HumanPostRequest): Promise<HumanPostResult>;
   completeConversation(id: ConversationId): Promise<ConversationAnnotations>;
@@ -108,4 +113,5 @@ export interface DogparkAdminApi {
    * content: the server answers with `Content-Disposition: attachment`.
    */
   attachmentHref(id: AttachmentId): string;
+  exportUrl(kind: ExportKind, id: string, format: ExportFormat): string;
 }

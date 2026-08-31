@@ -27,6 +27,8 @@ import { MessageView } from '../components/MessageView.js';
 import { Composer } from '../components/Composer.js';
 import { NameDialog } from '../components/NameDialog.js';
 import { loadThread, olderPage } from './thread-pages.js';
+import { loadFirstUnread } from './thread-pages.js';
+import { ExportMenu } from '../components/ExportMenu.js';
 import type { Loaded } from './thread-pages.js';
 
 /**
@@ -41,11 +43,15 @@ export function ReaderScreen({
   conversation,
   message,
   asOf,
+  unreadCount,
+  latestActivitySeq,
 }: {
   space?: SpaceId | undefined;
   conversation?: ConversationId | undefined;
   message?: MessageId | undefined;
   asOf?: string | undefined;
+  unreadCount?: number | undefined;
+  latestActivitySeq?: number | undefined;
 }): ReactNode {
   const api = useApi();
   const spaces = useAsync(() => api.listSpaces(), [api]);
@@ -84,6 +90,8 @@ export function ReaderScreen({
       conversation={conversation}
       message={message}
       asOf={asOf}
+      unreadCount={unreadCount}
+      latestActivitySeq={latestActivitySeq}
       filter={filter}
       onFilter={setFilter}
       spaceNames={(spaces.state.data ?? []).map((s) => [s.id, s.name] as const)}
@@ -99,6 +107,8 @@ function SpaceReader({
   filter,
   onFilter,
   spaceNames,
+  unreadCount,
+  latestActivitySeq,
 }: {
   space: SpaceId;
   conversation?: ConversationId | undefined;
@@ -107,6 +117,8 @@ function SpaceReader({
   filter: string;
   onFilter: (value: string) => void;
   spaceNames: readonly (readonly [SpaceId, string])[];
+  unreadCount?: number | undefined;
+  latestActivitySeq?: number | undefined;
 }): ReactNode {
   const api = useApi();
   const conversations = useAsync(() => api.listConversations(space), [api, space]);
@@ -230,6 +242,8 @@ function SpaceReader({
             conversation={conversation}
             highlight={message}
             asOf={asOf}
+            unreadCount={unreadCount}
+            latestActivitySeq={latestActivitySeq}
             summary={threads.find((t) => t.id === conversation) ?? null}
             onPosted={() => conversations.reload()}
           />
@@ -250,6 +264,8 @@ function Thread({
   asOf,
   summary,
   onPosted,
+  unreadCount,
+  latestActivitySeq,
 }: {
   space: SpaceId;
   conversation: ConversationId;
@@ -263,6 +279,8 @@ function Thread({
   /** The thread list's row for this thread, once the list has loaded. */
   summary: ConversationSummary | null;
   onPosted: () => void;
+  unreadCount?: number | undefined;
+  latestActivitySeq?: number | undefined;
 }): ReactNode {
   const api = useApi();
   const asOfRead = useAsync(
@@ -295,6 +313,8 @@ function Thread({
   const seek = useRef<MessageId | undefined>(undefined);
   /** Counts full loads, so the scroll effect can tell one from an append. */
   const [arrivals, setArrivals] = useState(0);
+  const [unreadTarget, setUnreadTarget] = useState<MessageId | undefined>(undefined);
+  const markedSeq = useRef<number | undefined>(undefined);
 
   const load = useCallback(async () => {
     const mine = (generation.current += 1);
@@ -302,8 +322,16 @@ function Thread({
     setBusy(true);
     setError(null);
     try {
-      const thread = await loadThread(api, conversation, seek.current, asOf);
+      const result =
+        seek.current === undefined && unreadCount !== undefined
+          ? await loadFirstUnread(api, conversation, unreadCount, asOf)
+          : { loaded: await loadThread(api, conversation, seek.current, asOf), target: undefined };
+      const thread = result.loaded;
       if (mine !== generation.current) return;
+      if (result.target !== undefined) {
+        seek.current = result.target;
+        setUnreadTarget(result.target);
+      }
       setLoaded(thread);
       if (thread.annotations !== undefined) setAnnotations(thread.annotations);
       setArrivals((n) => n + 1);
@@ -315,7 +343,7 @@ function Thread({
         setBusy(false);
       }
     }
-  }, [api, conversation, asOf]);
+  }, [api, conversation, asOf, unreadCount]);
 
   const loadOlder = useCallback(async () => {
     if (loaded === null || loaded.nextCursor === null) return;
@@ -418,6 +446,7 @@ function Thread({
   // page — the human posting into a thread longer than one page — changes
   // what is newest without changing how many are shown.
   const newestId = messages.at(-1)?.id;
+  const highlighted = highlight ?? unreadTarget;
   const seen = useRef(0);
 
   useEffect(() => {
@@ -439,6 +468,21 @@ function Thread({
     // that has been walked back, the human is reading history and stays put.
     if (onFirstPage) bottom.current?.scrollIntoView({ block: 'end' });
   }, [arrivals, newestId, onFirstPage]);
+
+  useEffect(() => {
+    if (
+      asOf !== undefined ||
+      loaded === null ||
+      latestActivitySeq === undefined ||
+      markedSeq.current === latestActivitySeq
+    ) {
+      return;
+    }
+    markedSeq.current = latestActivitySeq;
+    void api.advanceReadMark(conversation, latestActivitySeq).catch((cause: unknown) => {
+      setError(toApiError(cause));
+    });
+  }, [api, asOf, conversation, latestActivitySeq, loaded]);
 
   // As of a read, the rendered messages carry the title as it stood then;
   // the thread list is today's, so it is only a fallback while nothing has
@@ -499,6 +543,7 @@ function Thread({
               <button type="button" className="btn btn-quiet" onClick={() => setRenaming(true)}>
                 Rename
               </button>
+              <ExportMenu kind="conversation" id={conversation} />
             </>
           )}
           <button type="button" className="btn btn-quiet" onClick={() => void load()}>
@@ -613,7 +658,7 @@ function Thread({
               {newDay && <div className="day-separator">{dayHeading(each.sentAt)}</div>}
               <MessageView
                 message={each}
-                highlighted={each.id === highlight}
+                highlighted={each.id === highlighted}
                 pinnedBy={pinned.get(each.id) ?? []}
                 humanPinned={humanPin === each.id}
                 onPin={

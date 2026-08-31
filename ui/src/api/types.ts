@@ -34,6 +34,8 @@ export type {
   AdminAgent,
   ApiKeySummary,
   ConversationSummary,
+  HumanCatchUpConversation,
+  HumanCatchUpPage,
   CurrentMembership,
   Escalation,
   EscalationId,
@@ -49,6 +51,9 @@ export type {
   // The human's post lands in the same shape an agent's does.
   PostResult as HumanPostResult,
 } from '../../../src/types.js';
+
+export type ExportKind = 'conversation' | 'space';
+export type ExportFormat = 'markdown' | 'json' | 'bundle';
 
 /**
  * A protocol error body that reached the client, with the transport status it

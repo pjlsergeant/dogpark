@@ -19,6 +19,7 @@ import {
   ConversationSummarySchema,
   EscalationSchema,
   EscalationsResponseSchema,
+  HumanCatchUpPageSchema,
   IssuedKeySchema,
   MessagePageSchema,
   PostResultSchema,
@@ -276,6 +277,15 @@ export function createHttpApi(): DogparkAdminApi {
         await request('GET', `/spaces/${encodeURIComponent(space)}/conversations`),
       );
     },
+    async listCatchUp(after) {
+      return decode(
+        HumanCatchUpPageSchema,
+        await request('GET', '/catch-up', { query: { after } }),
+      );
+    },
+    async advanceReadMark(conversation, seq) {
+      await request('POST', '/read-mark', { json: { conversation, seq } });
+    },
     async renameConversation(id, title) {
       return decode(
         ConversationSchema,
@@ -373,6 +383,10 @@ export function createHttpApi(): DogparkAdminApi {
 
     attachmentHref(id: AttachmentId) {
       return `${BASE}/attachments/${encodeURIComponent(id)}`;
+    },
+    exportUrl(kind, id, format) {
+      const collection = kind === 'conversation' ? 'conversations' : 'spaces';
+      return `${BASE}/${collection}/${encodeURIComponent(id)}/export?format=${format}`;
     },
   };
 }

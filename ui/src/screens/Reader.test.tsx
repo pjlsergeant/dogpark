@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
-import { afterEach, beforeAll, describe, expect, test } from 'vitest';
+import { afterEach, beforeAll, describe, expect, test, vi } from 'vitest';
 import type { ConversationAnnotations } from '../api/index.js';
 import { AppProvider } from '../app/api-context.js';
 import { ToastHost } from '../components/Toasts.js';
@@ -24,6 +24,44 @@ function renderReader(overrides = {}) {
     </AppProvider>,
   );
 }
+
+function renderCatchUpThread(overrides = {}, asOf?: string) {
+  const api = fixtureApi(overrides);
+  render(
+    <AppProvider value={{ api, session: { displayName: 'pete' }, logout: () => {} }}>
+      <ToastHost>
+        <ReaderScreen
+          space={fixture.delivery.id}
+          conversation={fixture.rotation.id}
+          unreadCount={3}
+          latestActivitySeq={42}
+          asOf={asOf}
+        />
+      </ToastHost>
+    </AppProvider>,
+  );
+}
+
+describe('Reader catch-up marks', () => {
+  test('marks the displayed tip once and highlights the first unread message', async () => {
+    const advanceReadMark = vi.fn(() => Promise.resolve());
+    renderCatchUpThread({ advanceReadMark });
+
+    const firstUnread = (await screen.findAllByText(/Do not touch production/)).find(
+      (node) => node.closest('article') !== null,
+    )!;
+    expect(firstUnread.closest('article')?.className).toContain('highlight');
+    await waitFor(() => expect(advanceReadMark).toHaveBeenCalledTimes(1));
+    expect(advanceReadMark).toHaveBeenCalledWith(fixture.rotation.id, 42);
+  });
+
+  test('does not advance a mark in an as-of view', async () => {
+    const advanceReadMark = vi.fn(() => Promise.resolve());
+    renderCatchUpThread({ advanceReadMark }, fixture.conversationRead.id);
+    await screen.findAllByText(/Do not touch production/);
+    expect(advanceReadMark).not.toHaveBeenCalled();
+  });
+});
 
 describe('Reader annotations', () => {
   test('complete and reopen update the status immediately', async () => {

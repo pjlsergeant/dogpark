@@ -21,6 +21,7 @@ import { Empty, Facts, Fact, Failure, Id, Loading, Pill, Time } from '../compone
 import { NameDialog } from '../components/NameDialog.js';
 import { DescriptionDialog } from '../components/DescriptionDialog.js';
 import { useNotify } from '../components/Toasts.js';
+import { ExportMenu } from '../components/ExportMenu.js';
 
 export function SpacesScreen(): ReactNode {
   const api = useApi();
@@ -61,6 +62,7 @@ export function SpacesScreen(): ReactNode {
                 <a className="card-title" href={href.space(space.id)}>
                   {space.name}
                 </a>
+                {space.unreadCount > 0 && <Pill tone="info">{space.unreadCount} unread</Pill>}
                 {space.description !== undefined && space.description !== '' && (
                   <p className="description-text">{space.description}</p>
                 )}
@@ -228,6 +230,7 @@ export function SpaceScreen({ space }: { space: SpaceId }): ReactNode {
           <a className="btn" href={href.read(space)}>
             Open reader
           </a>
+          <ExportMenu kind="space" id={space} />
           <button
             type="button"
             className="btn"

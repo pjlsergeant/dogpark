@@ -91,3 +91,25 @@ export async function loadThread(
   }
   return holdsTarget() ? loaded : newest;
 }
+
+/** Load enough history that the last `unreadCount` messages have a first row. */
+export async function loadFirstUnread(
+  api: ThreadReader,
+  conversation: ConversationId,
+  unreadCount: number,
+  asOf?: string,
+): Promise<{ readonly loaded: Loaded; readonly target: MessageId | undefined }> {
+  let loaded = await loadThread(api, conversation, undefined, asOf);
+  while (
+    loaded.messages.length < unreadCount &&
+    loaded.hasMore &&
+    loaded.nextCursor !== null &&
+    loaded.pages < MAX_PAGES_FOR_TARGET
+  ) {
+    loaded = await olderPage(api, conversation, loaded, asOf);
+  }
+  return {
+    loaded,
+    target: loaded.messages.at(-Math.min(unreadCount, loaded.messages.length))?.id,
+  };
+}

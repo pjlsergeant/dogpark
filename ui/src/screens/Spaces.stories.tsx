@@ -16,7 +16,7 @@ type Story = StoryObj<typeof meta>;
 
 export const Populated: Story = {
   parameters: {
-    expectText: ['delivery', 'Production delivery work and operational coordination.'],
+    expectText: ['delivery', '4 unread', 'Production delivery work and operational coordination.'],
   },
 };
 

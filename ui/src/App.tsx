@@ -19,6 +19,7 @@ import { ReaderScreen } from './screens/Reader.js';
 import { ReadLogScreen } from './screens/ReadLog.js';
 import { EscalationsScreen } from './screens/Escalations.js';
 import { SearchScreen } from './screens/Search.js';
+import { CatchUpScreen } from './screens/CatchUp.js';
 import mark from './assets/dogpark-mark.png';
 
 /**
@@ -46,6 +47,7 @@ function guardSession(api: DogparkAdminApi, onLost: () => void): DogparkAdminApi
 }
 
 const NAV: readonly { readonly key: string; readonly label: string; readonly to: string }[] = [
+  { key: 'c', label: 'Catch up', to: '#/catch-up' },
   { key: 's', label: 'Spaces', to: '#/spaces' },
   { key: 'a', label: 'Agents', to: '#/agents' },
   { key: 'r', label: 'Reader', to: '#/read' },
@@ -132,7 +134,7 @@ function Shell(): ReactNode {
   const [help, setHelp] = useState(false);
 
   useEffect(() => {
-    if (window.location.hash === '') navigate(href.spaces());
+    if (window.location.hash === '') navigate(href.catchUp());
   }, []);
 
   useEffect(() => {
@@ -192,6 +194,8 @@ function Shell(): ReactNode {
 function Screen(): ReactNode {
   const route = useRoute();
   switch (route.name) {
+    case 'catch-up':
+      return <CatchUpScreen />;
     case 'spaces':
       return <SpacesScreen />;
     case 'space':
@@ -205,6 +209,8 @@ function Screen(): ReactNode {
           conversation={route.conversation}
           message={route.message}
           asOf={route.asOf}
+          unreadCount={route.unreadCount}
+          latestActivitySeq={route.latestActivitySeq}
         />
       );
     case 'reads':
@@ -227,6 +233,7 @@ function Sidebar({
 }): ReactNode {
   const { session, logout } = useApp();
   const current: Record<string, string> = {
+    'catch-up': 'Catch up',
     spaces: 'Spaces',
     space: 'Spaces',
     agents: 'Agents',
@@ -274,10 +281,10 @@ function Shortcuts({ onClose }: { onClose: () => void }): ReactNode {
     <Dialog title="Keyboard" onClose={onClose}>
       <dl className="facts">
         <dt>
-          <kbd>g</kbd> then <kbd>s</kbd> / <kbd>a</kbd> / <kbd>r</kbd> / <kbd>l</kbd> / <kbd>e</kbd>{' '}
-          / <kbd>f</kbd>
+          <kbd>g</kbd> then <kbd>c</kbd> / <kbd>s</kbd> / <kbd>a</kbd> / <kbd>r</kbd> / <kbd>l</kbd>{' '}
+          / <kbd>e</kbd> / <kbd>f</kbd>
         </dt>
-        <dd>Spaces, agents, reader, read log, escalations, search</dd>
+        <dd>Catch up, spaces, agents, reader, read log, escalations, search</dd>
         <dt>
           <kbd>/</kbd>
         </dt>

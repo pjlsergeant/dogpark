@@ -443,6 +443,68 @@ kbd.lit {
   margin-top: auto;
 }
 
+.catch-up-escalations {
+  align-items: center;
+  background: var(--warn-soft);
+  border: 1px solid var(--warn);
+  border-radius: 0.65rem;
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+  padding: 0.85rem 1rem;
+}
+
+.catch-up-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.catch-up-row {
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+  padding: 1rem 0;
+}
+
+.catch-up-row-main {
+  align-items: flex-start;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.export-menu {
+  position: relative;
+}
+
+.export-menu > summary {
+  list-style: none;
+}
+
+.export-options {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 0.45rem;
+  box-shadow: 0 0.5rem 1.5rem rgb(0 0 0 / 15%);
+  display: flex;
+  flex-direction: column;
+  min-width: 9rem;
+  padding: 0.35rem;
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.25rem);
+  z-index: 4;
+}
+
+.export-options a {
+  border-radius: 0.3rem;
+  padding: 0.45rem 0.55rem;
+  text-decoration: none;
+}
+
 .panel {
   border: 1px solid var(--line);
   border-radius: var(--radius);
