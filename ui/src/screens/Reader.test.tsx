@@ -69,6 +69,17 @@ describe('Reader catch-up marks', () => {
     );
   });
 
+  test('a failed mark is asked again on the next full load', async () => {
+    const advanceReadMark = vi
+      .fn<() => Promise<void>>()
+      .mockRejectedValueOnce(new Error('mark did not land'))
+      .mockResolvedValue(undefined);
+    renderReader({ advanceReadMark });
+    await screen.findByText(/mark did not land/);
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await waitFor(() => expect(advanceReadMark).toHaveBeenCalledTimes(2));
+  });
+
   test('does not advance a mark in an as-of view', async () => {
     const advanceReadMark = vi.fn(() => Promise.resolve());
     renderCatchUpThread({ advanceReadMark }, fixture.conversationRead.id);

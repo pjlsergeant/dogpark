@@ -524,14 +524,17 @@ function Thread({
   // The human's mark follows the newest message on screen — every thread
   // view, however it was reached, and never the as-of view, which shows what
   // an agent saw rather than what the human is reading now. Once per newest
-  // id, so a re-render marks nothing twice; a failure is shown, not retried.
+  // id, so a re-render marks nothing twice; a failure is shown, and the next
+  // full load — Refresh, or Retry on the failure itself — asks again, since
+  // a thread whose mark never moved would sit in catch-up as unread.
   useEffect(() => {
     if (asOf !== undefined || newestId === undefined || marked.current === newestId) return;
     marked.current = newestId;
     void api.advanceReadMark(conversation, newestId).catch((cause: unknown) => {
+      marked.current = undefined;
       setError(toApiError(cause));
     });
-  }, [api, asOf, conversation, newestId]);
+  }, [api, asOf, conversation, newestId, arrivals]);
 
   // As of a read, the rendered messages carry the title as it stood then;
   // the thread list is today's, so it is only a fallback while nothing has
