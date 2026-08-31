@@ -10,6 +10,9 @@ import { fixtureApi } from '../stories/harness.js';
 import * as fixture from '../stories/fixtures.js';
 import { ReaderScreen } from './Reader.js';
 
+/** Only for its type: the shape a post resolves with. */
+const fixturePost = fixtureApi().post;
+
 beforeAll(() => {
   Element.prototype.scrollIntoView = () => {};
 });
@@ -360,6 +363,35 @@ describe('Reader annotations', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Send' }));
     await waitFor(() => expect(keys).toHaveLength(2));
     expect(keys[0]).not.toBe(keys[1]);
+  });
+
+  test('the draft is not editable while its post is in flight', async () => {
+    let resolvePost: ((result: Awaited<ReturnType<typeof fixturePost>>) => void) | undefined;
+    renderReader({
+      post: () =>
+        new Promise<Awaited<ReturnType<typeof fixturePost>>>((resolve) => {
+          resolvePost = resolve;
+        }),
+    });
+    const message = (await screen.findByLabelText('Message')) as HTMLTextAreaElement;
+    await userEvent.type(message, 'Hold this thought');
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(resolvePost).toBeDefined());
+    expect(message.disabled).toBe(true);
+    expect((screen.getByLabelText('mark complete') as HTMLInputElement).disabled).toBe(true);
+    expect((screen.getByLabelText('pin this message') as HTMLInputElement).disabled).toBe(true);
+
+    await act(async () => {
+      resolvePost!({
+        message: fixture.wrapUp,
+        conversation: fixture.rotation,
+        annotations: { status: 'open', pins: [] },
+      });
+      await Promise.resolve();
+    });
+    await waitFor(() =>
+      expect((screen.getByLabelText('Message') as HTMLTextAreaElement).disabled).toBe(false),
+    );
   });
 
   test('a failed inline Reopen is reported, not swallowed', async () => {

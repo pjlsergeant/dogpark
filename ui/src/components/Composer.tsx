@@ -54,6 +54,10 @@ export function Composer({
   const [body, setBody] = useState('');
   const [files, setFiles] = useState<readonly File[]>([]);
   const [preview, setPreview] = useState(false);
+  /**
+   * A draft being sent is not editable: the post may wait its turn behind
+   * another action, and edits made meanwhile would be wiped when it lands.
+   */
   const [busy, setBusy] = useState(false);
   const [complete, setComplete] = useState(false);
   const [pin, setPin] = useState(false);
@@ -146,6 +150,7 @@ export function Composer({
           className="composer-title"
           placeholder="Subject line: opens a new thread, or appends to one with this exact title"
           value={title}
+          disabled={busy}
           onChange={(event) => editTitle(event.target.value)}
           aria-label="Conversation title"
         />
@@ -160,6 +165,7 @@ export function Composer({
           className="composer-body"
           placeholder="Write something. Markdown. Cmd/Ctrl + Enter to send."
           value={body}
+          disabled={busy}
           rows={3}
           onChange={(event) => editBody(event.target.value)}
           onKeyDown={(event) => {
@@ -181,6 +187,7 @@ export function Composer({
                 type="button"
                 className="btn btn-quiet"
                 onClick={() => editFiles(files.filter((_, i) => i !== index))}
+                disabled={busy}
                 aria-label={`Remove ${file.name}`}
               >
                 &#10005;
@@ -224,6 +231,7 @@ export function Composer({
           ref={fileInput}
           id="composer-files"
           type="file"
+          disabled={busy}
           multiple
           className="visually-hidden"
           onChange={(event) => editFiles(Array.from(event.target.files ?? []))}
@@ -245,6 +253,7 @@ export function Composer({
           <input
             type="checkbox"
             checked={complete}
+            disabled={busy}
             onChange={(event) => editComplete(event.target.checked)}
           />{' '}
           mark complete
@@ -253,6 +262,7 @@ export function Composer({
           <input
             type="checkbox"
             checked={pin}
+            disabled={busy}
             onChange={(event) => editPin(event.target.checked)}
           />{' '}
           pin this message
