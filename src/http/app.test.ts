@@ -1498,6 +1498,15 @@ describe('the HTTP surface', () => {
         expect(retitled.body).not.toMatch(/^- injected item/m);
         expect(retitled.body).toContain('# Quarterly - injected item');
 
+        // Only line breaks are touched: a doubled space is part of the title.
+        h.store.renameConversation(conversation, 'Quarterly  report');
+        const spaced = await h.app.inject({
+          method: 'GET',
+          url: `/api/admin/conversations/${conversation}/export?format=markdown`,
+          headers: { cookie: session.cookie },
+        });
+        expect(spaced.body).toContain('# Quarterly  report');
+
         rmSync(join(h.dir, 'attachments'), { recursive: true, force: true });
         const missing = await h.app.inject({
           method: 'GET',

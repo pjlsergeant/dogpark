@@ -71,14 +71,13 @@ function safeName(value: string, fallback: string): string {
  * heading — rather than as a message body (which is markdown by design). A
  * filename such as `report](https://evil/x` must not become a link, and a
  * title carrying a newline must not start a list or a fence on the next
- * line: block constructs need a line start, so whitespace runs collapse to
- * one space and the inline constructs are escaped.
+ * line: block constructs need a line start, so line breaks become a space and
+ * the inline constructs are escaped. Only line breaks: a title is an exact
+ * identifier and two of them may differ by a doubled space, which the export
+ * keeps as written.
  */
 export function markdownText(value: string): string {
-  return value
-    .replace(/\s+/g, ' ')
-    .trim()
-    .replace(/[\\`*_[\]()<>#|~]/g, '\\$&');
+  return value.replace(/[\r\n\v\f\u2028\u2029]+/g, ' ').replace(/[\\`*_[\]()<>#|~]/g, '\\$&');
 }
 
 /** The id is the trusted directory; this is display text reduced to one basename. */
