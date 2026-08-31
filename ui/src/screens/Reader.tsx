@@ -336,6 +336,15 @@ function Thread({
    * anything that arrived after the row: those sit above the tip.
    */
   const markHeld = useRef(false);
+  /**
+   * The row's count and tip as they were when the hold was set. The props can
+   * go while the thread stays mounted — the sidebar link to the open thread
+   * carries neither — and a hold judged against missing props would lift.
+   */
+  const held = useRef<{ readonly count: number; readonly tip: number | undefined }>({
+    count: 0,
+    tip: undefined,
+  });
   const [unreadBeyond, setUnreadBeyond] = useState(false);
   /**
    * Annotations arrive from three places — a full load, the newest-page poll,
@@ -412,6 +421,7 @@ function Thread({
       if (firstUnread) unreadConsumed.current = true;
       if ('reached' in result && !result.reached) {
         markHeld.current = true;
+        held.current = { count: unreadCount ?? 0, tip: unreadTip };
         setUnreadBeyond(true);
       }
       if (result.target !== undefined) seek.current = result.target;
@@ -588,7 +598,8 @@ function Thread({
   useEffect(() => {
     if (asOf !== undefined || newestId === undefined || marked.current === newestId) return;
     if (markHeld.current) {
-      if (countedUnread(messages, unreadCount ?? 0, unreadTip).length < (unreadCount ?? 0)) return;
+      const { count: wanted, tip } = held.current;
+      if (countedUnread(messages, wanted, tip).length < wanted) return;
       markHeld.current = false;
       setUnreadBeyond(false);
     }
@@ -598,7 +609,7 @@ function Thread({
       if (marked.current === newestId) marked.current = undefined;
       setError(toApiError(cause));
     });
-  }, [api, asOf, conversation, newestId, arrivals, count, messages, unreadCount, unreadTip]);
+  }, [api, asOf, conversation, newestId, arrivals, count, messages]);
 
   // As of a read, the rendered messages carry the title as it stood then;
   // the thread list is today's, so it is only a fallback while nothing has

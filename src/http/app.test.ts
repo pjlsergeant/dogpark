@@ -1563,6 +1563,19 @@ describe('the HTTP surface', () => {
         };
         expect(stream.items.some((item) => item['kind'] === 'message')).toBe(true);
         for (const item of stream.items) expect(item).not.toHaveProperty('seq');
+        const posted = (
+          await asAgent(alpha.key, {
+            method: 'POST',
+            url: '/api/agent/messages',
+            payload: { target: { conversation }, body: 'sequenced again', idempotencyKey: 'seq-2' },
+          })
+        ).json() as { message: Record<string, unknown> };
+        expect(posted.message).not.toHaveProperty('seq');
+        const spacePage = (
+          await asAgent(alpha.key, { method: 'GET', url: `/api/agent/spaces/${space}/messages` })
+        ).json() as { messages: Record<string, unknown>[] };
+        expect(spacePage.messages.length).toBeGreaterThan(0);
+        for (const message of spacePage.messages) expect(message).not.toHaveProperty('seq');
 
         const session = await login(h);
         const admin = (

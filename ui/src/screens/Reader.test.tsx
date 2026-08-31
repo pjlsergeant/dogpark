@@ -278,6 +278,52 @@ describe('Reader catch-up marks', () => {
     expect(screen.queryByText(/More unread here than could be loaded/)).not.toBeNull();
   });
 
+  test('the hold survives the catch-up hint leaving the URL while the thread stays mounted', async () => {
+    // The sidebar link to the open thread carries no unread/tip; following it
+    // changes the props without remounting. The hold was set against the
+    // row's figures and must keep judging by them.
+    const total = 60;
+    const all = Array.from({ length: total }, (_, i) => ({
+      ...fixture.wrapUp,
+      id: `m_stay_${i + 1}` as MessageId,
+      seq: i + 1,
+      body: `stay message ${i + 1}`,
+    }));
+    const advanceReadMark = vi.fn(() => Promise.resolve());
+    const api = fixtureApi({
+      advanceReadMark,
+      readConversation: (_id: ConversationId, query?: { after?: string | undefined }) => {
+        const end = query?.after === undefined ? total : Number(query.after);
+        const start = Math.max(0, end - 1);
+        return Promise.resolve({
+          messages: all.slice(start, end).reverse(),
+          nextCursor: String(start) as MessagePage['nextCursor'],
+          hasMore: start > 0,
+        });
+      },
+    });
+    const app = (hint: boolean) => (
+      <AppProvider value={{ api, session: { displayName: 'pete' }, logout: () => {} }}>
+        <ToastHost>
+          <ReaderScreen
+            space={fixture.delivery.id}
+            conversation={fixture.rotation.id}
+            unreadCount={hint ? total : undefined}
+            unreadTip={hint ? total : undefined}
+          />
+        </ToastHost>
+      </AppProvider>
+    );
+    const { rerender } = render(app(true));
+    await screen.findByText(/More unread here than could be loaded/);
+    rerender(app(false));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(advanceReadMark).not.toHaveBeenCalled();
+    expect(screen.queryByText(/More unread here than could be loaded/)).not.toBeNull();
+  });
+
   test('the held mark advances once the older unread have been walked back to', async () => {
     // Fifty-two single-message pages, fifty-two unread: the landing stops two
     // short. Two Load older clicks show them all, and only then does the mark
