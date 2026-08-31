@@ -1349,6 +1349,127 @@ describe('the HTTP surface', () => {
 
   // -------------------------------------------------------------------------
   describe('the admin API', () => {
+    describe('exports', () => {
+      it('exports a conversation as rendered markdown and structured JSON without logging a read', async () => {
+        h.store.grantMembership(beta.id, space);
+        const posted = h.store.postMessage({
+          sender: { kind: 'agent', id: alpha.id },
+          target: { conversation },
+          body: 'hello @beta',
+        });
+        h.store.pinMessage({ kind: 'human' }, conversation, posted.message.id);
+        h.store.completeConversation({ kind: 'human' }, conversation);
+        h.store.renameAgent(beta.id, 'renamed-beta');
+        const session = await login(h);
+
+        const markdown = await h.app.inject({
+          method: 'GET',
+          url: `/api/admin/conversations/${conversation}/export?format=markdown`,
+          headers: { cookie: session.cookie },
+        });
+        expect(markdown.statusCode).toBe(200);
+        expect(markdown.headers['content-disposition']).toContain('.md');
+        expect(markdown.body).toContain('# 2027 budget');
+        expect(markdown.body).toContain('@renamed-beta');
+        expect(markdown.body).toContain('complete');
+        expect(markdown.body).toContain(h.config.DOGPARK_DISPLAY_NAME);
+
+        const json = await h.app.inject({
+          method: 'GET',
+          url: `/api/admin/conversations/${conversation}/export?format=json`,
+          headers: { cookie: session.cookie },
+        });
+        expect(json.statusCode).toBe(200);
+        expect(json.headers['content-disposition']).toContain('.json');
+        expect(json.json()).toMatchObject({
+          space: { id: space, name: 'money-and-life' },
+          conversations: [
+            {
+              conversation: { id: conversation, title: '2027 budget' },
+              annotations: { status: 'complete' },
+              messages: [{ body: 'hello @renamed-beta' }],
+            },
+          ],
+        });
+
+        const reads = await h.app.inject({
+          method: 'GET',
+          url: '/api/admin/reads',
+          headers: { cookie: session.cookie },
+        });
+        expect((reads.json() as ReadLogBody).reads).toEqual([]);
+      });
+
+      it('streams a space bundle with sanitized attachment paths and tolerates missing bytes', async () => {
+        const request = multipart([
+          {
+            name: 'request',
+            value: JSON.stringify({ target: { conversation }, body: 'files', idempotencyKey: 'x' }),
+          },
+          {
+            name: 'file',
+            filename: '../notes.txt',
+            contentType: 'text/plain',
+            data: Buffer.from('bundle payload'),
+          },
+        ]);
+        const posted = await asAgent(alpha.key, {
+          method: 'POST',
+          url: '/api/agent/messages',
+          headers: { 'content-type': request.contentType },
+          payload: request.body,
+        });
+        const attachment = (posted.json() as { message: { attachments: { id: string }[] } }).message
+          .attachments[0];
+        expect(attachment).toBeDefined();
+        h.store.setSpaceDescription(space, 'A useful space.');
+        const session = await login(h);
+
+        const bundle = await h.app.inject({
+          method: 'GET',
+          url: `/api/admin/spaces/${space}/export?format=bundle`,
+          headers: { cookie: session.cookie },
+        });
+        expect(bundle.statusCode).toBe(200);
+        expect(bundle.headers['content-type']).toContain('application/zip');
+        expect(bundle.rawPayload.subarray(0, 2).toString()).toBe('PK');
+        expect(
+          bundle.rawPayload.includes(Buffer.from(`attachments/${attachment?.id}/notes.txt`)),
+        ).toBe(true);
+        expect(bundle.rawPayload.includes(Buffer.from('bundle payload'))).toBe(true);
+
+        rmSync(join(h.dir, 'attachments'), { recursive: true, force: true });
+        const missing = await h.app.inject({
+          method: 'GET',
+          url: `/api/admin/conversations/${conversation}/export?format=markdown`,
+          headers: { cookie: session.cookie },
+        });
+        expect(missing.statusCode).toBe(200);
+        expect(missing.body).toContain('missing from storage');
+      });
+
+      it('requires an admin session and rejects unknown export formats', async () => {
+        expect(
+          (
+            await h.app.inject({
+              method: 'GET',
+              url: `/api/admin/conversations/${conversation}/export?format=json`,
+            })
+          ).statusCode,
+        ).toBe(401);
+        const session = await login(h);
+        expect(
+          (
+            await h.app.inject({
+              method: 'GET',
+              url: `/api/admin/conversations/${conversation}/export?format=pdf`,
+              headers: { cookie: session.cookie },
+            })
+          ).statusCode,
+        ).toBe(400);
+      });
+    });
+
     it('sets descriptions with session and CSRF and includes them in lists', async () => {
       const session = await login(h);
       const put = (url: string, description: string): Promise<LightMyRequestResponse> =>

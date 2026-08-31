@@ -381,6 +381,11 @@ export function prepareStatements(db: Db) {
     getConversation: prepare<{ id: string }, ConversationRow>(
       'SELECT id, space_id, title FROM conversation WHERE id = @id',
     ),
+    conversationsForExport: prepare<{ space: string }, ConversationRow>(
+      'SELECT c.id, c.space_id, c.title FROM conversation c ' +
+        'LEFT JOIN message m ON m.conversation_id = c.id WHERE c.space_id = @space ' +
+        'GROUP BY c.id ORDER BY MIN(m.seq), c.created_at, c.id',
+    ),
     renameConversation: prepare<{ id: string; title: string }, unknown>(
       'UPDATE conversation SET title = @title WHERE id = @id',
     ),

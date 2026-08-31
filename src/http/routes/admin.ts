@@ -1,4 +1,4 @@
-import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
+import type { FastifyInstance, FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { AgentRecord } from '../../store/index.js';
 import type { AdminAgent, Agent, AttachmentId, MessageId, SpaceSummary } from '../../types.js';
 import { authenticateHuman, csrfTokenFor, requireSession, SESSION_COOKIE } from '../auth.js';
@@ -6,6 +6,15 @@ import type { AppContext } from '../context.js';
 import { notFound, unauthenticated } from '../errors.js';
 import { verifyPassword } from '../password.js';
 import { submitPost } from '../post.js';
+import {
+  conversationExportSource,
+  exportBundle,
+  exportJson,
+  exportMarkdown,
+  exportRootName,
+  spaceExportSource,
+} from '../export.js';
+import { contentDisposition } from '../attachments.js';
 import {
   adminAgent,
   bare,
@@ -27,6 +36,7 @@ import {
   ChangesQuery,
   DescriptionBody,
   EscalationsQuery,
+  ExportQuery,
   HumanPostBody,
   HumanAnnotationActionBody,
   HumanPinBody,
@@ -360,6 +370,43 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
       guarded.get('/attachments/:id', async (request, reply) => {
         const { id } = request.params as { id: string };
         return sendAttachment(ctx, HUMAN, id as AttachmentId, reply);
+      });
+
+      // -------------------------------------------------------------------
+      // Human exports. They render current labels and deliberately bypass the
+      // agent read log; bundles stream both generated documents and file bytes.
+      // -------------------------------------------------------------------
+
+      const sendExport = async (
+        source: ReturnType<typeof conversationExportSource>,
+        request: { readonly query: unknown },
+        reply: FastifyReply,
+      ) => {
+        const { format } = parse(ExportQuery, request.query, 'query');
+        const root = exportRootName(source);
+        const extension = format === 'markdown' ? 'md' : format === 'json' ? 'json' : 'zip';
+        reply.header('content-disposition', contentDisposition(`${root}.${extension}`));
+        if (format === 'markdown') {
+          return reply.type('text/markdown; charset=utf-8').send(exportMarkdown(ctx, source));
+        }
+        if (format === 'json') {
+          return reply.type('application/json').send(await exportJson(ctx, source));
+        }
+        return reply.type('application/zip').send(exportBundle(ctx, source, root));
+      };
+
+      guarded.get('/conversations/:id/export', async (request, reply) => {
+        const { id } = request.params as { id: string };
+        return sendExport(
+          conversationExportSource(ctx.store, asConversationId(id)),
+          request,
+          reply,
+        );
+      });
+
+      guarded.get('/spaces/:id/export', async (request, reply) => {
+        const { id } = request.params as { id: string };
+        return sendExport(spaceExportSource(ctx.store, asSpaceId(id)), request, reply);
       });
 
       // ---------------------------------------------------------------------
