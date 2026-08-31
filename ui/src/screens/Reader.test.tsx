@@ -83,6 +83,67 @@ describe('Reader catch-up marks', () => {
     await waitFor(() => expect(advanceReadMark).toHaveBeenCalledTimes(2));
   });
 
+  test("an older mark's failure does not forget a newer mark already sent", async () => {
+    const older = [...fixture.rotationMessages].reverse();
+    const arrived = { ...fixture.wrapUp, id: 'm_arrived' as MessageId, body: 'Just arrived.' };
+    const page = (messages: typeof older): MessagePage => ({
+      messages,
+      nextCursor: 'qc_end' as MessagePage['nextCursor'],
+      hasMore: false,
+      annotations: { status: 'open', pins: [] },
+    });
+    const marks = new Map<string, { resolve: () => void; reject: (e: Error) => void }>();
+    let reads = 0;
+    let changes = 0;
+    const advanceReadMark = vi.fn(
+      (_conversation: string, message: MessageId) =>
+        new Promise<void>((resolve, reject) => {
+          marks.set(message, { resolve, reject });
+        }),
+    );
+    const api = fixtureApi({
+      // Load, then the poll brings one more message, then Refresh reloads.
+      readConversation: () =>
+        Promise.resolve((reads += 1) >= 2 ? page([arrived, ...older]) : page(older)),
+      advanceReadMark,
+      awaitChanges: () => {
+        changes += 1;
+        return changes === 1 ? Promise.resolve('v1') : new Promise<string>(() => {});
+      },
+    });
+    render(
+      <AppProvider value={{ api, session: { displayName: 'pete' }, logout: () => {} }}>
+        <ChangesProvider api={api}>
+          <ToastHost>
+            <ReaderScreen space={fixture.delivery.id} conversation={fixture.rotation.id} />
+          </ToastHost>
+        </ChangesProvider>
+      </AppProvider>,
+    );
+    const newestBefore = older[0]!.id;
+    await waitFor(() => expect(marks.has(newestBefore)).toBe(true));
+    await waitFor(() => expect(marks.has(arrived.id)).toBe(true));
+
+    // The newer mark lands; then the older one fails.
+    await act(async () => {
+      marks.get(arrived.id)!.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      marks.get(newestBefore)!.reject(new Error('older mark failed'));
+      await Promise.resolve();
+    });
+    await screen.findByText(/older mark failed/);
+
+    // A full load must not mark the newest message a second time.
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await waitFor(() => expect(reads).toBe(3));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(advanceReadMark).toHaveBeenCalledTimes(2);
+  });
+
   test('does not advance a mark in an as-of view', async () => {
     const advanceReadMark = vi.fn(() => Promise.resolve());
     renderCatchUpThread({ advanceReadMark }, fixture.conversationRead.id);

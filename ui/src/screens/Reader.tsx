@@ -531,7 +531,8 @@ function Thread({
     if (asOf !== undefined || newestId === undefined || marked.current === newestId) return;
     marked.current = newestId;
     void api.advanceReadMark(conversation, newestId).catch((cause: unknown) => {
-      marked.current = undefined;
+      // Forget only this attempt: a newer tip's mark may already be out.
+      if (marked.current === newestId) marked.current = undefined;
       setError(toApiError(cause));
     });
   }, [api, asOf, conversation, newestId, arrivals]);
