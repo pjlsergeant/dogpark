@@ -69,10 +69,16 @@ function safeName(value: string, fallback: string): string {
 /**
  * Text that lands inside generated markdown structure — a link label, a
  * heading — rather than as a message body (which is markdown by design). A
- * filename such as `report](https://evil/x` must not become a link.
+ * filename such as `report](https://evil/x` must not become a link, and a
+ * title carrying a newline must not start a list or a fence on the next
+ * line: block constructs need a line start, so whitespace runs collapse to
+ * one space and the inline constructs are escaped.
  */
 export function markdownText(value: string): string {
-  return value.replace(/[\\`*_[\]()<>#|]/g, '\\$&');
+  return value
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[\\`*_[\]()<>#|~]/g, '\\$&');
 }
 
 /** The id is the trusted directory; this is display text reduced to one basename. */

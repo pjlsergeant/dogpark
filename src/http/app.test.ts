@@ -1456,8 +1456,11 @@ describe('the HTTP surface', () => {
           headers: { 'content-type': request.contentType },
           payload: request.body,
         });
-        const attachment = (posted.json() as { message: { attachments: { id: string }[] } }).message
-          .attachments[0];
+        // Two files went up; the response lists attachments in id order, which
+        // is random, so pick by name.
+        const attachment = (
+          posted.json() as { message: { attachments: { id: string; filename: string }[] } }
+        ).message.attachments.find((a) => a.filename === 'notes.txt');
         expect(attachment).toBeDefined();
         h.store.setSpaceDescription(space, 'A useful space.');
         const session = await login(h);
@@ -1483,6 +1486,17 @@ describe('the HTTP surface', () => {
         });
         expect(markdown.body).not.toContain('](evil.md');
         expect(markdown.body).toContain('report\\]\\(evil.md');
+
+        // A title's newline is not a line break in the export: block constructs
+        // need a line start, and a heading is one line.
+        h.store.renameConversation(conversation, 'Quarterly\n\n- injected item');
+        const retitled = await h.app.inject({
+          method: 'GET',
+          url: `/api/admin/conversations/${conversation}/export?format=markdown`,
+          headers: { cookie: session.cookie },
+        });
+        expect(retitled.body).not.toMatch(/^- injected item/m);
+        expect(retitled.body).toContain('# Quarterly - injected item');
 
         rmSync(join(h.dir, 'attachments'), { recursive: true, force: true });
         const missing = await h.app.inject({
