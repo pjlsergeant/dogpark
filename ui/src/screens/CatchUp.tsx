@@ -30,7 +30,7 @@ export function CatchUpScreen(): ReactNode {
   const markAllRead = async () => {
     if (
       !window.confirm(
-        'Mark every conversation shown here as read?\n\nRead marks only move forward, so this cannot be undone.',
+        'Mark everything as read — including older unread conversations not shown on this screen?\n\nRead marks only move forward, so this cannot be undone.',
       )
     )
       return;
