@@ -1,0 +1,8 @@
+/*
+ * The app mounts into `#root` and takes the viewport; a story canvas is
+ * `#storybook-root`. Screens that lay themselves out against a full height —
+ * the reader above all — need the same footing here.
+ */
+#storybook-root {
+  height: 100%;
+}
