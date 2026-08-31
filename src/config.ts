@@ -1,6 +1,5 @@
 import { isIP } from 'node:net';
 import { z } from 'zod';
-import { EXAMPLE_PASSWORD_HASH } from './http/password.js';
 import { MAX_PAGE_LIMIT } from './store/limits.js';
 import { assertValidName } from './store/text.js';
 
@@ -45,7 +44,7 @@ const Schema = z.object({
   DOGPARK_DATA_DIR: z.string().default('./data'),
 
   /**
-   * Which interfaces to bind. Default every interface (`0.0.0.0`), the only
+   * Which interfaces to bind. Default every IPv4 interface (`0.0.0.0`), the only
    * default that reaches a container. On a source build with no proxy, set
    * `127.0.0.1` to keep plaintext off the network — the equivalent of a
    * container's `-p 127.0.0.1:` publish (ADR-0016). An IP literal only: a
@@ -134,20 +133,10 @@ export type Config = z.infer<typeof Schema> & {
   readonly trustProxy: false | readonly string[];
   readonly behindProxy: boolean;
   /**
-   * The interfaces to bind, `DOGPARK_HOST` (default every interface). A field
+   * The interfaces to bind, `DOGPARK_HOST` (default every IPv4 interface). A field
    * rather than a literal in `server.ts` so the decision is unit-testable.
    */
   readonly listenHost: string;
-  /**
-   * True when `DOGPARK_PASSWORD_HASH` still authenticates the README's example
-   * password. Here it is the fast path only — a string compare against the
-   * example hash after trim — so `loadConfig` stays synchronous; `server.ts`
-   * upgrades it at startup with `isExamplePassword`, one scrypt that also
-   * catches a differently salted hash of `dogpark`. Anyone who has read the
-   * README knows the password, so the server warns and the UI shows a banner
-   * until it changes.
-   */
-  readonly examplePassword: boolean;
 };
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -164,6 +153,5 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     trustProxy,
     behindProxy: trustProxy !== false,
     listenHost: parsed.data.DOGPARK_HOST,
-    examplePassword: parsed.data.DOGPARK_PASSWORD_HASH.trim() === EXAMPLE_PASSWORD_HASH,
   };
 }

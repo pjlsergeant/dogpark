@@ -1,15 +1,10 @@
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadConfig, type Config } from './config.js';
+import { loadConfig } from './config.js';
 import { attachmentRoot, sweepUnreferenced } from './http/attachments.js';
 import { buildApp } from './http/app.js';
-import {
-  assertUsablePasswordHash,
-  hashPassword,
-  isExamplePassword,
-  readSecret,
-} from './http/password.js';
+import { assertUsablePasswordHash, hashPassword, readSecret } from './http/password.js';
 import { WriteSignals } from './http/signal.js';
 import { escalationQueue } from './notify/queue.js';
 import { Notifier } from './notify/webhook.js';
@@ -74,16 +69,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  // `loadConfig` sets `examplePassword` from a fast string compare against the
-  // example hash; here it is upgraded with a scrypt verify, so a differently
-  // salted hash of `dogpark` is caught too. One scrypt at startup is fine, and
-  // it is done before `buildApp` so the warning, the session routes and the
-  // banner all speak of the full check.
-  const loaded = loadConfig();
-  const config: Config = {
-    ...loaded,
-    examplePassword: await isExamplePassword(loaded.DOGPARK_PASSWORD_HASH),
-  };
+  const config = loadConfig();
   // `DOGPARK_HOST` decides the interfaces; the default is every one, the only
   // default that reaches a container. On a source build with no proxy,
   // `DOGPARK_HOST=127.0.0.1` keeps plaintext off the network (ADR-0016).
@@ -126,7 +112,10 @@ async function main(): Promise<void> {
       'the admin password changed; existing sessions are revoked',
     );
   }
-  if (config.examplePassword) {
+  // The full example-password verdict `buildApp` computed (scrypt included),
+  // decorated onto the instance so this warning matches what the session routes
+  // report and the banner shows.
+  if (app.examplePassword) {
     app.log.warn(
       "DOGPARK_PASSWORD_HASH is unlocked by the README's example password: anyone who has read it can log in. " +
         'Set it to a hash of your own password and restart; mint one with hash-password ' +

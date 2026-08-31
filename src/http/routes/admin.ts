@@ -103,7 +103,7 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
       return {
         csrfToken: csrfTokenFor(session.token),
         displayName: ctx.config.DOGPARK_DISPLAY_NAME,
-        examplePassword: ctx.config.examplePassword,
+        examplePassword: ctx.examplePassword,
         expiresAt: session.expiresAt,
       };
     });
@@ -120,7 +120,7 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
         return {
           csrfToken: csrfTokenFor(session.token),
           displayName: ctx.config.DOGPARK_DISPLAY_NAME,
-          examplePassword: ctx.config.examplePassword,
+          examplePassword: ctx.examplePassword,
           expiresAt: session.expiresAt,
         };
       });

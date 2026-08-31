@@ -12,21 +12,23 @@ which defeats the refusal below. The list also accepts the keywords `loopback`,
 `linklocal` and `uniquelocal` — `@fastify/proxy-addr`'s vocabulary — so their
 meaning is the resolver's, not Dogpark's.
 
-Three things follow from the declaration, and they move together:
+Two things follow from the declaration, and they move together:
 
-* **Where to listen.** The bind address and the port publish are both the
-  deployer's — `DOGPARK_HOST` and `-p`. The default is every interface
-  (`0.0.0.0`), because that is the only default that reaches a container: a
-  loopback-only default would leave an unpublished port unreachable even from
-  another container on the same network. Keeping plaintext off the host's
-  network is then the port publish (`-p 127.0.0.1:`) or, for a source build
-  with no publish, `DOGPARK_HOST=127.0.0.1`. Neither hides a container from
-  the others on its Docker network; that is the network's own business.
 * **Whether cookies are `Secure`.** Only when a proxy is declared. Without one
   there is no TLS to promise, and a `Secure` cookie a browser then refuses to
   send is worse than an honest one.
 * **Whether TLS is proved per request.** Declared: every `/api/*` request must
   carry the proxy's `X-Forwarded-Proto: https`.
+
+Where to listen is not one of them. The bind address and the port publish are
+both the deployer's — `DOGPARK_HOST` and `-p` — and neither follows the
+declaration. The default is every IPv4 interface (`0.0.0.0`), because that is
+the only default that reaches a container: a loopback-only default would leave
+an unpublished port unreachable even from another container on the same
+network. Keeping plaintext off the host's network is then the port publish
+(`-p 127.0.0.1:`) or, for a source build with no publish,
+`DOGPARK_HOST=127.0.0.1`. Neither hides a container from the others on its
+Docker network; that is the network's own business.
 
 A missing header is refused, not waved through. Whatever can reach the bound
 interface can reach the process, so a request that arrives directly can simply

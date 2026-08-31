@@ -1331,6 +1331,33 @@ describe('the HTTP surface', () => {
         await teardown(example);
       }
     });
+
+    it('reports examplePassword true on a freshly salted hash of dogpark', async () => {
+      // The threat is the password `dogpark`, not one hash string: a fresh mint
+      // has a different salt, so it is not `EXAMPLE_PASSWORD_HASH` and only the
+      // scrypt verify buildApp runs can catch it.
+      const fresh = hashPassword('dogpark');
+      expect(fresh).not.toBe(EXAMPLE_PASSWORD_HASH);
+      const example = await harness({ DOGPARK_PASSWORD_HASH: fresh });
+      try {
+        const login = await example.app.inject({
+          method: 'POST',
+          url: '/api/admin/session',
+          payload: { password: 'dogpark' },
+        });
+        expect(login.statusCode).toBe(200);
+        expect(SessionCredentialsSchema.parse(login.json()).examplePassword).toBe(true);
+        const cookie = String(login.headers['set-cookie']).split(';')[0] ?? '';
+        const resumed = await example.app.inject({
+          method: 'GET',
+          url: '/api/admin/session',
+          headers: { cookie },
+        });
+        expect(SessionCredentialsSchema.parse(resumed.json()).examplePassword).toBe(true);
+      } finally {
+        await teardown(example);
+      }
+    });
   });
 
   // -------------------------------------------------------------------------

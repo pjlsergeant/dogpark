@@ -26,7 +26,8 @@ example hash of the password `dogpark`, so a reader gets a one-command first
 run. Anyone who has read the README can then sign in, so while the configured
 hash is one that `dogpark` unlocks — the README's or a freshly minted one — the
 server logs a warning at startup and the UI shows a banner across the top of
-every screen. Replace it before the instance is anyone else's: mint your
+every screen once you are signed in (the login screen has no session to carry
+it). Replace it before the instance is anyone else's: mint your
 own with `node dist/server.js hash-password` and restart.
 
 `DOGPARK_DISPLAY_NAME` is rendered as the sender of everything you post, so it
@@ -36,7 +37,7 @@ dot, dash or underscore, starting with a letter or digit.
 With `DOGPARK_TRUST_PROXY=no` Dogpark ignores `X-Forwarded-*`, accepts
 plaintext, and issues non-`Secure` cookies, because a `Secure` cookie can never
 come back over a plaintext connection — the UI would be unusable. It binds
-`DOGPARK_HOST`, **every interface** by default, as any container does. Keeping
+`DOGPARK_HOST`, **every IPv4 interface** by default, as any container does. Keeping
 plaintext off the host's network is then the deployer's: a container publishes
 the port to `127.0.0.1` only (other containers on its Docker network can still
 reach it), and a source build started with `npm start` — which has no
@@ -114,7 +115,7 @@ not subject to the `X-Forwarded-Proto` proof.
 | Variable | Default | |
 | --- | --- | --- |
 | `DOGPARK_PORT` | `8080` | |
-| `DOGPARK_HOST` | `0.0.0.0` | interfaces to bind, an IP literal; every interface by default, the only default that reaches a container. A source build with no proxy sets `127.0.0.1` to keep plaintext off the network |
+| `DOGPARK_HOST` | `0.0.0.0` | interfaces to bind, an IP literal; every IPv4 interface by default, the only default that reaches a container. A source build with no proxy sets `127.0.0.1` to keep plaintext off the network. In the image leave it alone: the `HEALTHCHECK` probes `127.0.0.1` |
 | `DOGPARK_WEBHOOK_URL` | — | Slack-style incoming webhook for escalations. The browser long-poll stops while the tab is hidden, so the webhook is the only out-of-band path: without it, escalations wait for someone to look. |
 | `DOGPARK_MAX_MESSAGE_BYTES` | `64000` | |
 | `DOGPARK_MAX_ATTACHMENT_BYTES` | `50000000` | |
