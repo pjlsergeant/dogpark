@@ -229,6 +229,55 @@ describe('Reader catch-up marks', () => {
     expect(screen.queryByText(/More unread here than could be loaded/)).not.toBeNull();
   });
 
+  test("post-snapshot messages loaded later do not count as the row's unread", async () => {
+    // Two unread at tip 100; sixty messages arrived since. The capped landing
+    // shows 111–160, all above the tip. Loading two older pages brings in 109
+    // and 110 — also above the tip — so nothing the row counted is on screen
+    // yet and the mark must stay held.
+    const total = 160;
+    const all = Array.from({ length: total }, (_, i) => ({
+      ...fixture.wrapUp,
+      id: `m_after_${i + 1}` as MessageId,
+      seq: i + 1,
+      body: `after message ${i + 1}`,
+    }));
+    const advanceReadMark = vi.fn(() => Promise.resolve());
+    const api = fixtureApi({
+      advanceReadMark,
+      readConversation: (_id: ConversationId, query?: { after?: string | undefined }) => {
+        const end = query?.after === undefined ? total : Number(query.after);
+        const start = Math.max(0, end - 1);
+        return Promise.resolve({
+          messages: all.slice(start, end).reverse(),
+          nextCursor: String(start) as MessagePage['nextCursor'],
+          hasMore: start > 0,
+        });
+      },
+    });
+    render(
+      <AppProvider value={{ api, session: { displayName: 'pete' }, logout: () => {} }}>
+        <ToastHost>
+          <ReaderScreen
+            space={fixture.delivery.id}
+            conversation={fixture.rotation.id}
+            unreadCount={2}
+            unreadTip={100}
+          />
+        </ToastHost>
+      </AppProvider>,
+    );
+    await screen.findByText(/More unread here than could be loaded/);
+    await userEvent.click(screen.getByRole('button', { name: 'Load older messages' }));
+    await screen.findByText(/after message 110$/);
+    await userEvent.click(screen.getByRole('button', { name: 'Load older messages' }));
+    await screen.findByText(/after message 109$/);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(advanceReadMark).not.toHaveBeenCalled();
+    expect(screen.queryByText(/More unread here than could be loaded/)).not.toBeNull();
+  });
+
   test('the held mark advances once the older unread have been walked back to', async () => {
     // Fifty-two single-message pages, fifty-two unread: the landing stops two
     // short. Two Load older clicks show them all, and only then does the mark

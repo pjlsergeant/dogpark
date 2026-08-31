@@ -28,7 +28,7 @@ import { MessageView } from '../components/MessageView.js';
 import { Composer } from '../components/Composer.js';
 import { NameDialog } from '../components/NameDialog.js';
 import { loadThread, olderPage } from './thread-pages.js';
-import { loadFirstUnread } from './thread-pages.js';
+import { countedUnread, loadFirstUnread } from './thread-pages.js';
 import { ExportMenu } from '../components/ExportMenu.js';
 import type { Loaded } from './thread-pages.js';
 
@@ -330,18 +330,12 @@ function Thread({
   /**
    * A catch-up landing that ran out of pages before the first unread holds
    * the read mark: marking the newest message would declare the unshown ones
-   * read. The hold lifts only once that many of the newest messages are on
-   * screen — walked back to with Load older — never on a Refresh, which shows
-   * the newest page alone and would otherwise lift it for nothing.
+   * read. The hold lifts only once every message the row counted — the newest
+   * `unreadCount` at or below its tip — is on screen, walked back to with Load
+   * older. Not on a Refresh, which shows the newest page alone, and not for
+   * anything that arrived after the row: those sit above the tip.
    */
   const markHeld = useRef(false);
-  const unreadNeeded = useRef(0);
-  /**
-   * The newest seq on screen when the hold was set. Messages the poll brings
-   * in afterwards sit above it and must not count towards the older unread
-   * still to be shown, so the release counts only what is at or below it.
-   */
-  const landingTip = useRef(0);
   const [unreadBeyond, setUnreadBeyond] = useState(false);
   /**
    * Annotations arrive from three places — a full load, the newest-page poll,
@@ -418,8 +412,6 @@ function Thread({
       if (firstUnread) unreadConsumed.current = true;
       if ('reached' in result && !result.reached) {
         markHeld.current = true;
-        unreadNeeded.current = result.needed;
-        landingTip.current = thread.messages.at(-1)?.seq ?? 0;
         setUnreadBeyond(true);
       }
       if (result.target !== undefined) seek.current = result.target;
@@ -596,10 +588,7 @@ function Thread({
   useEffect(() => {
     if (asOf !== undefined || newestId === undefined || marked.current === newestId) return;
     if (markHeld.current) {
-      const shown = messages.filter(
-        (m) => m.seq !== undefined && m.seq <= landingTip.current,
-      ).length;
-      if (shown < unreadNeeded.current) return;
+      if (countedUnread(messages, unreadCount ?? 0, unreadTip).length < (unreadCount ?? 0)) return;
       markHeld.current = false;
       setUnreadBeyond(false);
     }
@@ -609,7 +598,7 @@ function Thread({
       if (marked.current === newestId) marked.current = undefined;
       setError(toApiError(cause));
     });
-  }, [api, asOf, conversation, newestId, arrivals, count, messages]);
+  }, [api, asOf, conversation, newestId, arrivals, count, messages, unreadCount, unreadTip]);
 
   // As of a read, the rendered messages carry the title as it stood then;
   // the thread list is today's, so it is only a fallback while nothing has

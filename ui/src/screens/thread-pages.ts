@@ -93,18 +93,27 @@ export async function loadThread(
 }
 
 /**
- * Load enough history that the last `unreadCount` messages have a first row.
- *
- * `unreadCount` was counted when the catch-up row was made; messages that
- * arrived since sit on top of them, so counting back from the tip alone would
- * land late and let the mark pass messages never shown. `tip` is the row's
- * latestActivitySeq: anything above it is extra to count past — by seq, since
- * two messages can share a millisecond and never share a seq.
- *
- * `reached` is false when the page budget ran out first. The caller must not
- * treat that as a landing: the first unread is still beyond what is shown, and
- * `needed` says how many of the newest messages have to be on screen before
- * everything the row counted has been displayed.
+ * The messages a catch-up row counted: the newest `unreadCount` of those at or
+ * below its `latestActivitySeq`. Anything above the tip arrived after the row
+ * was made and is not one of them — by seq, since two messages can share a
+ * millisecond and never share a seq. Without a tip, simply the newest
+ * `unreadCount` on screen.
+ */
+export function countedUnread(
+  messages: readonly Message[],
+  unreadCount: number,
+  tip: number | undefined,
+): readonly Message[] {
+  const eligible =
+    tip === undefined ? messages : messages.filter((m) => m.seq !== undefined && m.seq <= tip);
+  return eligible.slice(Math.max(0, eligible.length - unreadCount));
+}
+
+/**
+ * Load enough history that every message the catch-up row counted is on
+ * screen, and name the oldest of them. `reached` is false when the page
+ * budget ran out first; the caller must not treat that as a landing — the
+ * first unread is still beyond what is shown.
  */
 export async function loadFirstUnread(
   api: ThreadReader,
@@ -116,28 +125,17 @@ export async function loadFirstUnread(
   readonly loaded: Loaded;
   readonly target: MessageId | undefined;
   readonly reached: boolean;
-  readonly needed: number;
 }> {
   let loaded = await loadThread(api, conversation, undefined, asOf);
-  const wanted = (): number =>
-    unreadCount +
-    (tip === undefined
-      ? 0
-      : loaded.messages.filter((m) => m.seq !== undefined && m.seq > tip).length);
+  const counted = (): readonly Message[] => countedUnread(loaded.messages, unreadCount, tip);
   while (
-    loaded.messages.length < wanted() &&
+    counted().length < unreadCount &&
     loaded.hasMore &&
     loaded.nextCursor !== null &&
     loaded.pages < MAX_PAGES_FOR_TARGET
   ) {
     loaded = await olderPage(api, conversation, loaded, asOf);
   }
-  const needed = wanted();
-  const reached = loaded.messages.length >= needed || !loaded.hasMore;
-  return {
-    loaded,
-    target: reached ? loaded.messages.at(-Math.min(needed, loaded.messages.length))?.id : undefined,
-    reached,
-    needed,
-  };
+  const reached = counted().length >= unreadCount || !loaded.hasMore;
+  return { loaded, target: reached ? counted()[0]?.id : undefined, reached };
 }
