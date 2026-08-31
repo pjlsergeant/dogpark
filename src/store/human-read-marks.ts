@@ -20,10 +20,12 @@ export function humanReadMarkStore(
         };
 
   return {
-    advanceHumanReadMark(conversation, seq) {
+    advanceHumanReadMark(conversation, message) {
       if (st.getConversation.get({ id: conversation }) === undefined)
         throw notFound('conversation');
-      return st.advanceHumanReadMark.run({ conversation, seq, at: now() }).changes > 0;
+      const row = st.messageById.get({ id: message });
+      if (row === undefined || row.conversation_id !== conversation) throw notFound('message');
+      return st.advanceHumanReadMark.run({ conversation, seq: row.seq, at: now() }).changes > 0;
     },
 
     listHumanCatchUp(options = {}) {

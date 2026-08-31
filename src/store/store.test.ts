@@ -207,7 +207,7 @@ describe('human catch-up marks', () => {
     const { agent, space } = scene(h);
     const first = post(h, agent, space, 'older', 'one');
     h.advance(1);
-    post(h, agent, space, 'newer', 'two');
+    const newer = post(h, agent, space, 'newer', 'two');
     const older = h.store.getConversation(first.conversation) as NonNullable<
       ReturnType<Store['getConversation']>
     >;
@@ -216,11 +216,11 @@ describe('human catch-up marks', () => {
       'newer',
       'older',
     ]);
-    const olderTip = h.store
-      .listHumanCatchUp({ limit: 10 })
-      .conversations.find((row) => row.id === older.id)!.latestActivitySeq;
-    expect(h.store.advanceHumanReadMark(older.id, olderTip)).toBe(true);
-    expect(h.store.advanceHumanReadMark(older.id, olderTip - 1)).toBe(false);
+    expect(h.store.advanceHumanReadMark(older.id, first.id)).toBe(true);
+    // Already there: forward only means no row changes, and no retreat.
+    expect(h.store.advanceHumanReadMark(older.id, first.id)).toBe(false);
+    // A message from another thread cannot mark this one.
+    expect(() => h.store.advanceHumanReadMark(older.id, newer.id)).toThrow();
     expect(h.store.listHumanCatchUp({ limit: 10 }).conversations.map((row) => row.title)).toEqual([
       'newer',
     ]);
@@ -237,8 +237,7 @@ describe('human catch-up marks', () => {
     const { agent, space } = scene(h);
     const quiet = post(h, agent, space, 'quiet', 'done');
     h.store.completeConversation({ kind: 'human' }, quiet.conversation);
-    const quietTip = h.store.listHumanCatchUp().conversations[0]!.latestActivitySeq;
-    h.store.advanceHumanReadMark(quiet.conversation, quietTip);
+    h.store.advanceHumanReadMark(quiet.conversation, quiet.id);
 
     const active = post(h, agent, space, 'active', 'read me');
     h.store.pinMessage({ kind: 'human' }, active.conversation, active.id);

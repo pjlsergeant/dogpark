@@ -85,7 +85,7 @@ required because the SPA shares an origin with the agent API.
 | POST | `/agents/:id/unarchive` | issues a fresh key; returns it once |
 | GET | `/spaces/:id/conversations` | the human's thread list |
 | GET | `/catch-up` | conversations with unread messages, newest activity first; `after`, `limit` |
-| POST | `/read-mark` | `{ conversation, seq }`; advances the human's displayed-through mark, forward only |
+| POST | `/read-mark` | `{ conversation, message }`; advances the human's mark to the newest message the Reader displayed, forward only; a message from another conversation is `not_found` |
 | PATCH | `/conversations/:id` | `{ title }`; renames a thread (ADR-0014) |
 | GET | `/conversations/:id/messages` | `order=newest` pages back from the end |
 | POST | `/conversations/:id/complete` | complete as the human; optional `{ idempotencyKey }` |

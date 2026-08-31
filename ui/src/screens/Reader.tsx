@@ -44,14 +44,12 @@ export function ReaderScreen({
   message,
   asOf,
   unreadCount,
-  latestActivitySeq,
 }: {
   space?: SpaceId | undefined;
   conversation?: ConversationId | undefined;
   message?: MessageId | undefined;
   asOf?: string | undefined;
   unreadCount?: number | undefined;
-  latestActivitySeq?: number | undefined;
 }): ReactNode {
   const api = useApi();
   const spaces = useAsync(() => api.listSpaces(), [api]);
@@ -91,7 +89,6 @@ export function ReaderScreen({
       message={message}
       asOf={asOf}
       unreadCount={unreadCount}
-      latestActivitySeq={latestActivitySeq}
       filter={filter}
       onFilter={setFilter}
       spaceNames={(spaces.state.data ?? []).map((s) => [s.id, s.name] as const)}
@@ -108,7 +105,6 @@ function SpaceReader({
   onFilter,
   spaceNames,
   unreadCount,
-  latestActivitySeq,
 }: {
   space: SpaceId;
   conversation?: ConversationId | undefined;
@@ -118,7 +114,6 @@ function SpaceReader({
   onFilter: (value: string) => void;
   spaceNames: readonly (readonly [SpaceId, string])[];
   unreadCount?: number | undefined;
-  latestActivitySeq?: number | undefined;
 }): ReactNode {
   const api = useApi();
   const conversations = useAsync(() => api.listConversations(space), [api, space]);
@@ -243,7 +238,6 @@ function SpaceReader({
             highlight={message}
             asOf={asOf}
             unreadCount={unreadCount}
-            latestActivitySeq={latestActivitySeq}
             summary={threads.find((t) => t.id === conversation) ?? null}
             onPosted={() => conversations.reload()}
           />
@@ -265,7 +259,6 @@ function Thread({
   summary,
   onPosted,
   unreadCount,
-  latestActivitySeq,
 }: {
   space: SpaceId;
   conversation: ConversationId;
@@ -280,7 +273,6 @@ function Thread({
   summary: ConversationSummary | null;
   onPosted: () => void;
   unreadCount?: number | undefined;
-  latestActivitySeq?: number | undefined;
 }): ReactNode {
   const api = useApi();
   const asOfRead = useAsync(
@@ -314,7 +306,7 @@ function Thread({
   /** Counts full loads, so the scroll effect can tell one from an append. */
   const [arrivals, setArrivals] = useState(0);
   const [unreadTarget, setUnreadTarget] = useState<MessageId | undefined>(undefined);
-  const markedSeq = useRef<number | undefined>(undefined);
+  const marked = useRef<MessageId | undefined>(undefined);
 
   const load = useCallback(async () => {
     const mine = (generation.current += 1);
@@ -469,20 +461,17 @@ function Thread({
     if (onFirstPage) bottom.current?.scrollIntoView({ block: 'end' });
   }, [arrivals, newestId, onFirstPage]);
 
+  // The human's mark follows the newest message on screen — every thread
+  // view, however it was reached, and never the as-of view, which shows what
+  // an agent saw rather than what the human is reading now. Once per newest
+  // id, so a re-render marks nothing twice; a failure is shown, not retried.
   useEffect(() => {
-    if (
-      asOf !== undefined ||
-      loaded === null ||
-      latestActivitySeq === undefined ||
-      markedSeq.current === latestActivitySeq
-    ) {
-      return;
-    }
-    markedSeq.current = latestActivitySeq;
-    void api.advanceReadMark(conversation, latestActivitySeq).catch((cause: unknown) => {
+    if (asOf !== undefined || newestId === undefined || marked.current === newestId) return;
+    marked.current = newestId;
+    void api.advanceReadMark(conversation, newestId).catch((cause: unknown) => {
       setError(toApiError(cause));
     });
-  }, [api, asOf, conversation, latestActivitySeq, loaded]);
+  }, [api, asOf, conversation, newestId]);
 
   // As of a read, the rendered messages carry the title as it stood then;
   // the thread list is today's, so it is only a fallback while nothing has

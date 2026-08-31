@@ -92,7 +92,8 @@ export interface DogparkAdminApi {
   listConversations(space: SpaceId): Promise<readonly ConversationSummary[]>;
   readConversation(id: ConversationId, query?: ConversationQuery): Promise<MessagePage>;
   listCatchUp(after?: string | undefined): Promise<HumanCatchUpPage>;
-  advanceReadMark(conversation: ConversationId, seq: number): Promise<void>;
+  /** The newest message the thread view has displayed; forward-only server-side. */
+  advanceReadMark(conversation: ConversationId, message: MessageId): Promise<void>;
   renameConversation(id: ConversationId, title: string): Promise<Conversation>;
   post(request: HumanPostRequest): Promise<HumanPostResult>;
   completeConversation(id: ConversationId): Promise<ConversationAnnotations>;

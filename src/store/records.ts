@@ -417,7 +417,11 @@ export interface Store {
    * surface's — no call enumerates a space's conversations for an agent.
    */
   listConversationSummaries(space: SpaceId): readonly ConversationSummary[];
-  advanceHumanReadMark(conversation: ConversationId, seq: number): boolean;
+  /**
+   * Move the human's mark on a conversation up to a message it displayed.
+   * Forward only: a message behind the mark is a no-op, not a retreat.
+   */
+  advanceHumanReadMark(conversation: ConversationId, message: MessageId): boolean;
   listHumanCatchUp(options?: {
     readonly after?: QueryCursor | undefined;
     readonly limit?: number | undefined;

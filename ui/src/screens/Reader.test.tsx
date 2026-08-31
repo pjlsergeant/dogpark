@@ -34,7 +34,6 @@ function renderCatchUpThread(overrides = {}, asOf?: string) {
           space={fixture.delivery.id}
           conversation={fixture.rotation.id}
           unreadCount={3}
-          latestActivitySeq={42}
           asOf={asOf}
         />
       </ToastHost>
@@ -52,7 +51,21 @@ describe('Reader catch-up marks', () => {
     )!;
     expect(firstUnread.closest('article')?.className).toContain('highlight');
     await waitFor(() => expect(advanceReadMark).toHaveBeenCalledTimes(1));
-    expect(advanceReadMark).toHaveBeenCalledWith(fixture.rotation.id, 42);
+    expect(advanceReadMark).toHaveBeenCalledWith(
+      fixture.rotation.id,
+      fixture.rotationMessages.at(-1)!.id,
+    );
+  });
+
+  test('marks the newest displayed message on an ordinary thread view too', async () => {
+    const advanceReadMark = vi.fn(() => Promise.resolve());
+    renderReader({ advanceReadMark });
+    await screen.findAllByText(/Do not touch production/);
+    await waitFor(() => expect(advanceReadMark).toHaveBeenCalledTimes(1));
+    expect(advanceReadMark).toHaveBeenCalledWith(
+      fixture.rotation.id,
+      fixture.rotationMessages.at(-1)!.id,
+    );
   });
 
   test('does not advance a mark in an as-of view', async () => {

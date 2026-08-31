@@ -2269,7 +2269,7 @@ describe("the human's long poll and space counts", () => {
         target: { space: space.id, title: 'news' },
         body: 'hello',
       })
-    ).json() as { conversation: { id: string } };
+    ).json() as { conversation: { id: string }; message: { id: string } };
 
     const page = HumanCatchUpPageSchema.parse((await me.get('/api/admin/catch-up')).json());
     expect(page.conversations[0]).toMatchObject({ title: 'news', unreadCount: 1 });
@@ -2277,7 +2277,7 @@ describe("the human's long poll and space counts", () => {
       (
         await me.send('POST', '/api/admin/read-mark', {
           conversation: posted.conversation.id,
-          seq: page.conversations[0]!.latestActivitySeq,
+          message: posted.message.id,
         })
       ).statusCode,
     ).toBe(204);

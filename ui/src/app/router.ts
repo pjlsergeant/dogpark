@@ -21,8 +21,8 @@ export type Route =
       readonly message?: MessageId | undefined;
       /** A read-log row id: the reader shows the thread as it read then. */
       readonly asOf?: string | undefined;
+      /** From a catch-up row: how many of the newest messages are unread. */
       readonly unreadCount?: number | undefined;
-      readonly latestActivitySeq?: number | undefined;
     }
   | { readonly name: 'reads'; readonly agent?: AgentId | undefined }
   | { readonly name: 'escalations' }
@@ -73,7 +73,6 @@ export function parseRoute(hash: string): Route {
         message: query.get('m') === null ? undefined : (query.get('m') as MessageId),
         asOf: query.get('asOf') ?? undefined,
         unreadCount: numberParam(query.get('unread')),
-        latestActivitySeq: numberParam(query.get('tip')),
       };
     case 'reads': {
       const agent = query.get('agent');
@@ -121,12 +120,8 @@ export const href = {
     const query = params.toString();
     return query === '' ? path : `${path}?${query}`;
   },
-  readCatchUp: (
-    space: SpaceId,
-    conversation: ConversationId,
-    unreadCount: number,
-    latestActivitySeq: number,
-  ): string => `${href.read(space, conversation)}?unread=${unreadCount}&tip=${latestActivitySeq}`,
+  readCatchUp: (space: SpaceId, conversation: ConversationId, unreadCount: number): string =>
+    `${href.read(space, conversation)}?unread=${unreadCount}`,
   reads: (agent?: AgentId): string =>
     agent === undefined ? '#/reads' : `#/reads?agent=${encodeURIComponent(agent)}`,
   escalations: (): string => '#/escalations',

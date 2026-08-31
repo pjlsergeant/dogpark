@@ -283,8 +283,8 @@ export function createHttpApi(): DogparkAdminApi {
         await request('GET', '/catch-up', { query: { after } }),
       );
     },
-    async advanceReadMark(conversation, seq) {
-      await request('POST', '/read-mark', { json: { conversation, seq } });
+    async advanceReadMark(conversation, message) {
+      await request('POST', '/read-mark', { json: { conversation, message } });
     },
     async renameConversation(id, title) {
       return decode(

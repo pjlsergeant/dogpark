@@ -432,10 +432,8 @@ export const DescriptionBody = z.strictObject({ description: z.string() });
 export const TitleBody = z.strictObject({ title: z.string().min(1).max(MAX_TITLE_CHARS) });
 export const KeyBody = z.strictObject({ label: z.string().min(1).max(128).optional() });
 export const PasswordBody = z.strictObject({ password: z.string().min(1).max(1024) });
-export const HumanReadMarkBody = z.strictObject({
-  conversation: Id,
-  seq: z.number().int().nonnegative(),
-});
+/** The newest message the Reader has displayed; the server resolves its seq. */
+export const HumanReadMarkBody = z.strictObject({ conversation: Id, message: Id });
 
 export const StreamQuery = z.strictObject({
   after: z.string().min(1).optional(),

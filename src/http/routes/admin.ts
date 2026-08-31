@@ -335,7 +335,7 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
         const body = parse(HumanReadMarkBody, request.body, 'request body');
         const changed = ctx.store.advanceHumanReadMark(
           asConversationId(body.conversation),
-          body.seq,
+          body.message as MessageId,
         );
         if (changed) ctx.writes.adminOnly();
         return reply.code(204).send();
