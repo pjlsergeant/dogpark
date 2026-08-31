@@ -115,9 +115,9 @@ describe('DOGPARK_TRUST_PROXY', () => {
 
 describe('DOGPARK_HOST', () => {
   // The exact name is ADR-0016's arm (docs/adr/README.md): the default binds
-  // every interface in both proxy modes, so a container is reachable without a
-  // proxy in front.
-  it('is every interface in both modes, so a container is reachable without a proxy', () => {
+  // every IPv4 interface in both proxy modes, so a container is reachable
+  // without a proxy in front.
+  it('is every IPv4 interface in both modes, so a container is reachable without a proxy', () => {
     expect(loadConfig(base).listenHost).toBe('0.0.0.0');
     expect(loadConfig({ ...base, DOGPARK_TRUST_PROXY: '127.0.0.1' }).listenHost).toBe('0.0.0.0');
   });

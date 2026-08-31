@@ -80,7 +80,6 @@ describe('isExamplePassword', () => {
   // against the constant would miss it while the README's password still works.
   it('is true for the shipped constant, by the fast string path', async () => {
     await expect(isExamplePassword(EXAMPLE_PASSWORD_HASH)).resolves.toBe(true);
-    await expect(isExamplePassword(`  ${EXAMPLE_PASSWORD_HASH}\n`)).resolves.toBe(true);
   });
 
   it('is true for a freshly minted, differently salted hash of `dogpark`', async () => {

@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { loadConfig } from './config.js';
 import { buildApp } from './http/app.js';
-import { EXAMPLE_PASSWORD_HASH, hashPassword } from './http/password.js';
+import { EXAMPLE_PASSWORD, EXAMPLE_PASSWORD_HASH, hashPassword } from './http/password.js';
 import { CLIENT_PATH, GUIDE_PATH } from './http/static.js';
 import { openStore } from './store/index.js';
 
@@ -182,12 +182,14 @@ describe('docs drift guards', () => {
 });
 
 describe('the example password', () => {
-  // README.md's quick-start `docker run` carries a hash of `dogpark`, and the
-  // server warns while that hash is in use. The two are honest only together:
-  // a README that drifts to another hash would ship a password the server no
-  // longer recognises as the example.
-  it('is the hash README.md ships', () => {
+  // README.md's quick-start `docker run` sets the hash the server treats as
+  // the example, and names the password it unlocks. Anchored to the actual
+  // assignment and the actual sentence, not to the strings appearing somewhere:
+  // a README whose command drifted to another hash, or whose printed password
+  // drifted from the constant, would otherwise still pass.
+  it('is what README.md ships in its quick start, and names the password it unlocks', () => {
     const readme = readFileSync(join(ROOT, 'README.md'), 'utf8');
-    expect(readme).toContain(EXAMPLE_PASSWORD_HASH);
+    expect(readme).toContain(`-e DOGPARK_PASSWORD_HASH='${EXAMPLE_PASSWORD_HASH}'`);
+    expect(readme).toContain(`The password is \`${EXAMPLE_PASSWORD}\`.`);
   });
 });
