@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { AgentRecord } from '../../store/index.js';
-import type { Agent, AttachmentId } from '../../types.js';
+import type { AdminAgent, Agent, AttachmentId, SpaceSummary } from '../../types.js';
 import { authenticateHuman, csrfTokenFor, requireSession, SESSION_COOKIE } from '../auth.js';
 import type { AppContext } from '../context.js';
 import { notFound, unauthenticated } from '../errors.js';
@@ -47,7 +47,7 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
     return record;
   };
 
-  const withKeys = (record: AgentRecord): unknown =>
+  const withKeys = (record: AgentRecord): AdminAgent =>
     adminAgent(record, ctx.store.listKeys(record.id));
 
   return async function routes(app: FastifyInstance): Promise<void> {
@@ -112,7 +112,9 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
       // Spaces and membership
       // ---------------------------------------------------------------------
 
-      guarded.get('/spaces', async () => ctx.store.listSpaceSummaries());
+      guarded.get('/spaces', async (): Promise<readonly SpaceSummary[]> =>
+        ctx.store.listSpaceSummaries(),
+      );
 
       /**
        * The human's long poll. A version that moves on every mutation the

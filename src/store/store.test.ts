@@ -1252,6 +1252,25 @@ describe('a read only reconstructs a space the agent could see then', () => {
       h.store.readConversationAsOf(read, first.conversation)?.messages.map((m) => m.body),
     ).toEqual(['in the room']);
   });
+
+  it('keeps a legacy row visible when the revocation shares the read millisecond', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const first = post(h, agent, space, 'daily', 'in the room');
+    // Read and revoke in the same millisecond: the clock never moves between
+    // them, so `revoked_at` equals `read_at` to the millisecond.
+    h.store.readSpace({ kind: 'agent', id: agent }, space);
+    const read = h.store.readReadLog({ agent }).entries[0]?.id ?? '';
+    h.store.revokeMembership(agent, space);
+    // A row that recorded no tip falls back to the millisecond clock; the coarse
+    // bound includes a message in the read's own millisecond, so a revocation in
+    // that same millisecond must not hide the conversation the message shows.
+    h.store.database.prepare('UPDATE read_log SET tip_seq = NULL').run();
+
+    expect(
+      h.store.readConversationAsOf(read, first.conversation)?.messages.map((m) => m.body),
+    ).toEqual(['in the room']);
+  });
 });
 
 describe('the wording of a read is reproducible after renames', () => {

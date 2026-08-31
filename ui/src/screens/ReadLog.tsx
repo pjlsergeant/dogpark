@@ -27,6 +27,13 @@ import { ReadLogRows } from './ReadLogRows.js';
 /** How often the live tail is checked while the tab is in front. */
 const POLL_MS = 5_000;
 
+/**
+ * The most live rows the poll will hold ahead of the first page. On a busy
+ * instance the tail would otherwise grow without bound; past this, a poll that
+ * is not reading history falls back to the honest full reload instead.
+ */
+const LIVE_CAP = 300;
+
 export function ReadLogScreen({ agent }: { agent?: AgentId | undefined }): ReactNode {
   const api = useApi();
   const agents = useAsync(() => api.listAgents(), [api]);
@@ -43,8 +50,20 @@ export function ReadLogScreen({ agent }: { agent?: AgentId | undefined }): React
    */
   const [live, setLive] = useState<readonly ReadLogEntry[]>([]);
 
-  // A filter change starts a clean list; the paged rows reset themselves.
-  useEffect(() => setLive([]), [agent]);
+  /**
+   * Every filter change gets a number, and unmount takes the next one. A poll
+   * that was already out when one happened lands into a view it no longer
+   * belongs to, so it discards its result rather than dropping the previous
+   * filter's rows into the new one.
+   */
+  const generation = useRef(0);
+  useEffect(() => {
+    generation.current += 1;
+    setLive([]);
+    return () => {
+      generation.current += 1;
+    };
+  }, [agent]);
 
   // What is on screen now, newest first. The poll folds against this whole
   // list, and a live row that the first page has since caught up with is
@@ -55,12 +74,29 @@ export function ReadLogScreen({ agent }: { agent?: AgentId | undefined }): React
     return [...live.filter((entry) => !paged.has(entry.id)), ...pages.items];
   }, [live, pages.items]);
 
-  // The poll runs from a timer, so it reads the current paged rows and load
-  // state through refs rather than closing over a stale render.
+  // Refresh is the honest full reload: drop the live tail and let the paged
+  // list fetch its first page anew.
+  const refresh = useCallback(() => {
+    setLive([]);
+    pages.refresh();
+  }, [pages]);
+
+  // The poll runs from a timer, so it reads the current rows, load state and
+  // the honest reload through refs rather than closing over a stale render.
+  const liveRef = useRef(live);
+  liveRef.current = live;
   const pagedRef = useRef(pages.items);
   pagedRef.current = pages.items;
   const loadingRef = useRef(false);
   loadingRef.current = pages.first.status === 'loading';
+  // Whether the human has paged back into history, and whether the first page
+  // is showing a Failure: both decide what a poll does with what it finds.
+  const pagedBackRef = useRef(pages.paged);
+  pagedBackRef.current = pages.paged;
+  const firstErrorRef = useRef(pages.first.error);
+  firstErrorRef.current = pages.first.error;
+  const refreshRef = useRef(refresh);
+  refreshRef.current = refresh;
   const polling = useRef(false);
 
   const poll = useCallback(async () => {
@@ -68,20 +104,37 @@ export function ReadLogScreen({ agent }: { agent?: AgentId | undefined }): React
     // out; the interval will come round again.
     if (polling.current || loadingRef.current || document.visibilityState !== 'visible') return;
     polling.current = true;
+    const mine = generation.current;
     try {
       const page = await api.listReads({ ...(agent === undefined ? {} : { agent }) });
-      setLive((current) => {
-        const seen = [...current, ...pagedRef.current];
-        const merged = mergeReads(seen, page.items);
-        // Unchanged (nothing new, or a gap left to Refresh): keep what we hold.
-        if (merged === seen) return current;
-        // merged is [...fresh, ...seen]; keep the part ahead of the first page.
-        const next = merged.slice(0, merged.length - pagedRef.current.length);
-        // An empty log hands back a fresh empty array each poll; do not let that
-        // churn a render out of nothing.
-        if (next.length === 0 && current.length === 0) return current;
-        return next;
-      });
+      // The filter moved, or the screen unmounted, while this was out.
+      if (mine !== generation.current) return;
+      // A poll that succeeds while the first page is stuck behind a Failure
+      // banner must recover the screen visibly, not quietly stack live rows
+      // behind an error that never clears.
+      if (firstErrorRef.current !== null) {
+        refreshRef.current();
+        return;
+      }
+      const seen = [...liveRef.current, ...pagedRef.current];
+      const result = mergeReads(seen, page.items);
+      if (result.kind === 'unchanged') return;
+      // A gap the poll cannot bridge without a hole. If the human is at the
+      // tip, catch the screen up honestly rather than leaving it silently
+      // behind; if they have paged back into history, leave it to their Refresh.
+      if (result.kind === 'gap') {
+        if (!pagedBackRef.current) refreshRef.current();
+        return;
+      }
+      // result is [...fresh, ...seen]; keep the part ahead of the first page.
+      const next = result.rows.slice(0, result.rows.length - pagedRef.current.length);
+      // Past the cap, the tail would grow without bound: reload honestly at the
+      // tip, or, when reading history, keep what is held rather than piling on.
+      if (next.length > LIVE_CAP) {
+        if (!pagedBackRef.current) refreshRef.current();
+        return;
+      }
+      setLive(next);
     } catch {
       // A poll that fails is a poll that fails; the next tick tries again.
     } finally {
@@ -102,13 +155,6 @@ export function ReadLogScreen({ agent }: { agent?: AgentId | undefined }): React
       document.removeEventListener('visibilitychange', onVisibility);
     };
   }, [poll]);
-
-  // Refresh is the honest full reload: drop the live tail and let the paged
-  // list fetch its first page anew.
-  const refresh = useCallback(() => {
-    setLive([]);
-    pages.refresh();
-  }, [pages]);
 
   return (
     <section className="screen">

@@ -1,28 +1,61 @@
 /**
  * Fold a freshly fetched newest page into the rows already shown.
  *
- * The read log is newest-first and append-only, so anything new sits at the
- * front. A row already held is dropped, which keeps the order stable and the
- * React keys steady — no flicker, no reshuffle. Nothing is ever removed here:
- * the poll only ever adds.
+ * The read log is newest-first and append-only at the head, so anything new
+ * sits at the front and a row already held keeps its place — order stays
+ * stable and the React keys steady, no flicker, no reshuffle.
  *
- * If the fetched page and what is held share no row, more than a page has
- * arrived since the last look and a plain prepend would leave a hole in the
- * middle; the held list is returned untouched and that gap is left to a
- * Refresh, which is honest about replacing everything. This mirrors the
- * Reader's tip poll.
+ * Held rows are not immutable, though: a compaction sweep MUTATES a retained
+ * row (its `collapsedCount` and `firstReadAt` move as it swallows a run of
+ * empty polls) and deletes the siblings it absorbed. So a re-fetched row wins —
+ * it replaces the copy held under the same id, fresh data over stale. The
+ * deleted siblings are the one thing this cannot fix: they linger on screen
+ * until a Refresh, which is honest about replacing everything.
+ *
+ * The result says which of three things happened, because reference equality
+ * alone cannot tell them apart:
+ *   - `unchanged`: the page brought no new row and changed no held one.
+ *   - `gap`: the page and the held list share no row, so more than a page has
+ *     arrived since the last look and a plain prepend would leave a hole in the
+ *     middle. The caller decides whether to refresh or leave it (ReadLog.tsx).
+ *   - `merged`: fresh rows to prepend and/or held rows to replace, in `rows`.
+ * This mirrors the Reader's tip poll.
  */
 import type { ReadLogEntry } from '../api/index.js';
+
+export type MergeReads =
+  | { readonly kind: 'unchanged' }
+  | { readonly kind: 'gap' }
+  | { readonly kind: 'merged'; readonly rows: readonly ReadLogEntry[] };
+
+/** The only fields a held row can change under: what a compaction sweep moves. */
+function compacted(a: ReadLogEntry, b: ReadLogEntry): boolean {
+  return a.collapsedCount !== b.collapsedCount || a.firstReadAt !== b.firstReadAt;
+}
 
 export function mergeReads(
   existing: readonly ReadLogEntry[],
   fetched: readonly ReadLogEntry[],
-): readonly ReadLogEntry[] {
-  if (existing.length === 0) return fetched;
+): MergeReads {
+  if (existing.length === 0) {
+    return fetched.length === 0 ? { kind: 'unchanged' } : { kind: 'merged', rows: fetched };
+  }
   const held = new Set(existing.map((entry) => entry.id));
   const fresh = fetched.filter((entry) => !held.has(entry.id));
-  if (fresh.length === 0) return existing;
   // Shared nothing: a gap the poll cannot bridge without a hole.
-  if (fresh.length === fetched.length) return existing;
-  return [...fresh, ...existing];
+  if (fresh.length > 0 && fresh.length === fetched.length) return { kind: 'gap' };
+
+  // A re-fetched row replaces the held one where a compaction has moved it on.
+  const byId = new Map(fetched.map((entry) => [entry.id, entry]));
+  let changed = fresh.length > 0;
+  const rebuilt = existing.map((entry) => {
+    const latest = byId.get(entry.id);
+    if (latest !== undefined && compacted(latest, entry)) {
+      changed = true;
+      return latest;
+    }
+    return entry;
+  });
+  if (!changed) return { kind: 'unchanged' };
+  return { kind: 'merged', rows: [...fresh, ...rebuilt] };
 }

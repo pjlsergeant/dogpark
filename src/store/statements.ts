@@ -337,12 +337,15 @@ export function prepareStatements(db: Db) {
         'AND granted_seq <= @tip AND (revoked_seq IS NULL OR revoked_seq > @tip) LIMIT 1',
     ),
     // The same question against the clock, for a legacy row that recorded no
-    // tip: the millisecond-coarse fallback the as-of ceiling already uses, so
-    // a grant or revocation in the read's own millisecond is treated the way
-    // that path treats a message there.
+    // tip: the millisecond-coarse fallback the as-of ceiling already uses. That
+    // ceiling is `read_at + 1ms` exclusive, so a message stamped in the read's
+    // own millisecond is on the page; to stay consistent, a revocation in that
+    // same millisecond must not hide the conversation that message belongs to.
+    // Hence `>= @readAt` keeps membership — only a revocation strictly before
+    // the read removes it — while a grant at or before the read still grants it.
     membershipAtTime: prepare<{ agent: string; space: string; readAt: string }, { id: string }>(
       'SELECT id FROM membership WHERE agent_id = @agent AND space_id = @space ' +
-        'AND granted_at <= @readAt AND (revoked_at IS NULL OR revoked_at > @readAt) LIMIT 1',
+        'AND granted_at <= @readAt AND (revoked_at IS NULL OR revoked_at >= @readAt) LIMIT 1',
     ),
     // Includes the caller: a roster that omits you is not a roster.
     peers: prepare<{ agent: string; space: string | null }, AgentNameRow>(

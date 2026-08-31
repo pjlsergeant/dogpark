@@ -385,6 +385,14 @@ function Thread({
 
   const messages = loaded?.messages ?? [];
   const count = messages.length;
+  /**
+   * As of a past read, the messages call can 404 for a thread the agent could
+   * not see then (the membership check refuses it) — or for a read or thread
+   * that no longer exists. The server deliberately does not distinguish the
+   * two. Either way the "as X could have seen it" banner would be a success
+   * frame around a refusal, so it is reframed and the pane says so honestly.
+   */
+  const asOfRefused = asOf !== undefined && error !== null && error.code === 'not_found';
   const onFirstPage = loaded?.pages === 1;
   // The newest message's id, not the count: a full page replaced by a full
   // page — the human posting into a thread longer than one page — changes
@@ -457,6 +465,13 @@ function Thread({
             </>
           ) : asOfRead.state.data === null || asOfRead.state.data === undefined ? (
             'As it was read — loading which read…'
+          ) : asOfRefused ? (
+            <>
+              As read by <strong>{asOfRead.state.data.agent.displayName}</strong> at{' '}
+              <time dateTime={asOfRead.state.data.at}>{absoluteTime(asOfRead.state.data.at)}</time>{' '}
+              — but this thread cannot be shown as it was.{' '}
+              <a href={href.read(space, conversation)}>Back to now</a>
+            </>
           ) : (
             <>
               As <strong>{asOfRead.state.data.agent.displayName}</strong> could have seen it at{' '}
@@ -487,7 +502,16 @@ function Thread({
 
       <div className="thread-body">
         {busy && loaded === null && <Loading what="messages" />}
-        {error !== null && <Failure error={error} onRetry={() => void load()} />}
+        {asOfRefused ? (
+          <Empty>
+            Nothing here to reconstruct. Either{' '}
+            <strong>{asOfRead.state.data?.agent.displayName ?? 'this agent'}</strong> could not see
+            this thread at that read, or the read or conversation no longer exists — the record does
+            not distinguish the two.
+          </Empty>
+        ) : (
+          error !== null && <Failure error={error} onRetry={() => void load()} />
+        )}
         {loaded !== null && count === 0 && (
           <Empty>
             {asOf === undefined

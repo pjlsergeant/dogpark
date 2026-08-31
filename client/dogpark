@@ -140,10 +140,14 @@ cmd_read() {  # read CONV_ID [N] [MSG_ID...]   full bodies of a thread's newest 
   # "${arr[@]}" on an empty array as unbound.
   local ids_json='[]'
   if [ ${#ids[@]} -gt 0 ]; then
-    local mid
+    # The server clamps a page to 1000 rows (MAX_PAGE_LIMIT), so once N reaches
+    # that, raising it buys nothing: the window is as far back as one page goes.
+    local mid tail
     for mid in "${ids[@]}"; do
-      echo "$page" | jq -e --arg m "$mid" 'any(.messages[]; .id == $m)' >/dev/null \
-        || echo "dogpark: message $mid not in the newest $n of this thread; raise N to reach further back" >&2
+      echo "$page" | jq -e --arg m "$mid" 'any(.messages[]; .id == $m)' >/dev/null && continue
+      if [ "$n" -lt 1000 ]; then tail="raise N to reach further back"
+      else tail="the server returns at most 1000 per page, so it is older than the newest 1000 here"; fi
+      echo "dogpark: message $mid not in the newest $n of this thread; $tail" >&2
     done
     ids_json=$(jq -n '$ARGS.positional' --args "${ids[@]}")
   fi
