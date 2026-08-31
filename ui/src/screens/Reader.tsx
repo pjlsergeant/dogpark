@@ -384,12 +384,14 @@ function Thread({
     try {
       const firstUnread =
         seek.current === undefined && unreadCount !== undefined && !unreadConsumed.current;
-      unreadConsumed.current = true;
       const result = firstUnread
         ? await loadFirstUnread(api, conversation, unreadCount, asOf)
         : { loaded: await loadThread(api, conversation, seek.current, asOf), target: undefined };
       const thread = result.loaded;
       if (mine !== generation.current) return;
+      // Consumed by a load that landed, so a transient failure's Retry still
+      // keeps the promise the catch-up row made.
+      if (firstUnread) unreadConsumed.current = true;
       if (result.target !== undefined) seek.current = result.target;
       setUnreadTarget(result.target);
       setLoaded(thread);

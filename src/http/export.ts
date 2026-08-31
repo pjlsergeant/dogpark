@@ -89,7 +89,11 @@ export function markdownText(value: string): string {
  * structure. The first such character is escaped; `*` and `_` already are.
  */
 export function markdownLine(value: string): string {
+  // Leading whitespace has no meaning on a line of its own, and CommonMark
+  // would read a marker behind up to three spaces — or a code block behind
+  // four — so it goes first.
   return markdownText(value)
+    .replace(/^\s+/, '')
     .replace(/^(\d+)([.)])/, '$1\\$2')
     .replace(/^([-+])/, '\\$1');
 }

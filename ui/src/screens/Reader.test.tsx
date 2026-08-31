@@ -87,6 +87,27 @@ describe('Reader catch-up marks', () => {
     );
   });
 
+  test('a first load that fails keeps the catch-up landing for Try again', async () => {
+    let reads = 0;
+    const base = fixtureApi();
+    renderCatchUpThread({
+      advanceReadMark: () => Promise.resolve(),
+      readConversation: (
+        id: ConversationId,
+        query?: Parameters<typeof base.readConversation>[1],
+      ) =>
+        (reads += 1) === 1
+          ? Promise.reject(new Error('flaky network'))
+          : base.readConversation(id, query),
+    });
+    await screen.findByText(/flaky network/);
+    await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    const firstUnread = (await screen.findAllByText(/Do not touch production/)).find(
+      (node) => node.closest('article') !== null,
+    )!;
+    await waitFor(() => expect(firstUnread.closest('article')?.className).toContain('highlight'));
+  });
+
   test('marks the newest displayed message on an ordinary thread view too', async () => {
     const advanceReadMark = vi.fn(() => Promise.resolve());
     renderReader({ advanceReadMark });
