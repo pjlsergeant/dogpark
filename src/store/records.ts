@@ -9,6 +9,7 @@ import type {
   Attachment,
   AttachmentId,
   Conversation,
+  ConversationAnnotations,
   ConversationId,
   Cursor,
   IdempotencyKey,
@@ -104,6 +105,8 @@ export interface PostMessageInput {
   readonly attachments?: readonly AttachmentInput[] | undefined;
   /** Scoped per writer: each agent, and the human (schema.sql). */
   readonly idempotencyKey?: IdempotencyKey | undefined;
+  readonly complete?: true | undefined;
+  readonly pin?: true | undefined;
 }
 
 export interface PostMessageResult {
@@ -111,6 +114,7 @@ export interface PostMessageResult {
   readonly conversation: Conversation;
   /** False when an idempotency key replayed an earlier write. */
   readonly created: boolean;
+  readonly annotations: ConversationAnnotations;
 }
 
 export interface ReadStreamArgs {
@@ -192,6 +196,7 @@ export interface ConversationSummary extends Conversation {
    * `lastActivityAt`.
    */
   readonly lastSender: Sender | null;
+  readonly annotations: ConversationAnnotations;
 }
 
 /**
@@ -389,6 +394,33 @@ export interface Store {
    * surface's — no call enumerates a space's conversations for an agent.
    */
   listConversationSummaries(space: SpaceId): readonly ConversationSummary[];
+  getConversationAnnotations(conversation: ConversationId): ConversationAnnotations;
+  getConversationAnnotationsAsOf(
+    conversation: ConversationId,
+    tip: number,
+    labelSeq?: number,
+  ): ConversationAnnotations;
+  completeConversation(
+    actor: Reader,
+    conversation: ConversationId,
+    idempotencyKey?: IdempotencyKey,
+  ): boolean;
+  reopenConversation(
+    actor: Reader,
+    conversation: ConversationId,
+    idempotencyKey?: IdempotencyKey,
+  ): boolean;
+  pinMessage(
+    actor: Reader,
+    conversation: ConversationId,
+    message: MessageId,
+    idempotencyKey?: IdempotencyKey,
+  ): boolean;
+  unpinConversation(
+    actor: Reader,
+    conversation: ConversationId,
+    idempotencyKey?: IdempotencyKey,
+  ): boolean;
 
   // Messages
   postMessage(input: PostMessageInput): PostMessageResult;

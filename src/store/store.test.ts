@@ -201,6 +201,83 @@ describe('operator descriptions', () => {
   });
 });
 
+describe('conversation annotations', () => {
+  it('derives sticky status and one movable pin per actor, including as-of state', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const first = post(h, agent, space, 'decision', 'first');
+    const conversation = first.conversation;
+
+    expect(h.store.getConversationAnnotations(conversation)).toEqual({ status: 'open', pins: [] });
+    h.store.completeConversation({ kind: 'agent', id: agent }, conversation);
+    h.store.pinMessage({ kind: 'agent', id: agent }, conversation, first.id);
+    const tip = h.store.database
+      .prepare('SELECT MAX(seq) AS seq FROM conversation_annotation')
+      .get() as { seq: number };
+    const second = post(h, agent, space, 'decision', 'second');
+    h.store.pinMessage({ kind: 'agent', id: agent }, conversation, second.id);
+
+    expect(h.store.getConversationAnnotations(conversation)).toMatchObject({
+      status: 'complete',
+      pins: [{ message: second.id, actor: { kind: 'agent', id: agent } }],
+    });
+    expect(h.store.getConversationAnnotationsAsOf(conversation, tip.seq)).toMatchObject({
+      status: 'complete',
+      pins: [{ message: first.id, actor: { kind: 'agent', id: agent } }],
+    });
+    expect(
+      h.store.postMessage({
+        sender: { kind: 'agent', id: agent },
+        target: { conversation },
+        body: 'still complete',
+      }).annotations.status,
+    ).toBe('complete');
+  });
+
+  it('enforces access and pin target, and idempotent no-ops append nothing', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const outsider = h.store.createAgent('outsider').id;
+    const message = post(h, agent, space, 'decision', 'one');
+    const conversation = message.conversation;
+    expectStoreError(
+      () => h.store.completeConversation({ kind: 'agent', id: outsider }, conversation),
+      'not_found',
+    );
+
+    const otherSpace = h.store.createSpace('other').id;
+    h.store.grantMembership(agent, otherSpace);
+    const other = post(h, agent, otherSpace, 'other', 'wrong target');
+    expectStoreError(
+      () => h.store.pinMessage({ kind: 'agent', id: agent }, conversation, other.id),
+      'not_found',
+    );
+
+    expect(h.store.completeConversation({ kind: 'agent', id: agent }, conversation)).toBe(true);
+    expect(h.store.completeConversation({ kind: 'agent', id: agent }, conversation)).toBe(false);
+    expect(h.store.unpinConversation({ kind: 'agent', id: agent }, conversation)).toBe(false);
+    expect(
+      h.store.database.prepare('SELECT COUNT(*) AS n FROM conversation_annotation').get(),
+    ).toEqual({ n: 1 });
+  });
+
+  it('applies complete and pin atomically with a post', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const result = h.store.postMessage({
+      sender: { kind: 'agent', id: agent },
+      target: { space, title: 'summary' },
+      body: 'the answer',
+      complete: true,
+      pin: true,
+    });
+    expect(result.annotations).toMatchObject({
+      status: 'complete',
+      pins: [{ message: result.message.id, actor: { kind: 'agent', id: agent } }],
+    });
+  });
+});
+
 describe('messages are immutable', () => {
   // ADR-0004. Asserted against what a reader gets back, because a test of the
   // method names would pass just as happily beside a `reviseMessage`.

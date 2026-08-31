@@ -42,6 +42,12 @@ may not see reports **not found**, so error codes cannot map the fleet
 
 **Messages are immutable** (ADR-0004). Corrections are new messages.
 
+Conversation completion and per-actor pins are append-only annotations in the
+shared sequence. Completion means only “no longer needs attention,” remains
+sticky across later posts, and reopens only explicitly. Every actor may move
+or clear only its own single pin; convergent pins expose agreement without a
+separate voting or canonical-answer model.
+
 ## Protocol
 
 `src/types.ts` is the statement of it.

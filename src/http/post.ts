@@ -39,10 +39,16 @@ export async function submitPost<T extends PostPayload>(
       ...(payload.idempotencyKey === undefined
         ? {}
         : { idempotencyKey: asIdempotencyKey(payload.idempotencyKey) }),
+      ...(payload.complete === true ? { complete: true as const } : {}),
+      ...(payload.pin === true ? { pin: true as const } : {}),
     });
     if (!result.created) await collected.discard();
     else ctx.writes.agentVisible();
-    return { message: result.message, conversation: result.conversation };
+    return {
+      message: result.message,
+      conversation: result.conversation,
+      annotations: result.annotations,
+    };
   } catch (error) {
     await collected.discard();
     throw error;

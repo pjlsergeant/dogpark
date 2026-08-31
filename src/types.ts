@@ -91,6 +91,9 @@ export type Timestamp = string & { readonly __brand: 'Timestamp' };
  */
 export type IdempotencyKey = string & { readonly __brand: 'IdempotencyKey' };
 
+export const ConversationStatusSchema = z.enum(['open', 'complete']);
+export type ConversationStatus = z.infer<typeof ConversationStatusSchema>;
+
 // ---------------------------------------------------------------------------
 // Domain objects
 // ---------------------------------------------------------------------------
@@ -106,6 +109,16 @@ export const SenderSchema = z.union([
   z.object({ kind: z.literal('human'), displayName: z.string() }).readonly(),
 ]);
 export type Sender = z.infer<typeof SenderSchema>;
+
+export const ConversationPinSchema = z
+  .object({ message: branded<MessageId>(), actor: SenderSchema })
+  .readonly();
+export type ConversationPin = z.infer<typeof ConversationPinSchema>;
+
+export const ConversationAnnotationsSchema = z
+  .object({ status: ConversationStatusSchema, pins: z.array(ConversationPinSchema).readonly() })
+  .readonly();
+export type ConversationAnnotations = z.infer<typeof ConversationAnnotationsSchema>;
 
 export const AttachmentSchema = z
   .object({
@@ -244,6 +257,7 @@ export const MessagePageSchema = z
     messages: z.array(MessageSchema).readonly(),
     nextCursor: branded<QueryCursor>(),
     hasMore: z.boolean(),
+    annotations: ConversationAnnotationsSchema.optional(),
   })
   .readonly();
 export type MessagePage = z.infer<typeof MessagePageSchema>;
@@ -384,6 +398,8 @@ export const PostBody = z.strictObject({
   target: Target,
   body: z.string(),
   idempotencyKey: z.string().min(1).max(200),
+  complete: z.literal(true).optional(),
+  pin: z.literal(true).optional(),
 });
 
 /** The human's post. The key is optional — a browser need not mint one — and
@@ -392,7 +408,18 @@ export const HumanPostBody = z.strictObject({
   target: Target,
   body: z.string(),
   idempotencyKey: z.string().min(1).max(200).optional(),
+  complete: z.literal(true).optional(),
+  pin: z.literal(true).optional(),
 });
+
+export const AnnotationActionBody = z.strictObject({
+  idempotencyKey: z.string().min(1).max(200),
+});
+export const HumanAnnotationActionBody = z.strictObject({
+  idempotencyKey: z.string().min(1).max(200).optional(),
+});
+export const PinBody = AnnotationActionBody.extend({ messageId: Id });
+export const HumanPinBody = HumanAnnotationActionBody.extend({ messageId: Id });
 
 export const EscalateBody = z.strictObject({
   conversation: Id,
@@ -462,7 +489,11 @@ export const SearchQuery = z.strictObject({
  * the conversation is how the agent learns the id.
  */
 export const PostResultSchema = z
-  .object({ message: MessageSchema, conversation: ConversationSchema })
+  .object({
+    message: MessageSchema,
+    conversation: ConversationSchema,
+    annotations: ConversationAnnotationsSchema,
+  })
   .readonly();
 export type PostResult = z.infer<typeof PostResultSchema>;
 
@@ -585,6 +616,7 @@ export const ConversationSummarySchema = z
     lastActivityAt: branded<Timestamp>().nullable(),
     /** Null on an empty thread, as is `lastActivityAt`. */
     lastSender: SenderSchema.nullable(),
+    annotations: ConversationAnnotationsSchema,
   })
   .readonly();
 export type ConversationSummary = z.infer<typeof ConversationSummarySchema>;

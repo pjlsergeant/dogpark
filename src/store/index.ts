@@ -4,6 +4,7 @@ import Database from 'better-sqlite3';
 import type { Database as Db } from 'better-sqlite3';
 import type { AttachmentId, Timestamp } from '../types.js';
 import { agentStore } from './agents.js';
+import { annotationStore } from './annotations.js';
 import { conversationResolver, conversationStore } from './conversations.js';
 import { createContext } from './context.js';
 import { descriptionStore } from './descriptions.js';
@@ -57,6 +58,7 @@ export function openStore(options: StoreOptions): Store {
   const schema = migrate(db, undefined, now);
   const ctx = createContext(db, { now, humanDisplayName });
   const resolveConversation = conversationResolver(ctx);
+  const annotations = annotationStore(ctx);
 
   const base = {
     database: db,
@@ -68,8 +70,12 @@ export function openStore(options: StoreOptions): Store {
   };
   const agents = agentStore(ctx);
   const spaces = spaceStore(ctx);
-  const conversations = conversationStore(ctx, resolveConversation);
-  const messages = messageStore(ctx, resolveConversation);
+  const conversations = conversationStore(
+    ctx,
+    resolveConversation,
+    annotations.getConversationAnnotations,
+  );
+  const messages = messageStore(ctx, resolveConversation, annotations);
   const readLog = readLogStore(ctx);
   const escalations = escalationStore(ctx);
   const sessions = sessionStore(ctx);
@@ -84,6 +90,7 @@ export function openStore(options: StoreOptions): Store {
     escalations,
     sessions,
     descriptions,
+    annotations,
   );
 
   return {
@@ -96,6 +103,7 @@ export function openStore(options: StoreOptions): Store {
     ...escalations,
     ...sessions,
     ...descriptions,
+    ...annotations,
   };
 }
 

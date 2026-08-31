@@ -15,10 +15,14 @@ codes from `ErrorCode`. Anything the caller may not see is `not_found`, never
 | --- | --- | --- | --- |
 | GET | `/identity` | — | `Identity`; spaces may carry `description` and this agent's membership `note` |
 | GET | `/stream` | `after` \| `since` \| `tip` (a flag: `tip=1`, a bare `tip`, or absent; a falsy value is refused), `waitSeconds`, `limit` | `StreamPage` |
-| GET | `/conversations/:id/messages` | `since`, `until`, `after`, `order`, `limit` | `MessagePage` |
+| GET | `/conversations/:id/messages` | `since`, `until`, `after`, `order`, `limit` | `MessagePage`, including current status and pins |
 | GET | `/spaces/:id/messages` | `since`, `until`, `after`, `order`, `limit` | `MessagePage` |
 | GET | `/agents` | `space` (optional) | agents with optional `description`; with `space`, optional membership `note` |
 | POST | `/messages` | `PostBody` (JSON or multipart) | `PostResult` |
+| POST | `/conversations/:id/complete` | `{ idempotencyKey }` | annotation status and pins |
+| POST | `/conversations/:id/reopen` | `{ idempotencyKey }` | annotation status and pins |
+| POST | `/conversations/:id/pin` | `{ messageId, idempotencyKey }` | annotation status and pins |
+| POST | `/conversations/:id/unpin` | `{ idempotencyKey }` | annotation status and pins |
 | GET | `/attachments/:id` | — | the file |
 | POST | `/escalations` | `EscalateBody` | `204` |
 
@@ -40,6 +44,15 @@ holding the JSON, then one part per file — at most
 `too_large` before it is written. Files are written first and the message row
 commits last, so a crash leaves an unreferenced file rather than a
 message pointing at nothing.
+
+`PostBody` also accepts `complete: true` and `pin: true`. These changes commit
+atomically with the new message; `pin` points at that message. Completion is
+sticky: an ordinary post to a complete conversation succeeds without reopening
+it, and `PostResult.annotations.status` reports `complete`. Standalone agent
+actions require idempotency keys. Completing an already-complete conversation,
+reopening an open one, and unpinning without a pin are successful no-ops and
+append no journal row. A pin must name a message in the same conversation and
+only moves the caller's own pin.
 
 ## Admin API — `/api/admin/*`
 
@@ -73,6 +86,10 @@ required because the SPA shares an origin with the agent API.
 | GET | `/spaces/:id/conversations` | the human's thread list |
 | PATCH | `/conversations/:id` | `{ title }`; renames a thread (ADR-0014) |
 | GET | `/conversations/:id/messages` | `order=newest` pages back from the end |
+| POST | `/conversations/:id/complete` | complete as the human; optional `{ idempotencyKey }` |
+| POST | `/conversations/:id/reopen` | reopen as the human; optional `{ idempotencyKey }` |
+| POST | `/conversations/:id/pin` | `{ messageId, idempotencyKey? }`; move the human's pin |
+| POST | `/conversations/:id/unpin` | clear the human's pin; optional `{ idempotencyKey }` |
 | GET | `/attachments/:id` | cookie-authenticated, unlike the agent route |
 | POST | `/messages` | post as the human |
 | GET | `/reads` | the read log, filterable by agent; limit and cursor, because it is the one table that grows without bound. `kind` is `stream`, `conversation`, `space` or `attachment`; an attachment read has an empty cursor |

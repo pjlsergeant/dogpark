@@ -69,6 +69,11 @@ export const MIGRATIONS: readonly Migration[] = [
     name: 'descriptions',
     sql: sqlFile('0006-descriptions.sql'),
   },
+  {
+    version: 7,
+    name: 'conversation-annotations',
+    sql: sqlFile('0007-conversation-annotations.sql'),
+  },
 ];
 
 const VERSION_TABLE = `

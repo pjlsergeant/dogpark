@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ReadStreamArgs } from '../../store/index.js';
-import type { AttachmentId, Identity } from '../../types.js';
+import type { AttachmentId, Identity, MessageId } from '../../types.js';
 import { authenticateAgent, requireAgent } from '../auth.js';
 import type { AppContext } from '../context.js';
 import { submitPost } from '../post.js';
@@ -9,9 +9,11 @@ import {
   asIdempotencyKey,
   asSpaceId,
   AgentsQuery,
+  AnnotationActionBody,
   EscalateBody,
   parse,
   PostBody,
+  PinBody,
   RangeQuery,
   rangeFromQuery,
   readFromQuery,
@@ -125,6 +127,54 @@ export function agentRoutes(ctx: AppContext): FastifyPluginAsync {
     app.post('/messages', async (request) => {
       const self = requireAgent(request);
       return submitPost(ctx, request, PostBody, { kind: 'agent', id: self.id });
+    });
+
+    const action = (
+      kind: 'complete' | 'reopen' | 'unpin',
+      run: (self: ReturnType<typeof requireAgent>, conversation: string, key: string) => boolean,
+    ) => {
+      app.post(`/conversations/:id/${kind}`, async (request) => {
+        const self = requireAgent(request);
+        const { id } = request.params as { id: string };
+        const body = parse(AnnotationActionBody, request.body, 'request body');
+        const changed = run(self, id, body.idempotencyKey);
+        if (changed) ctx.writes.adminOnly();
+        return ctx.store.getConversationAnnotations(asConversationId(id));
+      });
+    };
+    action('complete', (self, id, key) =>
+      ctx.store.completeConversation(
+        { kind: 'agent', id: self.id },
+        asConversationId(id),
+        asIdempotencyKey(key),
+      ),
+    );
+    action('reopen', (self, id, key) =>
+      ctx.store.reopenConversation(
+        { kind: 'agent', id: self.id },
+        asConversationId(id),
+        asIdempotencyKey(key),
+      ),
+    );
+    action('unpin', (self, id, key) =>
+      ctx.store.unpinConversation(
+        { kind: 'agent', id: self.id },
+        asConversationId(id),
+        asIdempotencyKey(key),
+      ),
+    );
+    app.post('/conversations/:id/pin', async (request) => {
+      const self = requireAgent(request);
+      const { id } = request.params as { id: string };
+      const body = parse(PinBody, request.body, 'request body');
+      const changed = ctx.store.pinMessage(
+        { kind: 'agent', id: self.id },
+        asConversationId(id),
+        body.messageId as MessageId,
+        asIdempotencyKey(body.idempotencyKey),
+      );
+      if (changed) ctx.writes.adminOnly();
+      return ctx.store.getConversationAnnotations(asConversationId(id));
     });
 
     app.get('/attachments/:id', async (request, reply) => {

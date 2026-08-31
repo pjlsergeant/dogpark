@@ -6,6 +6,7 @@ import Database from 'better-sqlite3';
 import type {
   AgentId,
   AttachmentId,
+  ConversationAnnotations,
   ConversationId,
   MessageId,
   MessagePage,
@@ -70,6 +71,13 @@ function writerOf(sender: { readonly kind: 'agent' | 'human'; readonly id?: Agen
 export function messageStore(
   ctx: StoreContext,
   resolveConversation: ConversationResolver,
+  annotations: Pick<
+    Store,
+    | 'getConversationAnnotations'
+    | 'getConversationAnnotationsAsOf'
+    | 'completeConversation'
+    | 'pinMessage'
+  >,
 ): Pick<
   Store,
   | 'postMessage'
@@ -120,6 +128,7 @@ export function messageStore(
       message: toMessage(row, cache),
       conversation: toConversation(conversation),
       created,
+      annotations: annotations.getConversationAnnotations(conversation.id as ConversationId),
     };
   }
 
@@ -159,6 +168,8 @@ export function messageStore(
         sizeBytes: a.sizeBytes,
         contentDigest: a.contentDigest ?? null,
       })),
+      complete: input.complete ?? false,
+      pin: input.pin ?? false,
     });
 
     if (input.idempotencyKey !== undefined) {
@@ -240,6 +251,13 @@ export function messageStore(
         size: attachment.sizeBytes,
         at,
       });
+    }
+
+    if (input.complete === true) {
+      annotations.completeConversation(sender, conversationRow.id as ConversationId);
+    }
+    if (input.pin === true) {
+      annotations.pinMessage(sender, conversationRow.id as ConversationId, id as MessageId);
     }
 
     // Same transaction as the write itself: a key never exists without its
@@ -378,6 +396,7 @@ export function messageStore(
     rows: readonly MessageRow[],
     plan: QueryPlan,
     cache: RenderCache = newRenderCache(),
+    annotationState?: ConversationAnnotations,
   ): MessagePage {
     const hasMore = rows.length > plan.limit;
     const page = rows.slice(0, plan.limit);
@@ -386,6 +405,7 @@ export function messageStore(
       messages: page.map((row) => toMessage(row, cache)),
       nextCursor: encodeQueryCursor(lastSeq),
       hasMore,
+      ...(annotationState === undefined ? {} : { annotations: annotationState }),
     };
   }
 
@@ -450,6 +470,11 @@ export function messageStore(
         conversationRows(conversation, plan),
         plan,
         newRenderCache(position.label_seq),
+        annotations.getConversationAnnotationsAsOf(
+          conversation,
+          position.tip_seq ?? Number.MAX_SAFE_INTEGER,
+          position.label_seq,
+        ),
       );
     },
   );
@@ -468,7 +493,10 @@ export function messageStore(
       requireReadAccess(reader, row.space_id as SpaceId, 'conversation');
 
       const plan = planQuery(range, limit);
-      const page = pageMessages(conversationRows(conversation, plan), plan);
+      const page = {
+        ...pageMessages(conversationRows(conversation, plan), plan),
+        annotations: annotations.getConversationAnnotations(conversation),
+      };
       if (reader.kind === 'agent') {
         recordRead(
           ctx,

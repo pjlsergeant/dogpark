@@ -118,6 +118,7 @@ export function conversationRow(summary: StoreConversationSummary): Conversation
     messageCount: summary.messageCount,
     lastActivityAt: summary.lastActivityAt,
     lastSender: summary.lastSender,
+    annotations: summary.annotations,
   };
 }
 

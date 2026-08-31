@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { AgentRecord } from '../../store/index.js';
-import type { AdminAgent, Agent, AttachmentId, SpaceSummary } from '../../types.js';
+import type { AdminAgent, Agent, AttachmentId, MessageId, SpaceSummary } from '../../types.js';
 import { authenticateHuman, csrfTokenFor, requireSession, SESSION_COOKIE } from '../auth.js';
 import type { AppContext } from '../context.js';
 import { notFound, unauthenticated } from '../errors.js';
@@ -19,6 +19,7 @@ import {
   asAgentId,
   asConversationId,
   asEscalationCursor,
+  asIdempotencyKey,
   asReadLogCursor,
   asSearchCursor,
   asSpaceId,
@@ -27,6 +28,8 @@ import {
   DescriptionBody,
   EscalationsQuery,
   HumanPostBody,
+  HumanAnnotationActionBody,
+  HumanPinBody,
   KeyBody,
   NameBody,
   parse,
@@ -313,6 +316,46 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
       });
 
       guarded.post('/messages', async (request) => submitPost(ctx, request, HumanPostBody, HUMAN));
+
+      const humanAction = (
+        kind: 'complete' | 'reopen' | 'unpin',
+        run: (
+          conversation: ReturnType<typeof asConversationId>,
+          key?: ReturnType<typeof asIdempotencyKey>,
+        ) => boolean,
+      ) => {
+        guarded.post(`/conversations/:id/${kind}`, async (request) => {
+          const { id } = request.params as { id: string };
+          const body = parse(HumanAnnotationActionBody, request.body ?? {}, 'request body');
+          const changed = run(
+            asConversationId(id),
+            body.idempotencyKey === undefined ? undefined : asIdempotencyKey(body.idempotencyKey),
+          );
+          if (changed) ctx.writes.adminOnly();
+          return ctx.store.getConversationAnnotations(asConversationId(id));
+        });
+      };
+      humanAction('complete', (conversation, key) =>
+        ctx.store.completeConversation(HUMAN, conversation, key),
+      );
+      humanAction('reopen', (conversation, key) =>
+        ctx.store.reopenConversation(HUMAN, conversation, key),
+      );
+      humanAction('unpin', (conversation, key) =>
+        ctx.store.unpinConversation(HUMAN, conversation, key),
+      );
+      guarded.post('/conversations/:id/pin', async (request) => {
+        const { id } = request.params as { id: string };
+        const body = parse(HumanPinBody, request.body, 'request body');
+        const changed = ctx.store.pinMessage(
+          HUMAN,
+          asConversationId(id),
+          body.messageId as MessageId,
+          body.idempotencyKey === undefined ? undefined : asIdempotencyKey(body.idempotencyKey),
+        );
+        if (changed) ctx.writes.adminOnly();
+        return ctx.store.getConversationAnnotations(asConversationId(id));
+      });
 
       guarded.get('/attachments/:id', async (request, reply) => {
         const { id } = request.params as { id: string };

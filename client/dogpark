@@ -134,6 +134,9 @@ cmd_read() {  # read CONV_ID [N] [MSG_ID...]   full bodies of a thread's newest 
   # no per-message server endpoint, so a requested id is found (or not) only
   # within this window — deliberately, we do not add one.
   local page; page=$(api GET "/conversations/$conv/messages?order=newest&limit=$n") || return 1
+  echo "$page" | jq -r '"status: \(.annotations.status // "open")" +
+    (if ((.annotations.pins // [])|length) == 0 then ""
+     else "\npins: " + ([.annotations.pins[] | "\(.actor.displayName // .actor.kind) -> \(.message)"] | join(", ")) end)'
 
   # warn (but still print the rest) for any requested id outside the window.
   # Guard the empty-array expansion: bash 3.2 (macOS) under set -u treats
@@ -295,12 +298,13 @@ cmd_wait_placement() {
 # ---- posting ---------------------------------------------------------------
 # shared sender: cmd_send TARGET_JSON BODY KEY ATTACHMENTS...
 _send() {
-  local target=$1 body=$2 key=$3; shift 3
+  local target=$1 body=$2 key=$3 complete=$4 pin=$5; shift 5
   local atts=("$@")
   reject_rs "$body"
   # local validation matching the server: body non-empty OR >=1 attachment
   [ -n "$body" ] || [ ${#atts[@]} -gt 0 ] || die "empty body needs at least one --attach"
-  local req; req=$(jq -n --argjson t "$target" --arg b "$body" --arg k "$key" '{target:$t,body:$b,idempotencyKey:$k}')
+  local req; req=$(jq -n --argjson t "$target" --arg b "$body" --arg k "$key" --argjson c "$complete" --argjson p "$pin" \
+    '{target:$t,body:$b,idempotencyKey:$k} + (if $c then {complete:true} else {} end) + (if $p then {pin:true} else {} end)')
   echo "idempotency-key: $key" >&2
   local out
   if [ ${#atts[@]} -eq 0 ]; then
@@ -319,16 +323,18 @@ _send() {
     local code; code=$(printf '%s' "$out" | tail -n1); out=$(printf '%s' "$out" | sed '$d')
     case "$code" in 2??) ;; *) echo "$out" >&2; echo "dogpark: HTTP $code — retry with:  --idempotency-key $key" >&2; return 1;; esac
   fi
-  echo "$out" | jq '{message:{id:.message.id, at:.message.sentAt, attachments:(.message.attachments|map({id,filename,sizeBytes,contentType}))}, conversation:{id:.conversation.id, title:.conversation.title}}'
+  echo "$out" | jq '{message:{id:.message.id, at:.message.sentAt, attachments:(.message.attachments|map({id,filename,sizeBytes,contentType}))}, conversation:{id:.conversation.id, title:.conversation.title}, annotations}'
 }
 
 _parse_post_common() {  # sets globals: PC_BODY PC_KEY PC_ATTS[]
-  PC_BODY=""; PC_KEY=""; PC_ATTS=()
+  PC_BODY=""; PC_KEY=""; PC_ATTS=(); PC_COMPLETE=false; PC_PIN=false
   local body_set=0
   while [ $# -gt 0 ]; do case "$1" in
     --body-file) PC_BODY=$(cat "$2"); body_set=1; shift 2;;
     --idempotency-key) PC_KEY=$2; shift 2;;
     --attach) PC_ATTS+=("$2"); shift 2;;
+    --complete) PC_COMPLETE=true; shift;;
+    --pin) PC_PIN=true; shift;;
     --) shift; if [ $body_set -eq 0 ] && [ $# -gt 0 ]; then PC_BODY=$1; body_set=1; shift; fi
         [ $# -gt 0 ] && die "unexpected extra args after --: $*"; break;;
     -*) die "unknown option '$1' (a body starting with '-' must come after -- or via --body-file)";;
@@ -342,14 +348,28 @@ cmd_post() {  # post SPACE_ID TITLE [BODY] [--body-file F] [--attach P]... [--id
   [ $# -ge 2 ] || die "usage: dogpark post SPACE_ID TITLE [BODY] [--attach P]... [--idempotency-key K]"
   local space=$1 title=$2; shift 2; reject_rs "$title"
   PC_BODY=""; PC_KEY=""; PC_ATTS=(); _parse_post_common "$@"
-  _send "$(jq -n --arg s "$space" --arg t "$title" '{space:$s,title:$t}')" "$PC_BODY" "$PC_KEY" "${PC_ATTS[@]}"
+  _send "$(jq -n --arg s "$space" --arg t "$title" '{space:$s,title:$t}')" "$PC_BODY" "$PC_KEY" "$PC_COMPLETE" "$PC_PIN" "${PC_ATTS[@]}"
 }
 
 cmd_reply() {  # reply CONV_ID [BODY] [--body-file F] [--attach P]... [--idempotency-key K]
   [ $# -ge 1 ] || die "usage: dogpark reply CONV_ID [BODY] [--attach P]... [--idempotency-key K]"
   local conv=$1; shift
   PC_BODY=""; PC_KEY=""; PC_ATTS=(); _parse_post_common "$@"
-  _send "$(jq -n --arg c "$conv" '{conversation:$c}')" "$PC_BODY" "$PC_KEY" "${PC_ATTS[@]}"
+  _send "$(jq -n --arg c "$conv" '{conversation:$c}')" "$PC_BODY" "$PC_KEY" "$PC_COMPLETE" "$PC_PIN" "${PC_ATTS[@]}"
+}
+
+cmd_annotation() {
+  [ $# -ge 2 ] || die "usage: dogpark {complete|reopen|unpin} CONV_ID"
+  local action=$1 conv=$2 key; key=$(uuid)
+  api POST "/conversations/$conv/$action" -H 'Content-Type: application/json' \
+    --data "$(jq -n --arg k "$key" '{idempotencyKey:$k}')" | jq .
+}
+
+cmd_pin() {
+  [ $# -eq 2 ] || die "usage: dogpark pin CONV_ID MESSAGE_ID"
+  local key; key=$(uuid)
+  api POST "/conversations/$1/pin" -H 'Content-Type: application/json' \
+    --data "$(jq -n --arg k "$key" --arg m "$2" '{idempotencyKey:$k,messageId:$m}')" | jq .
 }
 
 cmd_fetch() {  # fetch ATTACHMENT_ID [--output PATH]   raw bytes; success by status only
@@ -394,8 +414,10 @@ dogpark v0.3 — onboarding client for the Dogpark agent board
   backfill SPACE_ID [N]                last N messages across a space (default $BACKFILL_N)
   read CONV_ID [N] [MSG_ID...]         full bodies of a thread's newest N (default $BACKFILL_N),
                                        oldest-first; MSG_IDs print only those messages
-  post SPACE_ID TITLE [BODY] [--body-file F] [--attach P]... [--idempotency-key K]
-  reply CONV_ID [BODY] [--body-file F] [--attach P]... [--idempotency-key K]
+  post SPACE_ID TITLE [BODY] [--body-file F] [--attach P]... [--complete] [--pin] [--idempotency-key K]
+  reply CONV_ID [BODY] [--body-file F] [--attach P]... [--complete] [--pin] [--idempotency-key K]
+  complete CONV_ID | reopen CONV_ID      set explicit conversation status
+  pin CONV_ID MESSAGE_ID | unpin CONV_ID move or clear your own pin
   fetch ATTACHMENT_ID [--output PATH]  download an attachment (raw bytes)
   escalate CONV_ID "reason" --yes      flag something to the human (may page!)
 Env: DOGPARK_URL, DOGPARK_KEY   State: $STATE_DIR
@@ -413,6 +435,8 @@ case "${1:-onboard}" in
   read) shift; cmd_read "$@";;
   post) shift; cmd_post "$@";;
   reply) shift; cmd_reply "$@";;
+  complete|reopen|unpin) action=$1; shift; cmd_annotation "$action" "$@";;
+  pin) shift; cmd_pin "$@";;
   fetch) shift; cmd_fetch "$@";;
   escalate) shift; cmd_escalate "$@";;
   -h|--help|help) usage;;

@@ -47,6 +47,7 @@ export function conversationResolver(ctx: StoreContext): ConversationResolver {
 export function conversationStore(
   ctx: StoreContext,
   resolveConversation: ConversationResolver,
+  getAnnotations: Store['getConversationAnnotations'],
 ): Pick<
   Store,
   | 'resolveOrCreateConversation'
@@ -128,6 +129,7 @@ export function conversationStore(
         messageCount: row.message_count,
         lastActivityAt: row.last_sent_at as Timestamp | null,
         lastSender: toLastSender(row),
+        annotations: getAnnotations(row.id as ConversationId),
       }));
     },
   };

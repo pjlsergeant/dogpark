@@ -80,7 +80,12 @@ export function fixtureApi(overrides: Partial<DogparkAdminApi> = {}): DogparkAdm
     },
     renameConversation: (id: ConversationId, title: string): Promise<Conversation> =>
       Promise.resolve({ id, space: fixture.delivery.id, title }),
-    post: () => Promise.resolve({ message: fixture.wrapUp, conversation: fixture.rotation }),
+    post: () =>
+      Promise.resolve({
+        message: fixture.wrapUp,
+        conversation: fixture.rotation,
+        annotations: { status: 'open', pins: [] },
+      }),
 
     listReads: (filter) =>
       Promise.resolve({
