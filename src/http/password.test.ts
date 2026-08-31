@@ -1,6 +1,6 @@
 import { PassThrough } from 'node:stream';
 import { describe, expect, it } from 'vitest';
-import { hashPassword, readSecret, verifyPassword } from './password.js';
+import { EXAMPLE_PASSWORD_HASH, hashPassword, readSecret, verifyPassword } from './password.js';
 
 function sink(): { write: (text: string) => void; text: string } {
   const out = { text: '', write: (text: string) => void (out.text += text) };
@@ -56,5 +56,13 @@ describe('the hash round-trips', () => {
     const hash = hashPassword('a password');
     await expect(verifyPassword(hash, 'a password')).resolves.toBe(true);
     await expect(verifyPassword(hash, 'a passwor')).resolves.toBe(false);
+  });
+});
+
+describe('the README example hash', () => {
+  // Keeps the constant and the password the README prints honest: if the two
+  // ever drift, the one-command `docker run` stops logging in.
+  it('is the hash of the password `dogpark` the README prints', async () => {
+    await expect(verifyPassword(EXAMPLE_PASSWORD_HASH, 'dogpark')).resolves.toBe(true);
   });
 });

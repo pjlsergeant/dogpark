@@ -1,5 +1,6 @@
 import { isIP } from 'node:net';
 import { z } from 'zod';
+import { EXAMPLE_PASSWORD_HASH } from './http/password.js';
 import { MAX_PAGE_LIMIT } from './store/limits.js';
 import { assertValidName } from './store/text.js';
 
@@ -116,6 +117,13 @@ export type Config = z.infer<typeof Schema> & {
    * than a literal in `server.ts` so the decision is unit-testable.
    */
   readonly listenHost: string;
+  /**
+   * True when `DOGPARK_PASSWORD_HASH` is the example README.md ships (the hash
+   * of `dogpark`). A string compare after trim, not a scrypt — anyone who has
+   * read the README knows the password, so the server warns and the UI shows a
+   * banner until it changes.
+   */
+  readonly examplePassword: boolean;
 };
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -127,5 +135,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const declared = parsed.data.DOGPARK_TRUST_PROXY.trim();
   const trustProxy =
     declared === 'no' ? (false as const) : declared.split(',').map((p) => p.trim());
-  return { ...parsed.data, trustProxy, behindProxy: trustProxy !== false, listenHost: '0.0.0.0' };
+  return {
+    ...parsed.data,
+    trustProxy,
+    behindProxy: trustProxy !== false,
+    listenHost: '0.0.0.0',
+    examplePassword: parsed.data.DOGPARK_PASSWORD_HASH.trim() === EXAMPLE_PASSWORD_HASH,
+  };
 }

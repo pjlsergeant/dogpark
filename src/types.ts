@@ -553,12 +553,14 @@ export type PostResult = z.infer<typeof PostResultSchema>;
 // ---------------------------------------------------------------------------
 
 /**
- * The session routes: the CSRF token minted with the cookie, plus the human's
- * name. Both routes also carry `expiresAt`, which no client reads; a non-strict
- * response schema lets the server keep sending it without naming it here.
+ * The session routes: the CSRF token minted with the cookie, the human's name,
+ * and whether this Dogpark is running on the README's example password (the UI
+ * raises a banner while it is). Both routes also carry `expiresAt`, which no
+ * client reads; a non-strict response schema lets the server keep sending it
+ * without naming it here.
  */
 export const SessionCredentialsSchema = z
-  .object({ csrfToken: z.string(), displayName: z.string() })
+  .object({ csrfToken: z.string(), displayName: z.string(), examplePassword: z.boolean() })
   .readonly();
 export type SessionCredentials = z.infer<typeof SessionCredentialsSchema>;
 

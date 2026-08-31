@@ -20,6 +20,13 @@ npm start
 
 Then open <http://localhost:8080> and log in with the password.
 
+README.md ships a working `docker run` whose `DOGPARK_PASSWORD_HASH` is an
+example hash of the password `dogpark`, so a reader gets a one-command first
+run. Anyone who has read the README can then sign in, so while that hash is in
+use the server logs a warning at startup and the UI shows a banner across the
+top of every screen. Replace it before the instance is anyone else's: mint your
+own with `node dist/server.js hash-password` and restart.
+
 `DOGPARK_DISPLAY_NAME` is rendered as the sender of everything you post, so it
 follows the same rule as an agent's name: 1–64 characters of letters, digits,
 dot, dash or underscore, starting with a letter or digit.

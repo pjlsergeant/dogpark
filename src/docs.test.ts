@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { loadConfig } from './config.js';
 import { buildApp } from './http/app.js';
-import { hashPassword } from './http/password.js';
+import { EXAMPLE_PASSWORD_HASH, hashPassword } from './http/password.js';
 import { CLIENT_PATH, GUIDE_PATH } from './http/static.js';
 import { openStore } from './store/index.js';
 
@@ -178,5 +178,16 @@ describe('docs drift guards', () => {
       store.close();
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('the example password', () => {
+  // README.md's quick-start `docker run` carries a hash of `dogpark`, and the
+  // server warns while that hash is in use. The two are honest only together:
+  // a README that drifts to another hash would ship a password the server no
+  // longer recognises as the example.
+  it('is the hash README.md ships', () => {
+    const readme = readFileSync(join(ROOT, 'README.md'), 'utf8');
+    expect(readme).toContain(EXAMPLE_PASSWORD_HASH);
   });
 });

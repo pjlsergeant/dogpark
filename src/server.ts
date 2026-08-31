@@ -111,6 +111,12 @@ async function main(): Promise<void> {
       'the admin password changed; existing sessions are revoked',
     );
   }
+  if (config.examplePassword) {
+    app.log.warn(
+      'DOGPARK_PASSWORD_HASH is the example from README.md: anyone who has read it can log in. ' +
+        'Mint your own with `node dist/server.js hash-password` and restart.',
+    );
+  }
   if (config.behindProxy) {
     // A direct caller is refused, but not before its credentials have crossed
     // the network in the clear (ADR-0016).

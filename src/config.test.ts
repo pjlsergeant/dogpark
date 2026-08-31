@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { loadConfig } from './config.js';
+import { EXAMPLE_PASSWORD_HASH } from './http/password.js';
 import { RESERVED_SEQUENCE } from './store/text.js';
 
 const base = { DOGPARK_PASSWORD_HASH: 'scrypt$1$1$1$a$b', DOGPARK_TRUST_PROXY: 'no' };
@@ -101,6 +102,21 @@ describe('DOGPARK_TRUST_PROXY', () => {
     expect(() => loadConfig({ ...base, DOGPARK_TRUST_PROXY: 'yes' })).toThrow(
       /loopback, linklocal, uniquelocal/,
     );
+  });
+});
+
+describe('examplePassword', () => {
+  it('is true only when the hash is the README example, compared as a string after trim', () => {
+    expect(loadConfig(base).examplePassword).toBe(false);
+    expect(
+      loadConfig({ ...base, DOGPARK_PASSWORD_HASH: EXAMPLE_PASSWORD_HASH }).examplePassword,
+    ).toBe(true);
+    // Trimmed before the compare: a stray newline off a copy-paste still counts
+    // as the example, so the warning cannot be silenced by whitespace.
+    expect(
+      loadConfig({ ...base, DOGPARK_PASSWORD_HASH: `  ${EXAMPLE_PASSWORD_HASH}\n` })
+        .examplePassword,
+    ).toBe(true);
   });
 });
 

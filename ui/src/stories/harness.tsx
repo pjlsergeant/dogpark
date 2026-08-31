@@ -53,8 +53,10 @@ function page(messages: readonly Message[], id?: ConversationId): MessagePage {
 export function fixtureApi(overrides: Partial<DogparkAdminApi> = {}): DogparkAdminApi {
   const first = fixture.agents[0] as AdminAgent;
   const base: DogparkAdminApi = {
-    login: () => Promise.resolve({ csrfToken: 'csrf_5e1c', displayName: 'pete' }),
-    resume: () => Promise.resolve({ csrfToken: 'csrf_5e1c', displayName: 'pete' }),
+    login: () =>
+      Promise.resolve({ csrfToken: 'csrf_5e1c', displayName: 'pete', examplePassword: false }),
+    resume: () =>
+      Promise.resolve({ csrfToken: 'csrf_5e1c', displayName: 'pete', examplePassword: false }),
     logout: () => Promise.resolve(),
 
     listSpaces: () => Promise.resolve(fixture.spaces),
@@ -141,7 +143,9 @@ export function fixtureApi(overrides: Partial<DogparkAdminApi> = {}): DogparkAdm
 export const withDogpark: Decorator = (Story, context) => {
   const api = (context.parameters['api'] as DogparkAdminApi | undefined) ?? fixtureApi();
   return (
-    <AppProvider value={{ api, session: { displayName: 'pete' }, logout: () => {} }}>
+    <AppProvider
+      value={{ api, session: { displayName: 'pete', examplePassword: false }, logout: () => {} }}
+    >
       <ToastHost>
         <div className="content" style={{ height: '100%' }}>
           <Story />

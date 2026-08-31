@@ -25,7 +25,9 @@ function setup(options: {
   const api = fixtureApi({ post });
   const onSave = options.onSave ?? vi.fn(() => Promise.resolve());
   render(
-    <AppProvider value={{ api, session: { displayName: 'pete' }, logout: () => {} }}>
+    <AppProvider
+      value={{ api, session: { displayName: 'pete', examplePassword: false }, logout: () => {} }}
+    >
       <ToastHost>
         <DescriptionDialog
           kind={options.kind ?? 'agent'}

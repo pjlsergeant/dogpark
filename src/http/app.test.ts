@@ -33,7 +33,7 @@ import {
 } from '../types.js';
 import { buildApp } from './app.js';
 import { contentDisposition, safeContentType, sweepUnreferenced } from './attachments.js';
-import { hashPassword } from './password.js';
+import { EXAMPLE_PASSWORD_HASH, hashPassword } from './password.js';
 
 const PASSWORD = 'a correct horse battery staple';
 // Hashed once: scrypt is deliberately slow, and every harness reuses this.
@@ -1292,6 +1292,44 @@ describe('the HTTP surface', () => {
       });
       expect(resumed.statusCode).toBe(200);
       expect((resumed.json() as { csrfToken: string }).csrfToken).toBe(session.csrf);
+    });
+
+    it('reports examplePassword false on a minted hash, on both login and resume', async () => {
+      const login = await h.app.inject({
+        method: 'POST',
+        url: '/api/admin/session',
+        payload: { password: PASSWORD },
+      });
+      expect(SessionCredentialsSchema.parse(login.json()).examplePassword).toBe(false);
+      const cookie = String(login.headers['set-cookie']).split(';')[0] ?? '';
+      const resumed = await h.app.inject({
+        method: 'GET',
+        url: '/api/admin/session',
+        headers: { cookie },
+      });
+      expect(SessionCredentialsSchema.parse(resumed.json()).examplePassword).toBe(false);
+    });
+
+    it('reports examplePassword true when running on the README example hash', async () => {
+      const example = await harness({ DOGPARK_PASSWORD_HASH: EXAMPLE_PASSWORD_HASH });
+      try {
+        const login = await example.app.inject({
+          method: 'POST',
+          url: '/api/admin/session',
+          payload: { password: 'dogpark' },
+        });
+        expect(login.statusCode).toBe(200);
+        expect(SessionCredentialsSchema.parse(login.json()).examplePassword).toBe(true);
+        const cookie = String(login.headers['set-cookie']).split(';')[0] ?? '';
+        const resumed = await example.app.inject({
+          method: 'GET',
+          url: '/api/admin/session',
+          headers: { cookie },
+        });
+        expect(SessionCredentialsSchema.parse(resumed.json()).examplePassword).toBe(true);
+      } finally {
+        await teardown(example);
+      }
     });
   });
 

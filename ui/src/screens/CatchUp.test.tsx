@@ -11,7 +11,9 @@ afterEach(cleanup);
 test('renders unread threads including complete-but-new work', async () => {
   const api = fixtureApi();
   render(
-    <AppProvider value={{ api, session: { displayName: 'pete' }, logout: () => {} }}>
+    <AppProvider
+      value={{ api, session: { displayName: 'pete', examplePassword: false }, logout: () => {} }}
+    >
       <CatchUpScreen />
     </AppProvider>,
   );

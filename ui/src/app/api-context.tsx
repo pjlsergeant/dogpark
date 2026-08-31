@@ -5,6 +5,12 @@ import type { DogparkAdminApi } from '../api/index.js';
 export interface Session {
   /** `DOGPARK_DISPLAY_NAME`, as the server reports it. */
   readonly displayName: string;
+  /**
+   * True when the server is running on the README's example password. The
+   * shell keeps a banner up while it is; anyone who has read the README can
+   * sign in.
+   */
+  readonly examplePassword: boolean;
 }
 
 interface AppContextValue {

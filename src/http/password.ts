@@ -140,3 +140,15 @@ export async function verifyPassword(stored: string, password: string): Promise<
   });
   return derived.length === parsed.key.length && timingSafeEqual(derived, parsed.key);
 }
+
+/**
+ * The hash of the password `dogpark`, printed in README.md so its `docker run`
+ * is a working one-command first run. The README's `docker run` must carry
+ * exactly this string, and `password.test.ts` keeps the two honest by
+ * verifying it against `dogpark`. Anyone who has read the README can then log
+ * in to an instance still using it, so the server compares
+ * `DOGPARK_PASSWORD_HASH` against this and warns, loudly, until it changes
+ * (`config.examplePassword`).
+ */
+export const EXAMPLE_PASSWORD_HASH =
+  'scrypt$16384$8$1$parnIEYohBPy2vqO_rBHPA$gSN9jM5Ym_v38yarkqxX79VXKilvG4SKKZ6B0yLbMuA';

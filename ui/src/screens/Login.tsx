@@ -32,6 +32,7 @@ export function Login({
       setPassword('');
       onSignedIn({
         displayName: credentials.displayName,
+        examplePassword: credentials.examplePassword,
       });
     } catch (cause) {
       const failure = toApiError(cause);

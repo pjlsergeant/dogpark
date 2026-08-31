@@ -156,6 +156,11 @@ and the UI decodes with them (`ui/src/api`). This section used to redraw the
 admin shapes in ASCII, which drifted; the schema is the shape now. The notes
 below carry the semantics the shapes alone do not.
 
+`examplePassword`, on both session responses (`POST` and `GET /session`), is
+true when `DOGPARK_PASSWORD_HASH` is the example README.md ships (the hash of
+`dogpark`): the UI raises a banner while it is, since anyone who has read the
+README can sign in.
+
 `hasEverAuthenticated` exists so the UI can show failure counts prominently
 during onboarding and quietly afterwards, which is the only window where they
 diagnose anything.

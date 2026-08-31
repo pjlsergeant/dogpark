@@ -11,6 +11,7 @@ import { ChangesProvider } from './app/changes.js';
 import type { Session } from './app/api-context.js';
 import { href, navigate, useRoute } from './app/router.js';
 import { ToastHost } from './components/Toasts.js';
+import { ExamplePasswordBanner } from './components/ExamplePasswordBanner.js';
 import { Dialog } from './components/Dialog.js';
 import { Login } from './screens/Login.js';
 import { SpaceScreen, SpacesScreen } from './screens/Spaces.js';
@@ -83,6 +84,7 @@ export function App(): ReactNode {
       if (resumed !== null) {
         setSession({
           displayName: resumed.displayName,
+          examplePassword: resumed.examplePassword,
         });
       }
       setBooting(false);
@@ -129,6 +131,7 @@ export function App(): ReactNode {
 }
 
 function Shell(): ReactNode {
+  const { session } = useApp();
   const route = useRoute();
   const [chord, setChord] = useState(false);
   const [help, setHelp] = useState(false);
@@ -181,12 +184,15 @@ function Shell(): ReactNode {
   }, [chord, route.name]);
 
   return (
-    <div className="app">
-      <Sidebar route={route.name} chord={chord} onHelp={() => setHelp(true)} />
-      <div className="content">
-        <Screen />
+    <div className="shell">
+      {session.examplePassword && <ExamplePasswordBanner />}
+      <div className="app">
+        <Sidebar route={route.name} chord={chord} onHelp={() => setHelp(true)} />
+        <div className="content">
+          <Screen />
+        </div>
+        {help && <Shortcuts onClose={() => setHelp(false)} />}
       </div>
-      {help && <Shortcuts onClose={() => setHelp(false)} />}
     </div>
   );
 }

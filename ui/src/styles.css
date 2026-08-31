@@ -285,10 +285,32 @@ kbd.lit {
   color: var(--ink-muted);
 }
 
+.shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* Not dismissible: it stays up until the example password hash is replaced. */
+.example-password-banner {
+  flex: none;
+  padding: 8px 26px;
+  background: var(--warn-soft);
+  color: var(--warn);
+  border-bottom: 1px solid var(--warn);
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.example-password-banner code {
+  color: inherit;
+}
+
 .app {
   display: grid;
   grid-template-columns: 216px minmax(0, 1fr);
-  height: 100%;
+  flex: 1;
+  min-height: 0;
 }
 
 .sidebar {
