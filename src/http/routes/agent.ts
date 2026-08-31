@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ReadStreamArgs } from '../../store/index.js';
-import type { AttachmentId, Identity, MessageId } from '../../types.js';
+import type { AttachmentId, Identity, MessageId, MessagePage, StreamPage } from '../../types.js';
 import { authenticateAgent, requireAgent } from '../auth.js';
 import type { AppContext } from '../context.js';
 import { submitPost } from '../post.js';
@@ -20,6 +20,26 @@ import {
   StreamQuery,
 } from '../validation.js';
 import { sendAttachment } from './attachment.js';
+
+/**
+ * The stream sequence never reaches an agent: it counts every space's
+ * activity, so two of them measure what happens behind the visibility
+ * boundary (ADR-0002). The renderer puts it on every message for the admin
+ * surfaces; these take it off again on the way out.
+ */
+function withoutSeq<T extends { readonly seq?: number | undefined }>(item: T): Omit<T, 'seq'> {
+  const { seq: _seq, ...rest } = item;
+  return rest;
+}
+function pageWithoutSeq(page: MessagePage): MessagePage {
+  return { ...page, messages: page.messages.map(withoutSeq) };
+}
+function streamWithoutSeq(page: StreamPage): StreamPage {
+  return {
+    ...page,
+    items: page.items.map((item) => (item.kind === 'message' ? withoutSeq(item) : item)),
+  };
+}
 
 /** The agent API. Bearer only, and no CSRF: a bearer token is not a cookie. */
 export function agentRoutes(ctx: AppContext): FastifyPluginAsync {
@@ -64,7 +84,7 @@ export function agentRoutes(ctx: AppContext): FastifyPluginAsync {
 
       const args: ReadStreamArgs = { ...(from === undefined ? {} : { from }), limit };
       let page = ctx.store.readStream(self.id, args);
-      if (page.items.length > 0 || waitSeconds === 0) return page;
+      if (page.items.length > 0 || waitSeconds === 0) return streamWithoutSeq(page);
 
       const gone = new AbortController();
       // `close` on the response fires when the socket goes, whether or not we
@@ -81,19 +101,23 @@ export function agentRoutes(ctx: AppContext): FastifyPluginAsync {
 
       // Nobody is listening: do not spend a second read, or a read-log row, on
       // an answer that goes nowhere.
-      if (gone.signal.aborted) return page;
-      return ctx.store.readStream(self.id, { from: { after: page.nextCursor }, limit });
+      if (gone.signal.aborted) return streamWithoutSeq(page);
+      return streamWithoutSeq(
+        ctx.store.readStream(self.id, { from: { after: page.nextCursor }, limit }),
+      );
     });
 
     app.get('/conversations/:id/messages', async (request) => {
       const self = requireAgent(request);
       const { id } = request.params as { id: string };
       const query = parse(RangeQuery, request.query, 'query');
-      return ctx.store.readConversation(
-        { kind: 'agent', id: self.id },
-        asConversationId(id),
-        rangeFromQuery(query),
-        ctx.pageLimit(query.limit),
+      return pageWithoutSeq(
+        ctx.store.readConversation(
+          { kind: 'agent', id: self.id },
+          asConversationId(id),
+          rangeFromQuery(query),
+          ctx.pageLimit(query.limit),
+        ),
       );
     });
 
@@ -101,11 +125,13 @@ export function agentRoutes(ctx: AppContext): FastifyPluginAsync {
       const self = requireAgent(request);
       const { id } = request.params as { id: string };
       const query = parse(RangeQuery, request.query, 'query');
-      return ctx.store.readSpace(
-        { kind: 'agent', id: self.id },
-        asSpaceId(id),
-        rangeFromQuery(query),
-        ctx.pageLimit(query.limit),
+      return pageWithoutSeq(
+        ctx.store.readSpace(
+          { kind: 'agent', id: self.id },
+          asSpaceId(id),
+          rangeFromQuery(query),
+          ctx.pageLimit(query.limit),
+        ),
       );
     });
 
@@ -126,7 +152,8 @@ export function agentRoutes(ctx: AppContext): FastifyPluginAsync {
 
     app.post('/messages', async (request) => {
       const self = requireAgent(request);
-      return submitPost(ctx, request, PostBody, { kind: 'agent', id: self.id });
+      const result = await submitPost(ctx, request, PostBody, { kind: 'agent', id: self.id });
+      return { ...result, message: withoutSeq(result.message) };
     });
 
     const action = (

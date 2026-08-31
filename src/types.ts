@@ -165,10 +165,14 @@ export const MessageSchema = z
     /**
      * The message's position in the stream sequence — the one total order
      * everything is built on (ADR-0009). Two messages can share a millisecond;
-     * they never share a seq, so this is what to compare against a catch-up
-     * row's `latestActivitySeq` or a cursor, not `sentAt`.
+     * they never share a seq, so this is what the Reader compares against a
+     * catch-up row's `latestActivitySeq`, not `sentAt`.
+     *
+     * Admin responses only. The sequence is deployment-wide, so an agent
+     * holding two of them could measure activity in spaces it cannot see;
+     * every agent surface strips it (ADR-0002).
      */
-    seq: z.number().int().nonnegative(),
+    seq: z.number().int().nonnegative().optional(),
   })
   .readonly();
 export type Message = z.infer<typeof MessageSchema>;

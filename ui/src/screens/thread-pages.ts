@@ -118,7 +118,10 @@ export async function loadFirstUnread(
 }> {
   let loaded = await loadThread(api, conversation, undefined, asOf);
   const wanted = (): number =>
-    unreadCount + (tip === undefined ? 0 : loaded.messages.filter((m) => m.seq > tip).length);
+    unreadCount +
+    (tip === undefined
+      ? 0
+      : loaded.messages.filter((m) => m.seq !== undefined && m.seq > tip).length);
   while (
     loaded.messages.length < wanted() &&
     loaded.hasMore &&

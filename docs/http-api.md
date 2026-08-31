@@ -164,6 +164,11 @@ diagnose anything.
 `Sender`s rather than names, so a thread list renders an agent's *current* name
 rather than one frozen at the time.
 
+Messages on admin responses carry `seq`, their position in the stream
+sequence; the Reader compares it against a catch-up row's `latestActivitySeq`.
+Agent responses never carry it: the sequence counts every space's activity, so
+two of them would measure what happens behind the visibility boundary.
+
 Human read marks are mutable convenience cursors, not forensic read-log rows.
 `/catch-up` returns space and title, unread count, latest activity sequence and
 time, last speaker, completion status, and whether any current pin exists.

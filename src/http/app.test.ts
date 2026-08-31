@@ -1540,6 +1540,41 @@ describe('the HTTP surface', () => {
         expect(missing.body).toContain('missing from storage');
       });
 
+      it('keeps the stream sequence off every agent response', async () => {
+        // A deployment-wide counter in an agent's hands measures activity
+        // behind the visibility boundary; only the admin surfaces carry it.
+        await asAgent(alpha.key, {
+          method: 'POST',
+          url: '/api/agent/messages',
+          payload: { target: { conversation }, body: 'sequenced', idempotencyKey: 'seq-1' },
+        });
+        const read = (
+          await asAgent(alpha.key, {
+            method: 'GET',
+            url: `/api/agent/conversations/${conversation}/messages`,
+          })
+        ).json() as { messages: Record<string, unknown>[] };
+        expect(read.messages.length).toBeGreaterThan(0);
+        for (const message of read.messages) expect(message).not.toHaveProperty('seq');
+        const stream = (
+          await asAgent(alpha.key, { method: 'GET', url: '/api/agent/stream' })
+        ).json() as {
+          items: Record<string, unknown>[];
+        };
+        expect(stream.items.some((item) => item['kind'] === 'message')).toBe(true);
+        for (const item of stream.items) expect(item).not.toHaveProperty('seq');
+
+        const session = await login(h);
+        const admin = (
+          await h.app.inject({
+            method: 'GET',
+            url: `/api/admin/conversations/${conversation}/messages`,
+            headers: { cookie: session.cookie },
+          })
+        ).json() as { messages: { seq?: number }[] };
+        expect(admin.messages.every((message) => typeof message.seq === 'number')).toBe(true);
+      });
+
       it('requires an admin session and rejects unknown export formats', async () => {
         expect(
           (
