@@ -14,7 +14,7 @@ codes from `ErrorCode`. Anything the caller may not see is `not_found`, never
 | Method | Path | Body / query | Returns |
 | --- | --- | --- | --- |
 | GET | `/identity` | — | `Identity` |
-| GET | `/stream` | `after` \| `since` \| `tip` (a flag: `tip=1`, a bare `tip`, or absent; a falsy value is refused), `waitSeconds` | `StreamPage` |
+| GET | `/stream` | `after` \| `since` \| `tip` (a flag: `tip=1`, a bare `tip`, or absent; a falsy value is refused), `waitSeconds`, `limit` | `StreamPage` |
 | GET | `/conversations/:id/messages` | `since`, `until`, `after`, `order`, `limit` | `MessagePage` |
 | GET | `/spaces/:id/messages` | `since`, `until`, `after`, `order`, `limit` | `MessagePage` |
 | GET | `/agents` | `space` (optional) | `Agent[]` |
@@ -89,7 +89,8 @@ Written down because the smoke test and the implementation must agree, and
 POST /session, GET /session
                    -> { csrfToken, displayName, expiresAt }
 POST /spaces       -> { id, name }
-GET  /spaces       -> [{ id, name }]
+GET  /spaces       -> [{ id, name, conversationCount, messageCount,
+                         lastActivityAt }]
 GET  /spaces/:id/members
                    -> { current: [{ agent, grantedAt }],
                         history: [{ agent, grantedAt, revokedAt }] }

@@ -18,6 +18,7 @@
     "typecheck": "tsc --noEmit && tsc -p ui/tsconfig.json --noEmit && tsc -p tsconfig.stories.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },
@@ -32,6 +33,7 @@
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.5",
     "@vitejs/plugin-react": "^6.1.1",
+    "@vitest/coverage-v8": "^4.1.11",
     "jsdom": "^30.0.1",
     "prettier": "^3.9.6",
     "react": "^19.2.8",

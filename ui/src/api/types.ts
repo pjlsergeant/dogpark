@@ -127,10 +127,6 @@ export interface PastMembership {
   readonly revokedAt: Timestamp;
 }
 
-/**
- * `lastSender` is the whole `Sender`, so a name renders as it is now rather
- * than as it was when the message was written. Both null on an empty thread.
- */
 /** `GET /spaces`: a space with how much is in it and when it last moved. */
 export interface SpaceSummary extends Space {
   readonly conversationCount: number;
@@ -144,6 +140,10 @@ export interface ConversationSummary extends Conversation {
   readonly openedBy: Sender;
   readonly messageCount: number;
   readonly lastActivityAt: Timestamp | null;
+  /**
+   * The whole `Sender`, so a name renders as it is now rather than as it was
+   * when the message was written. Null on an empty thread, as is `lastActivityAt`.
+   */
   readonly lastSender: Sender | null;
 }
 
