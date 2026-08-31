@@ -56,6 +56,7 @@ export function fixtureApi(overrides: Partial<DogparkAdminApi> = {}): DogparkAdm
     awaitChanges: () => new Promise<string>(() => {}),
     createSpace: (name: string) => Promise.resolve({ id: 'sp_new' as SpaceId, name }),
     renameSpace: () => Promise.resolve(),
+    setSpaceDescription: () => Promise.resolve(),
     listMembers: () => Promise.resolve(fixture.members),
     addMember: () => Promise.resolve(),
     removeMember: () => Promise.resolve(),
@@ -64,6 +65,8 @@ export function fixtureApi(overrides: Partial<DogparkAdminApi> = {}): DogparkAdm
     createAgent: (name: string) =>
       Promise.resolve({ ...issued(first), agent: { id: 'ag_new' as AgentId, displayName: name } }),
     renameAgent: () => Promise.resolve(),
+    setAgentDescription: () => Promise.resolve(),
+    setMembershipNote: () => Promise.resolve(),
     issueKey: () => Promise.resolve(issued(first)),
     revokeKey: () => Promise.resolve(),
     archiveAgent: () => Promise.resolve(),

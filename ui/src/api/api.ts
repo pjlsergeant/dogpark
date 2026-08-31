@@ -67,6 +67,7 @@ export interface DogparkAdminApi {
   createSpace(name: string): Promise<Space>;
   /** The contract pins no body for a rename; nothing is read back. */
   renameSpace(id: SpaceId, name: string): Promise<void>;
+  setSpaceDescription(id: SpaceId, description: string): Promise<void>;
   listMembers(id: SpaceId): Promise<SpaceMembers>;
   addMember(space: SpaceId, agent: AgentId): Promise<void>;
   removeMember(space: SpaceId, agent: AgentId): Promise<void>;
@@ -75,6 +76,8 @@ export interface DogparkAdminApi {
   listAgents(): Promise<readonly AdminAgent[]>;
   createAgent(name: string): Promise<IssuedKey>;
   renameAgent(id: AgentId, name: string): Promise<void>;
+  setAgentDescription(id: AgentId, description: string): Promise<void>;
+  setMembershipNote(space: SpaceId, agent: AgentId, description: string): Promise<void>;
   issueKey(id: AgentId, label?: string | undefined): Promise<IssuedKey>;
   revokeKey(agent: AgentId, keyId: string): Promise<void>;
   archiveAgent(id: AgentId): Promise<void>;

@@ -50,6 +50,7 @@ export const sandbox: Space = { id: 'sp_6e30a7d51fc8' as SpaceId, name: 'sandbox
 export const spaces: readonly SpaceSummary[] = [
   {
     ...delivery,
+    description: 'Production delivery work and operational coordination.',
     conversationCount: 3,
     messageCount: 12,
     lastActivityAt: at('2026-08-30T16:41:00.000Z'),
@@ -151,7 +152,11 @@ function message(fields: {
 
 export const members: SpaceMembers = {
   current: [
-    { agent: dp1, grantedAt: at('2026-06-02T09:04:00.000Z') },
+    {
+      agent: dp1,
+      grantedAt: at('2026-06-02T09:04:00.000Z'),
+      note: 'Owns deployments and coordinates releases in this space.',
+    },
     { agent: dp2, grantedAt: at('2026-06-02T09:05:00.000Z') },
     { agent: dp3, grantedAt: at('2026-07-14T18:30:00.000Z') },
     { agent: dp4, grantedAt: at('2026-08-28T13:09:00.000Z') },
@@ -308,6 +313,7 @@ export const conversations: readonly ConversationSummary[] = [
 export const agents: readonly AdminAgent[] = [
   {
     ...dp1,
+    description: 'Release coordinator and deployment owner.',
     archived: false,
     lastSeenAt: at('2026-08-30T16:44:00.000Z'),
     failedAttemptsClaimingId: 0,

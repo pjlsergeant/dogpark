@@ -15,7 +15,7 @@
  */
 import { useCallback, useState } from 'react';
 import type { ReactNode } from 'react';
-import type { AdminAgent, AgentId, ApiKeySummary, IssuedKey } from '../api/index.js';
+import type { AdminAgent, AgentId, ApiKeySummary, IssuedKey, Space } from '../api/index.js';
 import { useApi } from '../app/api-context.js';
 import { useOnChange } from '../app/changes.js';
 import { useAsync } from '../app/useAsync.js';
@@ -33,6 +33,7 @@ import {
 } from '../components/bits.js';
 import { Dialog } from '../components/Dialog.js';
 import { NameDialog } from '../components/NameDialog.js';
+import { DescriptionDialog } from '../components/DescriptionDialog.js';
 import { useNotify } from '../components/Toasts.js';
 
 interface Revealed {
@@ -142,6 +143,10 @@ export function AgentsScreen({ selected }: { selected?: AgentId | undefined }): 
   const [issuing, setIssuing] = useState<AdminAgent | null>(null);
   const [revealed, setRevealed] = useState<Revealed | null>(null);
   const [showArchived, setShowArchived] = useState(false);
+  const [describing, setDescribing] = useState<{
+    agent: AdminAgent;
+    spaces: readonly Space[];
+  } | null>(null);
 
   const all = agents.state.data ?? [];
   const visible = showArchived ? all : all.filter((agent) => !agent.archived);
@@ -216,6 +221,9 @@ export function AgentsScreen({ selected }: { selected?: AgentId | undefined }): 
                     {agent.displayName}
                   </a>
                   {agent.archived && <Pill tone="muted">archived</Pill>}
+                  {agent.description !== undefined && agent.description !== '' && (
+                    <p className="description-text">{agent.description}</p>
+                  )}
                   <div className="muted small">
                     {agent.lastSeenAt === null ? (
                       'never authenticated'
@@ -238,6 +246,35 @@ export function AgentsScreen({ selected }: { selected?: AgentId | undefined }): 
                   >
                     {isOpen ? 'Close' : 'Manage'}
                   </a>
+                  <button
+                    type="button"
+                    className="btn btn-quiet"
+                    onClick={() => {
+                      void (async () => {
+                        try {
+                          const spaces = await api.listSpaces();
+                          const memberships = await Promise.all(
+                            spaces.map(async (space) => ({
+                              space,
+                              members: await api.listMembers(space.id),
+                            })),
+                          );
+                          setDescribing({
+                            agent,
+                            spaces: memberships
+                              .filter(({ members }) =>
+                                members.current.some((entry) => entry.agent.id === agent.id),
+                              )
+                              .map(({ space }) => space),
+                          });
+                        } catch (cause) {
+                          notify('bad', cause instanceof Error ? cause.message : String(cause));
+                        }
+                      })();
+                    }}
+                  >
+                    ✎ Description
+                  </button>
                 </div>
               </div>
 
@@ -450,6 +487,20 @@ export function AgentsScreen({ selected }: { selected?: AgentId | undefined }): 
       )}
 
       {revealed !== null && <KeyRevealed revealed={revealed} onClose={() => setRevealed(null)} />}
+      {describing !== null && (
+        <DescriptionDialog
+          kind="agent"
+          subjectName={describing.agent.displayName}
+          initial={describing.agent.description}
+          spaces={describing.spaces}
+          onClose={() => setDescribing(null)}
+          onSave={async (description) => {
+            await api.setAgentDescription(describing.agent.id, description);
+            notify('ok', description === '' ? 'Description cleared.' : 'Description saved.');
+            agents.reload();
+          }}
+        />
+      )}
     </section>
   );
 }

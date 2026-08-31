@@ -2,6 +2,7 @@ import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, userEvent, within } from 'storybook/test';
 import { SpacesScreen } from './Spaces.js';
 import { apiError, fails, fixtureApi, hangs } from '../stories/harness.js';
+import * as fixture from '../stories/fixtures.js';
 
 /** The list: where the fleet's visibility boundaries are decided. */
 const meta = {
@@ -13,7 +14,23 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-export const Populated: Story = { parameters: { expectText: ['delivery'] } };
+export const Populated: Story = {
+  parameters: {
+    expectText: ['delivery', 'Production delivery work and operational coordination.'],
+  },
+};
+
+export const WithoutDescriptions: Story = {
+  parameters: {
+    expectText: ['sandbox'],
+    api: fixtureApi({
+      listSpaces: () =>
+        Promise.resolve([
+          { ...fixture.sandbox, conversationCount: 0, messageCount: 0, lastActivityAt: null },
+        ]),
+    }),
+  },
+};
 
 export const NoSpacesYet: Story = {
   parameters: {

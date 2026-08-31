@@ -200,6 +200,11 @@ export function createHttpApi(): DogparkAdminApi {
     async renameSpace(id, name) {
       await request('PATCH', `/spaces/${encodeURIComponent(id)}`, { json: { name } });
     },
+    async setSpaceDescription(id, description) {
+      await request('PUT', `/spaces/${encodeURIComponent(id)}/description`, {
+        json: { description },
+      });
+    },
     async listMembers(id) {
       return decode(
         SpaceMembersSchema,
@@ -227,6 +232,18 @@ export function createHttpApi(): DogparkAdminApi {
     },
     async renameAgent(id, name) {
       await request('PATCH', `/agents/${encodeURIComponent(id)}`, { json: { name } });
+    },
+    async setAgentDescription(id, description) {
+      await request('PUT', `/agents/${encodeURIComponent(id)}/description`, {
+        json: { description },
+      });
+    },
+    async setMembershipNote(space, agent, description) {
+      await request(
+        'PUT',
+        `/spaces/${encodeURIComponent(space)}/members/${encodeURIComponent(agent)}/note`,
+        { json: { description } },
+      );
     },
     async issueKey(id, label) {
       return decode(
