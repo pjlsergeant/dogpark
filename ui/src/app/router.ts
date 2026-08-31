@@ -23,6 +23,8 @@ export type Route =
       readonly asOf?: string | undefined;
       /** From a catch-up row: how many of the newest messages are unread. */
       readonly unreadCount?: number | undefined;
+      /** …as of the row's latest activity; anything newer is on top of them. */
+      readonly unreadSince?: string | undefined;
     }
   | { readonly name: 'reads'; readonly agent?: AgentId | undefined }
   | { readonly name: 'escalations' }
@@ -73,6 +75,7 @@ export function parseRoute(hash: string): Route {
         message: query.get('m') === null ? undefined : (query.get('m') as MessageId),
         asOf: query.get('asOf') ?? undefined,
         unreadCount: numberParam(query.get('unread')),
+        unreadSince: query.get('since') ?? undefined,
       };
     case 'reads': {
       const agent = query.get('agent');
@@ -120,8 +123,13 @@ export const href = {
     const query = params.toString();
     return query === '' ? path : `${path}?${query}`;
   },
-  readCatchUp: (space: SpaceId, conversation: ConversationId, unreadCount: number): string =>
-    `${href.read(space, conversation)}?unread=${unreadCount}`,
+  readCatchUp: (
+    space: SpaceId,
+    conversation: ConversationId,
+    unreadCount: number,
+    since: string,
+  ): string =>
+    `${href.read(space, conversation)}?unread=${unreadCount}&since=${encodeURIComponent(since)}`,
   reads: (agent?: AgentId): string =>
     agent === undefined ? '#/reads' : `#/reads?agent=${encodeURIComponent(agent)}`,
   escalations: (): string => '#/escalations',

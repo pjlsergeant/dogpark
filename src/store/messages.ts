@@ -458,13 +458,21 @@ export function messageStore(
       // ceiling is the millisecond after the read, and a message sent later in
       // that same millisecond is included. A recorded 0 is not that row — it
       // is a read of an empty stream, and its exact ceiling is 0.
+      const ceiling = new Date(Date.parse(position.read_at) + 1).toISOString() as Timestamp;
+      // A conversation the read predates is no more visible than a space the
+      // agent was not in: it comes to exist with its first message, so one
+      // with none at the read is not-found, not an empty page that never was.
+      const existed =
+        position.tip_seq !== null
+          ? st.conversationExistedAtSeq.get({ conversation, tip: position.tip_seq })
+          : st.conversationExistedAtTime.get({ conversation, before: ceiling });
+      if (existed === undefined) return undefined;
       let plan;
       let cutoff: { tip: number } | { before: Timestamp };
       if (position.tip_seq !== null) {
         plan = planQuery(range, limit, position.tip_seq);
         cutoff = { tip: position.tip_seq };
       } else {
-        const ceiling = new Date(Date.parse(position.read_at) + 1).toISOString() as Timestamp;
         const asked =
           range?.until === undefined ? undefined : normalizeTimestamp('until', range.until);
         const until = asked === undefined || asked > ceiling ? ceiling : asked;

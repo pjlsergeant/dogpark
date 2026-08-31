@@ -93,15 +93,27 @@ export async function loadThread(
 }
 
 /** Load enough history that the last `unreadCount` messages have a first row. */
+/**
+ * Load enough history that the last `unreadCount` messages have a first row.
+ *
+ * `unreadCount` was counted when the catch-up row was made; messages that
+ * arrived since sit on top of them, so counting back from the tip alone would
+ * land late and let the mark pass messages never shown. `since` is the row's
+ * latest activity: anything newer is extra to count past.
+ */
 export async function loadFirstUnread(
   api: ThreadReader,
   conversation: ConversationId,
   unreadCount: number,
   asOf?: string,
+  since?: string,
 ): Promise<{ readonly loaded: Loaded; readonly target: MessageId | undefined }> {
   let loaded = await loadThread(api, conversation, undefined, asOf);
+  const wanted = (): number =>
+    unreadCount +
+    (since === undefined ? 0 : loaded.messages.filter((m) => m.sentAt > since).length);
   while (
-    loaded.messages.length < unreadCount &&
+    loaded.messages.length < wanted() &&
     loaded.hasMore &&
     loaded.nextCursor !== null &&
     loaded.pages < MAX_PAGES_FOR_TARGET
@@ -110,6 +122,6 @@ export async function loadFirstUnread(
   }
   return {
     loaded,
-    target: loaded.messages.at(-Math.min(unreadCount, loaded.messages.length))?.id,
+    target: loaded.messages.at(-Math.min(wanted(), loaded.messages.length))?.id,
   };
 }

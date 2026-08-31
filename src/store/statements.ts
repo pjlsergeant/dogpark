@@ -368,6 +368,15 @@ export function prepareStatements(db: Db) {
       'SELECT id FROM membership WHERE agent_id = @agent AND space_id = @space ' +
         'AND granted_at <= @readAt AND (revoked_at IS NULL OR revoked_at >= @readAt) LIMIT 1',
     ),
+    // A conversation comes to exist with its first message, so "did it exist
+    // at the read" is "does it hold a message at or below the tip" — or, for a
+    // legacy row, sent before the read's millisecond ceiling.
+    conversationExistedAtSeq: prepare<{ conversation: string; tip: number }, { one: number }>(
+      'SELECT 1 AS one FROM message WHERE conversation_id = @conversation AND seq <= @tip LIMIT 1',
+    ),
+    conversationExistedAtTime: prepare<{ conversation: string; before: string }, { one: number }>(
+      'SELECT 1 AS one FROM message WHERE conversation_id = @conversation AND sent_at < @before LIMIT 1',
+    ),
     // Includes the caller: a roster that omits you is not a roster.
     peers: prepare<{ agent: string; space: string | null }, AgentNameRow>(
       'SELECT DISTINCT a.id, a.display_name FROM agent a ' +

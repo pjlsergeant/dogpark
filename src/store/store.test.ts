@@ -1428,6 +1428,22 @@ describe('a read is bounded by the stream tip it recorded', () => {
 });
 
 describe('a read only reconstructs a space the agent could see then', () => {
+  it('refuses a conversation that did not yet exist at the read', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    post(h, agent, space, 'before', 'already here');
+    h.store.readStream(agent);
+    const read = h.store.readReadLog({ agent }).entries[0]?.id ?? '';
+    h.advance(1);
+    const later = post(h, agent, space, 'later', 'opened after the read');
+
+    // Exact tip: the thread's first message is above it.
+    expect(h.store.readConversationAsOf(read, later.conversation)).toBeUndefined();
+    // Legacy clock: its first message is after the read's millisecond.
+    h.store.database.prepare('UPDATE read_log SET tip_seq = NULL').run();
+    expect(h.store.readConversationAsOf(read, later.conversation)).toBeUndefined();
+  });
+
   it('shows nothing from a space the agent was never in', () => {
     const h = harness();
     const alice = h.store.createAgent('alice').id;

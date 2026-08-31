@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ConversationId, Message, MessageId, MessagePage } from '../api/index.js';
-import { loadThread, olderPage } from './thread-pages.js';
+import { loadFirstUnread, loadThread, olderPage } from './thread-pages.js';
 import type { ThreadReader } from './thread-pages.js';
 
 const conversation = 'conv000000000000' as ConversationId;
@@ -96,5 +96,20 @@ describe('assembling a thread from newest-first pages', () => {
     expect(more.hasMore).toBe(false);
     expect(await olderPage(api, conversation, more)).toBe(more);
     expect(api.calls).toBe(2);
+  });
+});
+
+describe('loadFirstUnread', () => {
+  it('counts messages that arrived since the catch-up row on top of its unread count', async () => {
+    // Twelve messages, pages of five. The row said three unread as of message
+    // ten; eleven and twelve arrived since. The first unread is message eight,
+    // which is on the second page.
+    const reader = fakeThread(12, 5);
+    const since = message(10).sentAt;
+    const { loaded, target } = await loadFirstUnread(reader, conversation, 3, undefined, since);
+    expect(target).toBe('m8');
+    expect(loaded.messages.map((m) => m.id)).toContain('m8');
+    // Without the hint, the same count lands late, on message ten.
+    expect((await loadFirstUnread(fakeThread(12, 5), conversation, 3)).target).toBe('m10');
   });
 });

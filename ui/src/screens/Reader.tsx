@@ -45,12 +45,14 @@ export function ReaderScreen({
   message,
   asOf,
   unreadCount,
+  unreadSince,
 }: {
   space?: SpaceId | undefined;
   conversation?: ConversationId | undefined;
   message?: MessageId | undefined;
   asOf?: string | undefined;
   unreadCount?: number | undefined;
+  unreadSince?: string | undefined;
 }): ReactNode {
   const api = useApi();
   const spaces = useAsync(() => api.listSpaces(), [api]);
@@ -90,6 +92,7 @@ export function ReaderScreen({
       message={message}
       asOf={asOf}
       unreadCount={unreadCount}
+      unreadSince={unreadSince}
       filter={filter}
       onFilter={setFilter}
       spaceNames={(spaces.state.data ?? []).map((s) => [s.id, s.name] as const)}
@@ -106,6 +109,7 @@ function SpaceReader({
   onFilter,
   spaceNames,
   unreadCount,
+  unreadSince,
 }: {
   space: SpaceId;
   conversation?: ConversationId | undefined;
@@ -115,6 +119,7 @@ function SpaceReader({
   onFilter: (value: string) => void;
   spaceNames: readonly (readonly [SpaceId, string])[];
   unreadCount?: number | undefined;
+  unreadSince?: string | undefined;
 }): ReactNode {
   const api = useApi();
   const conversations = useAsync(() => api.listConversations(space), [api, space]);
@@ -239,6 +244,7 @@ function SpaceReader({
             highlight={message}
             asOf={asOf}
             unreadCount={unreadCount}
+            unreadSince={unreadSince}
             summary={threads.find((t) => t.id === conversation) ?? null}
             onPosted={() => conversations.reload()}
           />
@@ -260,6 +266,7 @@ function Thread({
   summary,
   onPosted,
   unreadCount,
+  unreadSince,
 }: {
   space: SpaceId;
   conversation: ConversationId;
@@ -274,6 +281,7 @@ function Thread({
   summary: ConversationSummary | null;
   onPosted: () => void;
   unreadCount?: number | undefined;
+  unreadSince?: string | undefined;
 }): ReactNode {
   const api = useApi();
   const asOfRead = useAsync(
@@ -385,7 +393,7 @@ function Thread({
       const firstUnread =
         seek.current === undefined && unreadCount !== undefined && !unreadConsumed.current;
       const result = firstUnread
-        ? await loadFirstUnread(api, conversation, unreadCount, asOf)
+        ? await loadFirstUnread(api, conversation, unreadCount, asOf, unreadSince)
         : { loaded: await loadThread(api, conversation, seek.current, asOf), target: undefined };
       const thread = result.loaded;
       if (mine !== generation.current) return;
@@ -407,7 +415,7 @@ function Thread({
         setBusy(false);
       }
     }
-  }, [api, conversation, asOf, unreadCount]);
+  }, [api, conversation, asOf, unreadCount, unreadSince]);
 
   const loadOlder = useCallback(async () => {
     if (loaded === null || loaded.nextCursor === null) return;
