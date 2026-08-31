@@ -31,6 +31,8 @@ const PAGE_SIZE = 200;
  * headers are current labels, since a space name is not journaled at all.
  */
 export interface ExportSource {
+  /** What was asked for — a space of one thread is still a space export. */
+  readonly kind: 'conversation' | 'space';
   readonly space: Space & { readonly description?: string | undefined };
   readonly conversations: readonly Conversation[];
   readonly position: SnapshotPosition;
@@ -39,6 +41,7 @@ export interface ExportSource {
 
 function snapshot(
   ctx: AppContext,
+  kind: ExportSource['kind'],
   space: ExportSource['space'],
   conversations: readonly Conversation[],
 ): ExportSource {
@@ -54,7 +57,7 @@ function snapshot(
       ),
     );
   }
-  return { space, conversations, position, annotations };
+  return { kind, space, conversations, position, annotations };
 }
 
 function safeName(value: string, fallback: string): string {
@@ -94,9 +97,12 @@ export function conversationExportSource(ctx: AppContext, id: ConversationId): E
   /* c8 ignore next -- a conversation cannot outlive its foreign-key parent. */
   if (space === undefined) throw new Error('conversation references a missing space');
   const description = store.getSpaceDescription(space.id);
-  return snapshot(ctx, { ...space, ...(description === undefined ? {} : { description }) }, [
-    conversation,
-  ]);
+  return snapshot(
+    ctx,
+    'conversation',
+    { ...space, ...(description === undefined ? {} : { description }) },
+    [conversation],
+  );
 }
 
 export function spaceExportSource(ctx: AppContext, id: SpaceId): ExportSource {
@@ -106,6 +112,7 @@ export function spaceExportSource(ctx: AppContext, id: SpaceId): ExportSource {
   const description = store.getSpaceDescription(id);
   return snapshot(
     ctx,
+    'space',
     { ...space, ...(description === undefined ? {} : { description }) },
     store.listConversationsForExport(id),
   );
@@ -146,9 +153,13 @@ async function* markdownChunks(
   source: ExportSource,
   linkAttachments: boolean,
 ): AsyncGenerator<string> {
-  if (source.conversations.length !== 1) {
+  if (source.kind === 'space') {
     yield `# ${markdownText(source.space.name)}\n\n`;
-    if (source.space.description !== undefined) yield `${source.space.description}\n\n`;
+    // Plain operator text, not markdown: on its own line it could otherwise
+    // open a heading, a list or a fence.
+    if (source.space.description !== undefined) {
+      yield `${markdownText(source.space.description)}\n\n`;
+    }
   }
   for (const conversation of source.conversations) {
     const item: ConversationExport = {
@@ -156,7 +167,7 @@ async function* markdownChunks(
       annotations: annotationsOf(source, conversation),
       messages: [],
     };
-    yield `${source.conversations.length === 1 ? '#' : '##'} ${markdownText(conversation.title)}\n\n`;
+    yield `${source.kind === 'space' ? '##' : '#'} ${markdownText(conversation.title)}\n\n`;
     yield `Space: ${markdownText(source.space.name)}\n\n${annotationLine(item)}\n\n`;
     for await (const message of messages(ctx.store, conversation.id, source.position)) {
       yield `### ${markdownText(message.sender.displayName)} — ${message.sentAt}\n\n${message.body}\n\n`;
@@ -251,7 +262,7 @@ export function exportBundle(ctx: AppContext, source: ExportSource, rootName: st
 
 export function exportRootName(source: ExportSource): string {
   return safeName(
-    source.conversations.length === 1
+    source.kind === 'conversation'
       ? (source.conversations[0]?.title ?? 'conversation')
       : source.space.name,
     'dogpark-export',

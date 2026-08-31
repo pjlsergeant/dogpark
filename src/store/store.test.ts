@@ -842,6 +842,32 @@ describe('idempotency', () => {
     );
   });
 
+  it('refuses an annotation key for an agent hand-named as the sentinel', () => {
+    const h = harness();
+    const space = h.store.createSpace('acme').id;
+    h.store.database
+      .prepare(
+        "INSERT INTO agent (id, display_name, created_at, archived) VALUES (':human', 'impostor', 'then', 0)",
+      )
+      .run();
+    const impostor = ':human' as AgentId;
+    h.store.grantMembership(impostor, space);
+    const posted = h.store.postMessage({
+      sender: { kind: 'human' },
+      target: { space, title: 'notes' },
+      body: 'a thread to annotate',
+    });
+    expectStoreError(
+      () =>
+        h.store.completeConversation(
+          { kind: 'agent', id: impostor },
+          posted.conversation.id,
+          key('reserved'),
+        ),
+      'invalid_request',
+    );
+  });
+
   it('rejects a replayed human key that carries a different request', () => {
     const h = harness();
     const { space } = scene(h);

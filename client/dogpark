@@ -379,7 +379,8 @@ _annotate() {
   echo "idempotency-key: $key" >&2
   local out
   out=$(api POST "$path" -H 'Content-Type: application/json' --data "$body") \
-    || { echo "dogpark: not confirmed — retry the same command with:  --idempotency-key $key" >&2; return 1; }
+    || { [ -n "$out" ] && echo "$out" >&2
+         echo "dogpark: not confirmed — retry the same command with:  --idempotency-key $key" >&2; return 1; }
   echo "$out" | jq .
 }
 
@@ -428,9 +429,11 @@ cmd_escalate() {  # escalate CONV_ID REASON --yes [--idempotency-key K]
   # Printed first for the same reason as a post's: a page that was sent but
   # not confirmed must be replayed under its key, not raised again.
   echo "idempotency-key: $key" >&2
-  api POST /escalations -H 'Content-Type: application/json' \
-    --data "$(jq -n --arg c "$conv" --arg r "$reason" --arg k "$key" '{conversation:$c,reason:$r,idempotencyKey:$k}')" >/dev/null \
-    || { echo "dogpark: not confirmed — retry with:  --yes --idempotency-key $key" >&2; return 1; }
+  local out
+  out=$(api POST /escalations -H 'Content-Type: application/json' \
+    --data "$(jq -n --arg c "$conv" --arg r "$reason" --arg k "$key" '{conversation:$c,reason:$r,idempotencyKey:$k}')") \
+    || { [ -n "$out" ] && echo "$out" >&2
+         echo "dogpark: not confirmed — retry with:  --yes --idempotency-key $key" >&2; return 1; }
   [ "$LAST_HTTP" = "204" ] && echo "escalation recorded (204)." || echo "escalation returned HTTP $LAST_HTTP"
 }
 

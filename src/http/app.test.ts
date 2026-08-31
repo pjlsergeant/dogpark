@@ -1462,7 +1462,7 @@ describe('the HTTP surface', () => {
           posted.json() as { message: { attachments: { id: string; filename: string }[] } }
         ).message.attachments.find((a) => a.filename === 'notes.txt');
         expect(attachment).toBeDefined();
-        h.store.setSpaceDescription(space, 'A useful space.');
+        h.store.setSpaceDescription(space, '# Status: fine');
         const session = await login(h);
 
         const bundle = await h.app.inject({
@@ -1477,6 +1477,15 @@ describe('the HTTP surface', () => {
           bundle.rawPayload.includes(Buffer.from(`attachments/${attachment?.id}/notes.txt`)),
         ).toBe(true);
         expect(bundle.rawPayload.includes(Buffer.from('bundle payload'))).toBe(true);
+
+        // The space description is plain text on its own line: never a heading.
+        const spaceMarkdown = await h.app.inject({
+          method: 'GET',
+          url: `/api/admin/spaces/${space}/export?format=markdown`,
+          headers: { cookie: session.cookie },
+        });
+        expect(spaceMarkdown.body).not.toMatch(/^# Status: fine/m);
+        expect(spaceMarkdown.body).toContain('\\# Status: fine');
 
         // A filename is display text inside generated markdown, never structure.
         const markdown = await h.app.inject({

@@ -23,7 +23,16 @@ interface AnnotationRow {
 }
 
 const HUMAN_WRITER = ':human';
-const writerOf = (actor: Reader): string => (actor.kind === 'agent' ? actor.id : HUMAN_WRITER);
+// The same refusal posts make (messages.ts): the schema does not constrain
+// agent.id, so a hand-written row could carry the sentinel and reach the
+// human's keys through an annotation instead of a post.
+function writerOf(actor: Reader): string {
+  if (actor.kind !== 'agent') return HUMAN_WRITER;
+  if (actor.id === HUMAN_WRITER) {
+    throw invalid(`an agent may not use the reserved writer id ${HUMAN_WRITER}`);
+  }
+  return actor.id;
+}
 
 export function annotationStore(
   ctx: StoreContext,
