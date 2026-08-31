@@ -78,7 +78,6 @@ export function messageStore(
   | 'readSpace'
   | 'searchMessages'
   | 'getAttachment'
-  | 'renderAsOfRead'
   | 'readConversationAsOf'
 > {
   const { db, st, now, nextSeq, toConversation, requireAgentRow, isCurrentMember } = ctx;
@@ -410,9 +409,23 @@ export function messageStore(
       limit: number | undefined,
     ): MessagePage | undefined => {
       const position = st.readLabelSeq.get({ id: read });
-      if (position === undefined || st.getConversation.get({ id: conversation }) === undefined) {
+      const conversationRow = st.getConversation.get({ id: conversation });
+      if (position === undefined || conversationRow === undefined) {
         return undefined;
       }
+      // What the agent could have seen at the read, not what the thread now
+      // holds: an agent with no membership in the conversation's space at that
+      // moment could see nothing of it, so the reconstruction is not-found
+      // (the admin route treats undefined as such). Tested against the tip the
+      // row recorded when it has one — including a recorded 0, a read taken
+      // before the agent belonged to anything — and against the read's
+      // millisecond for a legacy row that recorded none.
+      const space = conversationRow.space_id as SpaceId;
+      const member =
+        position.tip_seq !== null
+          ? st.membershipAtSeq.get({ agent: position.agent_id, space, tip: position.tip_seq })
+          : st.membershipAtTime.get({ agent: position.agent_id, space, readAt: position.read_at });
+      if (member === undefined) return undefined;
       // Nothing sent after the read: old labels on a message the agent could
       // not have seen would be a fiction. The row records the stream tip, so
       // the bound is exact — a message existed at the read iff its seq is at
@@ -595,13 +608,6 @@ export function messageStore(
         message: row.message_id as MessageId,
         space: row.space_id as SpaceId,
       };
-    },
-
-    renderAsOfRead(message, read) {
-      const row = st.messageById.get({ id: message });
-      const position = st.readLabelSeq.get({ id: read });
-      if (row === undefined || position === undefined) return undefined;
-      return toMessage(row, newRenderCache(position.label_seq));
     },
 
     readConversationAsOf(read, conversation, range, limit) {

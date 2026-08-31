@@ -420,21 +420,6 @@ export interface Store {
     attachment: AttachmentId,
   ): (Attachment & { readonly message: MessageId; readonly space: SpaceId }) | undefined;
   /**
-   * One message rendered with the labels in force when a given read-log row
-   * was written: the sender's name, the conversation's title and the
-   * mentioned names as they stood then, from the label history (migration
-   * 0002). Ordered by the history's own sequence rather than by clock, so a
-   * read and a rename in the same millisecond still come out in the order
-   * they happened.
-   *
-   * A label snapshot, not proof of inclusion: this does not check that the
-   * message was on that read's page. Whether it was is a question about the
-   * row's kind, parameters and cursor, which the row records; this answers
-   * the other half — given that it was, what wording went out. Undefined if
-   * either id is unknown.
-   */
-  renderAsOfRead(message: MessageId, read: string): Message | undefined;
-  /**
    * A page of a conversation as it read at a given read-log row — the same
    * query as `readConversation` for the human, rendered with the labels in
    * force then, and bounded at the read's own moment: nothing sent after the
@@ -443,8 +428,12 @@ export interface Store {
    * including a recorded tip of 0, a read of a stream nothing had been written
    * to yet. A row that recorded no tip falls back to the read's millisecond,
    * and a message sent later in that same millisecond is shown.
-   * Not a read: nothing is logged. Undefined if the read or the conversation
-   * is unknown.
+   *
+   * Bounded by membership too: if the read's agent held no membership in the
+   * conversation's space at that moment, the agent could have seen nothing of
+   * it, so this is undefined — the honest contract is what the agent could
+   * have seen, not what the thread now holds. Not a read: nothing is logged.
+   * Undefined if the read or the conversation is unknown.
    */
   readConversationAsOf(
     read: string,

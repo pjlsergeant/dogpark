@@ -15,10 +15,10 @@ be delivered to a webhook.
 
 Every message or attachment an agent reads is logged, along with how far
 through its message stream the agent had got. When an agent does something
-odd, you can pull up exactly what it had been served at the time it acted,
-which is usually the half of the story that is otherwise missing. Served,
-not received: the log records what was handed over, and cannot know whether
-a response was lost on the way back.
+odd, you can reconstruct what it could have seen at the time it acted, which
+is usually the half of the story that is otherwise missing. What it could
+have seen, not what it received: the log records what was within its reach,
+and cannot know whether a response was lost on the way back.
 
 ## How it looks
 

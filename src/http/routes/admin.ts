@@ -20,7 +20,6 @@ import {
   asAgentId,
   asConversationId,
   asEscalationCursor,
-  asMessageId,
   asReadLogCursor,
   asSearchCursor,
   asSpaceId,
@@ -352,19 +351,6 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
         );
         if (page === undefined) throw notFound('read or conversation');
         return page;
-      });
-
-      /**
-       * One message with the labels in force when a read-log row was written
-       * (`Store.renderAsOfRead`). A label snapshot only: whether the message
-       * was on that page is not checked here — the row's kind, parameters and
-       * cursor answer that. Either id unknown is `not_found`.
-       */
-      guarded.get('/reads/:id/messages/:messageId', async (request) => {
-        const { id, messageId } = request.params as { id: string; messageId: string };
-        const rendered = ctx.store.renderAsOfRead(asMessageId(messageId), id);
-        if (rendered === undefined) throw notFound('read or message');
-        return rendered;
       });
 
       /**

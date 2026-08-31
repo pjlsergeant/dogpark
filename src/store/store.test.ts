@@ -9,7 +9,6 @@ import type {
   Cursor,
   IdempotencyKey,
   Message,
-  MessageId,
   QueryCursor,
   SpaceId,
   StreamItem,
@@ -1161,11 +1160,12 @@ describe('a read is bounded by the stream tip it recorded', () => {
     ).toEqual(['one']);
   });
 
-  it('shows nothing for a read taken before any sequence was allocated', () => {
+  it('shows nothing for a read taken before the agent joined any space', () => {
     const h = harness();
     // The onboarding order: the agent exists and is polling before the human
     // puts it anywhere, so its first read saw an empty stream and recorded a
-    // tip of 0. The clock never moves, so only the sequence separates them.
+    // tip of 0. A grant is itself a sequenced event, so a tip of 0 is a read
+    // taken when the agent belonged to nothing.
     const agent = h.store.createAgent('alice').id;
     h.store.readStream(agent);
     const read = h.store.readReadLog({ agent }).entries[0]?.id ?? '';
@@ -1174,8 +1174,10 @@ describe('a read is bounded by the stream tip it recorded', () => {
     h.store.grantMembership(agent, space);
     const posted = post(h, agent, space, 'daily', 'after the read');
 
-    // A recorded 0 is a real tip, not the back-fill: nothing existed yet.
-    expect(h.store.readConversationAsOf(read, posted.conversation)?.messages).toEqual([]);
+    // At that read the agent could see no space at all, so the reconstruction
+    // is not-found rather than an empty page: it answers what the agent could
+    // have seen, and the answer here is nothing.
+    expect(h.store.readConversationAsOf(read, posted.conversation)).toBeUndefined();
     expect(h.store.readConversation({ kind: 'human' }, posted.conversation).messages).toHaveLength(
       1,
     );
@@ -1199,52 +1201,63 @@ describe('a read is bounded by the stream tip it recorded', () => {
   });
 });
 
+describe('a read only reconstructs a space the agent could see then', () => {
+  it('shows nothing from a space the agent was never in', () => {
+    const h = harness();
+    const alice = h.store.createAgent('alice').id;
+    const bob = h.store.createAgent('bob').id;
+    const acme = h.store.createSpace('acme').id;
+    const other = h.store.createSpace('other').id;
+    h.store.grantMembership(alice, acme);
+    h.store.grantMembership(bob, other);
+    // A thread alice was never near, and an ordinary read of her own space to
+    // hang the reconstruction on.
+    const secret = post(h, bob, other, 'plans', 'bob only');
+    post(h, alice, acme, 'daily', 'alice here');
+    h.store.readSpace({ kind: 'agent', id: alice }, acme);
+    const read = h.store.readReadLog({ agent: alice }).entries[0]?.id ?? '';
+
+    // The read is alice's; she held no membership in `other` at that moment,
+    // so she could have seen nothing of it and the reconstruction is not-found.
+    expect(h.store.readConversationAsOf(read, secret.conversation)).toBeUndefined();
+  });
+
+  it('shows nothing when the membership was revoked before the read', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const first = post(h, agent, space, 'daily', 'while a member');
+    h.advance(60);
+    h.store.revokeMembership(agent, space);
+    h.advance(60);
+    // A later read, taken after the agent had left the space. The revocation is
+    // a sequenced event, so it falls at or below the tip this read records.
+    h.store.readStream(agent);
+    const read = h.store.readReadLog({ agent }).entries[0]?.id ?? '';
+
+    expect(h.store.readConversationAsOf(read, first.conversation)).toBeUndefined();
+  });
+
+  it('shows the page when the agent was a member at the read, even if later revoked', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const first = post(h, agent, space, 'daily', 'in the room');
+    h.store.readSpace({ kind: 'agent', id: agent }, space);
+    const read = h.store.readReadLog({ agent }).entries[0]?.id ?? '';
+    // Leaving afterwards does not rewrite what the read could have seen: the
+    // membership interval was open at the tip the read recorded.
+    h.advance(60);
+    h.store.revokeMembership(agent, space);
+
+    expect(
+      h.store.readConversationAsOf(read, first.conversation)?.messages.map((m) => m.body),
+    ).toEqual(['in the room']);
+  });
+});
+
 describe('the wording of a read is reproducible after renames', () => {
   const reader = (agent: AgentId): Reader => ({ kind: 'agent', id: agent });
   const newestRead = (h: Harness, agent: AgentId): string =>
     h.store.readReadLog({ agent }).entries[0]?.id ?? '';
-
-  it('renders a message as it read at the time, from the label history', () => {
-    const h = harness();
-    const { agent, space } = scene(h);
-    const bob = h.store.createAgent('bob').id;
-    h.store.grantMembership(bob, space);
-    const posted = post(h, agent, space, 'daily', 'ping @bob about the figures');
-
-    const handed = h.store.readSpace(reader(agent), space).messages[0];
-    const first = newestRead(h, agent);
-    expect(handed?.body).toBe('ping @bob about the figures');
-
-    // No clock advance: the read and the renames share a millisecond, which
-    // is why the history is ordered by its own sequence and not by time.
-    h.store.renameAgent(bob, 'robert');
-    h.store.renameConversation(posted.conversation, 'weekly');
-    h.store.renameAgent(agent, 'alicia');
-    h.store.readSpace(reader(agent), space);
-    const between = newestRead(h, agent);
-    h.store.renameAgent(bob, 'bobby');
-    h.store.readSpace(reader(agent), space);
-    const latest = newestRead(h, agent);
-
-    // The newest read: every label current.
-    const now = h.store.renderAsOfRead(posted.id, latest);
-    expect(now?.body).toBe('ping @bobby about the figures');
-    expect(now?.conversationTitle).toBe('weekly');
-    expect(now?.sender.displayName).toBe('alicia');
-
-    // The first read: exactly what was handed over — not the first rename's
-    // value, which a "latest history row" lookup would have produced.
-    const then = h.store.renderAsOfRead(posted.id, first);
-    expect(then?.body).toBe(handed?.body);
-    expect(then?.conversationTitle).toBe(handed?.conversationTitle);
-    expect(then?.sender.displayName).toBe(handed?.sender.displayName);
-    expect(then?.mentions).toEqual([bob]);
-
-    // Between the two renames of bob.
-    expect(h.store.renderAsOfRead(posted.id, between)?.body).toBe('ping @robert about the figures');
-    expect(h.store.renderAsOfRead('nope' as MessageId, between)).toBeUndefined();
-    expect(h.store.renderAsOfRead(posted.id, 'nope')).toBeUndefined();
-  });
 
   it('renders a whole page as it read at the time', () => {
     const h = harness();

@@ -137,7 +137,7 @@ describe('docs drift guards', () => {
       // Sentinels: one shallow, one deeply nested. If printRoutes changes
       // format enough that routes stop parsing, these vanish first.
       expect(parsed).toContain('GET /api/agent/stream');
-      expect(parsed).toContain('GET /api/admin/reads/:id/messages/:messageId');
+      expect(parsed).toContain('GET /api/admin/reads/:id/conversations/:conversationId/messages');
 
       const adminAt = httpApi.indexOf('## Admin API');
       expect(adminAt).toBeGreaterThan(0);

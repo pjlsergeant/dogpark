@@ -229,8 +229,8 @@ export function prepareStatements(db: Db) {
     // a real one — the read ran before any sequence was allocated.
     readLabelSeq: prepare<
       { id: string },
-      { label_seq: number; read_at: string; tip_seq: number | null }
-    >('SELECT label_seq, read_at, tip_seq FROM read_log WHERE id = @id'),
+      { label_seq: number; read_at: string; tip_seq: number | null; agent_id: string }
+    >('SELECT label_seq, read_at, tip_seq, agent_id FROM read_log WHERE id = @id'),
     setArchived: prepare<{ id: string; archived: number }, unknown>(
       'UPDATE agent SET archived = @archived WHERE id = @id',
     ),
@@ -326,6 +326,22 @@ export function prepareStatements(db: Db) {
       'SELECT id, agent_id, space_id, granted_at, revoked_at FROM membership ' +
         'WHERE (@agent IS NULL OR agent_id = @agent) AND (@space IS NULL OR space_id = @space) ' +
         'ORDER BY granted_seq',
+    ),
+    // Whether an interval was open at a stream position: the as-of view asks
+    // it of the tip a read recorded, to reconstruct only what the agent could
+    // have seen. Containment is in sequence space — granted at or before the
+    // tip, not yet revoked by it — the same total order the stream is built on.
+    membershipAtSeq: prepare<{ agent: string; space: string; tip: number }, { id: string }>(
+      'SELECT id FROM membership WHERE agent_id = @agent AND space_id = @space ' +
+        'AND granted_seq <= @tip AND (revoked_seq IS NULL OR revoked_seq > @tip) LIMIT 1',
+    ),
+    // The same question against the clock, for a legacy row that recorded no
+    // tip: the millisecond-coarse fallback the as-of ceiling already uses, so
+    // a grant or revocation in the read's own millisecond is treated the way
+    // that path treats a message there.
+    membershipAtTime: prepare<{ agent: string; space: string; readAt: string }, { id: string }>(
+      'SELECT id FROM membership WHERE agent_id = @agent AND space_id = @space ' +
+        'AND granted_at <= @readAt AND (revoked_at IS NULL OR revoked_at > @readAt) LIMIT 1',
     ),
     // Includes the caller: a roster that omits you is not a roster.
     peers: prepare<{ agent: string; space: string | null }, AgentNameRow>(

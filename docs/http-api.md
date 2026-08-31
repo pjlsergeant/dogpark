@@ -69,8 +69,7 @@ required because the SPA shares an origin with the agent API.
 | POST | `/messages` | post as the human |
 | GET | `/reads` | the read log, filterable by agent; limit and cursor, because it is the one table that grows without bound. `kind` is `stream`, `conversation`, `space` or `attachment`; an attachment read has an empty cursor |
 | GET | `/reads/:id` | one row, with the conversation or space it read resolved for linking |
-| GET | `/reads/:id/conversations/:conversationId/messages` | the thread as it read on that row: `readConversation` for the human, labels as of then, ending at the stream position the row recorded; paged the same way; nothing logged |
-| GET | `/reads/:id/messages/:messageId` | a message rendered with the labels in force when that row was written (ADR-0004). A label snapshot, not proof the message was on that page: that is the row's kind, parameters and cursor |
+| GET | `/reads/:id/conversations/:conversationId/messages` | the thread as it read on that row: `readConversation` for the human, labels as of then, ending at the stream position the row recorded, and only for a space the agent could see then; paged the same way; nothing logged |
 | GET | `/escalations` | the inbox, newest first; `order`, `after`, `limit`; carries `undelivered`, counted over the whole table |
 | GET | `/search` | `q`; FTS5 over stored bodies. `order` is `relevance` (default) or `newest`; `after`, `limit` |
 
@@ -118,9 +117,11 @@ GET  /reads/:id/conversations/:conversationId/messages?since&until&after&order&l
                       included. Exact for a row that recorded a position; a row
                       that recorded none ends at the read's millisecond
                       instead, which includes a message sent later in that same
-                      millisecond
-GET  /reads/:id/messages/:messageId
-                   -> Message
+                      millisecond. Only for a space the read's agent belonged to
+                      at that moment; otherwise not_found, since the agent could
+                      have seen nothing of it. The human's display name is the
+                      one label not journaled, so it renders as it is now rather
+                      than as it stood at the read (ADR-0004)
 GET  /agents/:id/keys
                    -> [{ keyId, label, createdAt, revokedAt }]
 GET  /escalations?order&after&limit

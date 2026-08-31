@@ -1123,7 +1123,7 @@ describe('the HTTP surface', () => {
       expect(rows[0]?.parameters.range.since).toBe('2020-01-01T00:00:00Z');
     });
 
-    it('renders a message as it read at the time of a given row', async () => {
+    it('renders a thread as it read at the time of a given row', async () => {
       const session = await login(h);
       h.store.postMessage({
         sender: { kind: 'human' },
@@ -1151,23 +1151,6 @@ describe('the HTTP surface', () => {
         headers: { cookie: session.cookie, 'x-csrf-token': session.csrf },
         payload: { title: 'renamed since' },
       });
-
-      const asRead = await h.app.inject({
-        method: 'GET',
-        url: `/api/admin/reads/${row?.id ?? ''}/messages/${handed?.id ?? ''}`,
-        headers: { cookie: session.cookie },
-      });
-      expect(asRead.statusCode).toBe(200);
-      expect((asRead.json() as { conversationTitle: string }).conversationTitle).toBe(
-        handed?.conversationTitle,
-      );
-
-      const unknown = await h.app.inject({
-        method: 'GET',
-        url: `/api/admin/reads/nope/messages/${handed?.id ?? ''}`,
-        headers: { cookie: session.cookie },
-      });
-      expect(unknown.statusCode).toBe(404);
 
       // The whole thread as of that read, and the row itself with its
       // conversation resolved so the reader can be linked to.
