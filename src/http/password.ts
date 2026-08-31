@@ -152,3 +152,20 @@ export async function verifyPassword(stored: string, password: string): Promise<
  */
 export const EXAMPLE_PASSWORD_HASH =
   'scrypt$16384$8$1$parnIEYohBPy2vqO_rBHPA$gSN9jM5Ym_v38yarkqxX79VXKilvG4SKKZ6B0yLbMuA';
+
+/** The password `EXAMPLE_PASSWORD_HASH` is a hash of, printed in README.md. */
+export const EXAMPLE_PASSWORD = 'dogpark';
+
+/**
+ * Whether `DOGPARK_PASSWORD_HASH` still authenticates the README's example
+ * password. The threat is the *password*, not one particular hash string: a
+ * user who mints their own hash of `dogpark` gets a fresh salt, so a compare
+ * against the constant alone would miss it while the printed password still
+ * logs in. The constant is the fast path — a plain string compare after trim,
+ * no scrypt — and any other stored hash is verified against `dogpark` with one
+ * scrypt, which the server can afford once at startup.
+ */
+export async function isExamplePassword(stored: string): Promise<boolean> {
+  if (stored.trim() === EXAMPLE_PASSWORD_HASH) return true;
+  return verifyPassword(stored, EXAMPLE_PASSWORD);
+}

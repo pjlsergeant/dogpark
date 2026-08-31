@@ -76,13 +76,22 @@ describe('DOGPARK_TRUST_PROXY', () => {
 
   it('refuses a prefix length the family cannot have', () => {
     expect(() => loadConfig({ ...base, DOGPARK_TRUST_PROXY: '10.0.0.0/33' })).toThrow(
-      /"10\.0\.0\.0\/33" has a prefix length outside 0-32/,
+      /"10\.0\.0\.0\/33" has a prefix length outside 1-32/,
     );
     expect(() => loadConfig({ ...base, DOGPARK_TRUST_PROXY: 'fd00::/129' })).toThrow(
-      /outside 0-128/,
+      /outside 1-128/,
     );
     expect(() => loadConfig({ ...base, DOGPARK_TRUST_PROXY: '10.0.0.0/8/x' })).toThrow(
       /is not an address or range/,
+    );
+  });
+
+  it('refuses a /0 range, which is every address, of either family', () => {
+    expect(() => loadConfig({ ...base, DOGPARK_TRUST_PROXY: '10.0.0.0/0' })).toThrow(
+      /"10\.0\.0\.0\/0" is a \/0 range, which is every address, and is refused/,
+    );
+    expect(() => loadConfig({ ...base, DOGPARK_TRUST_PROXY: '::/0' })).toThrow(
+      /"::\/0" is a \/0 range, which is every address, and is refused/,
     );
   });
 
@@ -120,9 +129,23 @@ describe('examplePassword', () => {
   });
 });
 
-describe('the listen address', () => {
+describe('DOGPARK_HOST', () => {
+  // The exact name is ADR-0016's arm (docs/adr/README.md): the default binds
+  // every interface in both proxy modes, so a container is reachable without a
+  // proxy in front.
   it('is every interface in both modes, so a container is reachable without a proxy', () => {
     expect(loadConfig(base).listenHost).toBe('0.0.0.0');
     expect(loadConfig({ ...base, DOGPARK_TRUST_PROXY: '127.0.0.1' }).listenHost).toBe('0.0.0.0');
+  });
+
+  it('honours an explicit bind address', () => {
+    expect(loadConfig({ ...base, DOGPARK_HOST: '127.0.0.1' }).listenHost).toBe('127.0.0.1');
+    expect(loadConfig({ ...base, DOGPARK_HOST: '::1' }).listenHost).toBe('::1');
+  });
+
+  it('refuses a hostname, naming it: the bind target must be an IP literal', () => {
+    expect(() => loadConfig({ ...base, DOGPARK_HOST: 'localhost' })).toThrow(
+      /DOGPARK_HOST.*"localhost" is not an IPv4 or IPv6 address/,
+    );
   });
 });

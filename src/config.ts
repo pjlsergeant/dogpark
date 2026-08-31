@@ -25,9 +25,14 @@ function proxyAddressProblem(entry: string): string | undefined {
   if (family === 0) return `"${entry}" is not an IPv4 or IPv6 address`;
   if (prefix === undefined) return undefined;
   const bits = family === 4 ? 32 : 128;
-  if (!/^\d{1,3}$/.test(prefix) || Number(prefix) > bits) {
-    return `"${entry}" has a prefix length outside 0-${bits}`;
-  }
+  if (!/^\d{1,3}$/.test(prefix)) return `"${entry}" has a prefix length outside 1-${bits}`;
+  const length = Number(prefix);
+  // `/0` passes `@fastify/proxy-addr`'s own parser only to be rejected at app
+  // build with `TypeError: invalid range on address` — the late failure this
+  // check exists to prevent — and it means every address anyway, which trusting
+  // every peer is exactly what the declaration refuses.
+  if (length === 0) return `"${entry}" is a /0 range, which is every address, and is refused`;
+  if (length > bits) return `"${entry}" has a prefix length outside 1-${bits}`;
   return undefined;
 }
 
@@ -38,6 +43,23 @@ function proxyAddressProblem(entry: string): string | undefined {
 const Schema = z.object({
   DOGPARK_PORT: z.coerce.number().int().positive().default(8080),
   DOGPARK_DATA_DIR: z.string().default('./data'),
+
+  /**
+   * Which interfaces to bind. Default every interface (`0.0.0.0`), the only
+   * default that reaches a container. On a source build with no proxy, set
+   * `127.0.0.1` to keep plaintext off the network — the equivalent of a
+   * container's `-p 127.0.0.1:` publish (ADR-0016). An IP literal only: a
+   * hostname would resolve ambiguously, so it is refused here rather than
+   * left to surface as a bind error later.
+   */
+  DOGPARK_HOST: z
+    .string()
+    .default('0.0.0.0')
+    .superRefine((value, ctx) => {
+      if (isIP(value) === 0) {
+        ctx.addIssue({ code: 'custom', message: `"${value}" is not an IPv4 or IPv6 address` });
+      }
+    }),
 
   /** The single human. */
   DOGPARK_PASSWORD_HASH: z.string().min(1),
@@ -112,16 +134,18 @@ export type Config = z.infer<typeof Schema> & {
   readonly trustProxy: false | readonly string[];
   readonly behindProxy: boolean;
   /**
-   * Always every interface, in both modes: exposure is the deployer's port
-   * publish, as for every containerised service (ADR-0016). A field rather
-   * than a literal in `server.ts` so the decision is unit-testable.
+   * The interfaces to bind, `DOGPARK_HOST` (default every interface). A field
+   * rather than a literal in `server.ts` so the decision is unit-testable.
    */
   readonly listenHost: string;
   /**
-   * True when `DOGPARK_PASSWORD_HASH` is the example README.md ships (the hash
-   * of `dogpark`). A string compare after trim, not a scrypt — anyone who has
-   * read the README knows the password, so the server warns and the UI shows a
-   * banner until it changes.
+   * True when `DOGPARK_PASSWORD_HASH` still authenticates the README's example
+   * password. Here it is the fast path only — a string compare against the
+   * example hash after trim — so `loadConfig` stays synchronous; `server.ts`
+   * upgrades it at startup with `isExamplePassword`, one scrypt that also
+   * catches a differently salted hash of `dogpark`. Anyone who has read the
+   * README knows the password, so the server warns and the UI shows a banner
+   * until it changes.
    */
   readonly examplePassword: boolean;
 };
@@ -139,7 +163,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     ...parsed.data,
     trustProxy,
     behindProxy: trustProxy !== false,
-    listenHost: '0.0.0.0',
+    listenHost: parsed.data.DOGPARK_HOST,
     examplePassword: parsed.data.DOGPARK_PASSWORD_HASH.trim() === EXAMPLE_PASSWORD_HASH,
   };
 }

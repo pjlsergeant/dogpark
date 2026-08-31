@@ -14,10 +14,13 @@ meaning is the resolver's, not Dogpark's.
 
 Three things follow from the declaration, and they move together:
 
-* **Where to listen.** Always every interface, in both modes. Exposure is the
-  deployer's port publish, as for every containerised service: the earlier
-  loopback-only rule for the undeclared case made the Docker image unreachable
-  without a proxy and protected nothing a `-p 127.0.0.1:` publish does not.
+* **Where to listen.** The bind address and the port publish are both the
+  deployer's — `DOGPARK_HOST` and `-p`. The default is every interface
+  (`0.0.0.0`), because that is the only default that reaches a container: a
+  loopback-only default would leave an unpublished port unreachable even from
+  another container on the same network. Keeping plaintext off the network is
+  then the port publish (`-p 127.0.0.1:`) or, for a source build with no
+  publish, `DOGPARK_HOST=127.0.0.1`.
 * **Whether cookies are `Secure`.** Only when a proxy is declared. Without one
   there is no TLS to promise, and a `Secure` cookie a browser then refuses to
   send is worse than an honest one.
@@ -49,11 +52,14 @@ The residual gap is a caller *inside* a declared range — a `/16` that names
 more than the proxy — which is believed like the proxy is. Declare addresses,
 not neighbourhoods.
 
-There is no way to run Dogpark on a network without a proxy in front. That is
-the point.
+Without a proxy Dogpark accepts plaintext; keeping that off the network is the
+deployer's port publish or `DOGPARK_HOST=127.0.0.1`. What remains refused is the
+ambiguous state — no declaration at all.
 
 _2026-08-31: the "Where to listen" bullet was amended. The undeclared case used
 to bind loopback only, which made the container image unreachable —
 `docker run -p 8080:8080 -e DOGPARK_TRUST_PROXY=no` started and could not be
-reached from the host — while protecting nothing a `-p 127.0.0.1:` publish does
-not. The three things `no` means are unchanged._
+reached from the host, and another container on the same network could not
+reach an unpublished port either. The bind address is now `DOGPARK_HOST`
+(default `0.0.0.0`); a source build with no proxy sets `DOGPARK_HOST=127.0.0.1`
+to keep plaintext off the network. The three things `no` means are unchanged._

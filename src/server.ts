@@ -1,10 +1,15 @@
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadConfig } from './config.js';
+import { loadConfig, type Config } from './config.js';
 import { attachmentRoot, sweepUnreferenced } from './http/attachments.js';
 import { buildApp } from './http/app.js';
-import { assertUsablePasswordHash, hashPassword, readSecret } from './http/password.js';
+import {
+  assertUsablePasswordHash,
+  hashPassword,
+  isExamplePassword,
+  readSecret,
+} from './http/password.js';
 import { WriteSignals } from './http/signal.js';
 import { escalationQueue } from './notify/queue.js';
 import { Notifier } from './notify/webhook.js';
@@ -69,9 +74,19 @@ async function main(): Promise<void> {
     return;
   }
 
-  const config = loadConfig();
-  // Every interface, in both modes: exposure is the deployer's port publish,
-  // as for every containerised service (ADR-0016).
+  // `loadConfig` sets `examplePassword` from a fast string compare against the
+  // example hash; here it is upgraded with a scrypt verify, so a differently
+  // salted hash of `dogpark` is caught too. One scrypt at startup is fine, and
+  // it is done before `buildApp` so the warning, the session routes and the
+  // banner all speak of the full check.
+  const loaded = loadConfig();
+  const config: Config = {
+    ...loaded,
+    examplePassword: await isExamplePassword(loaded.DOGPARK_PASSWORD_HASH),
+  };
+  // `DOGPARK_HOST` decides the interfaces; the default is every one, the only
+  // default that reaches a container. On a source build with no proxy,
+  // `DOGPARK_HOST=127.0.0.1` keeps plaintext off the network (ADR-0016).
   const binding = { host: config.listenHost };
 
   const store = openStore({
@@ -114,7 +129,8 @@ async function main(): Promise<void> {
   if (config.examplePassword) {
     app.log.warn(
       'DOGPARK_PASSWORD_HASH is the example from README.md: anyone who has read it can log in. ' +
-        'Mint your own with `node dist/server.js hash-password` and restart.',
+        'Set it to a hash of your own password and restart; mint one with hash-password ' +
+        '(see README.md).',
     );
   }
   if (config.behindProxy) {
@@ -127,10 +143,12 @@ async function main(): Promise<void> {
     );
   } else {
     app.log.warn(
+      { host: binding.host },
       'DOGPARK_TRUST_PROXY=no: no proxy declared, so X-Forwarded-* is ignored, session ' +
-        'cookies are not Secure, and plaintext is accepted. This listens on every ' +
-        "interface, so publish the port only where plaintext is acceptable (a laptop's " +
-        "127.0.0.1). Set DOGPARK_TRUST_PROXY to the proxy's address when a TLS-terminating " +
+        'cookies are not Secure, and plaintext is accepted. This binds ' +
+        `${binding.host}; keep plaintext off the network by publishing the port to a ` +
+        "laptop's 127.0.0.1, or set DOGPARK_HOST=127.0.0.1 on a source build with no " +
+        "publish. Set DOGPARK_TRUST_PROXY to the proxy's address when a TLS-terminating " +
         'proxy is in front.',
     );
   }

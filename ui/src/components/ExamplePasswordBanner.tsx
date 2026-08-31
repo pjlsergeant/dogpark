@@ -10,8 +10,8 @@ export function ExamplePasswordBanner(): ReactNode {
   return (
     <div className="example-password-banner" role="alert">
       This Dogpark is using the example password from the README. Anyone who has read it can sign
-      in. Set <code>DOGPARK_PASSWORD_HASH</code> to your own hash (
-      <code>node dist/server.js hash-password</code>) and restart.
+      in. Set <code>DOGPARK_PASSWORD_HASH</code> to a hash of your own password and restart; the
+      README says how.
     </div>
   );
 }

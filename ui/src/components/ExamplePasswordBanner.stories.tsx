@@ -15,6 +15,9 @@ type Story = StoryObj<typeof meta>;
 
 export const Warning: Story = {
   parameters: {
-    expectText: ['This Dogpark is using the example password from the README.'],
+    expectText: [
+      'This Dogpark is using the example password from the README.',
+      'the README says how.',
+    ],
   },
 };

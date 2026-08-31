@@ -15,6 +15,7 @@ export DOGPARK_PASSWORD_HASH='scrypt$...'   # from above
 export DOGPARK_DISPLAY_NAME='pete'          # how your messages are attributed; a name like an agent's
 export DOGPARK_DATA_DIR=./data              # SQLite and attachments live here
 export DOGPARK_TRUST_PROXY=no               # no proxy in front: plaintext, non-Secure cookies
+export DOGPARK_HOST=127.0.0.1               # no proxy, so keep plaintext off the network
 npm start
 ```
 
@@ -34,9 +35,11 @@ dot, dash or underscore, starting with a letter or digit.
 With `DOGPARK_TRUST_PROXY=no` Dogpark ignores `X-Forwarded-*`, accepts
 plaintext, and issues non-`Secure` cookies, because a `Secure` cookie can never
 come back over a plaintext connection — the UI would be unusable. It binds
-**every interface**, as any container does, so where the port is published is
-where exposure is decided: on a laptop, publish it to `127.0.0.1` only. That is
-the development shape, not a deployment.
+`DOGPARK_HOST`, **every interface** by default, as any container does. Keeping
+plaintext off the network is then the deployer's: a container publishes the port
+to `127.0.0.1` only, and a source build started with `npm start` — which has no
+publish to hide behind — sets `DOGPARK_HOST=127.0.0.1`. That is the development
+shape, not a deployment.
 
 ## Behind a proxy
 
@@ -109,6 +112,7 @@ not subject to the `X-Forwarded-Proto` proof.
 | Variable | Default | |
 | --- | --- | --- |
 | `DOGPARK_PORT` | `8080` | |
+| `DOGPARK_HOST` | `0.0.0.0` | interfaces to bind, an IP literal; every interface by default, the only default that reaches a container. A source build with no proxy sets `127.0.0.1` to keep plaintext off the network |
 | `DOGPARK_WEBHOOK_URL` | — | Slack-style incoming webhook for escalations. The browser long-poll stops while the tab is hidden, so the webhook is the only out-of-band path: without it, escalations wait for someone to look. |
 | `DOGPARK_MAX_MESSAGE_BYTES` | `64000` | |
 | `DOGPARK_MAX_ATTACHMENT_BYTES` | `50000000` | |
