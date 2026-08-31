@@ -356,7 +356,9 @@ function Thread({
    */
   const attemptKeys = useRef(new Map<string, string>());
   /** Every arrival of annotation state retires unresolved attempts. */
+  const annotationArrivals = useRef(0);
   const acceptAnnotations = (next: ConversationAnnotations): void => {
+    annotationArrivals.current += 1;
     attemptKeys.current.clear();
     setAnnotations(next);
   };
@@ -574,11 +576,14 @@ function Thread({
     action: (key: string) => Promise<ConversationAnnotations>,
   ) => {
     const key = attemptKeys.current.get(attempt) ?? idempotencyKey();
+    const seen = annotationArrivals.current;
     try {
       acceptFromAction(await runAction(() => action(key)));
       onPosted();
     } catch (cause) {
-      attemptKeys.current.set(attempt, key);
+      // Keep the key for a replay only if nothing arrived meanwhile; state
+      // that landed during the attempt has already superseded it.
+      if (seen === annotationArrivals.current) attemptKeys.current.set(attempt, key);
       setError(toApiError(cause));
     }
   };
@@ -769,6 +774,7 @@ function Thread({
           }}
           runAnnotationAction={runAction}
           onAnnotations={acceptFromAction}
+          annotations={annotations}
         />
       )}
     </>

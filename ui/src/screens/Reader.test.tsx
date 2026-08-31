@@ -10,6 +10,14 @@ import { fixtureApi } from '../stories/harness.js';
 import * as fixture from '../stories/fixtures.js';
 import { ReaderScreen } from './Reader.js';
 
+/** A thread that reads as complete — consistent with a post answering complete. */
+const completeThread = (): MessagePage => ({
+  messages: [...fixture.rotationMessages].reverse(),
+  nextCursor: 'qc_end' as MessagePage['nextCursor'],
+  hasMore: false,
+  annotations: { status: 'complete', pins: [] },
+});
+
 /** Only for its type: the shape a post resolves with. */
 const fixturePost = fixtureApi().post;
 
@@ -390,6 +398,7 @@ describe('Reader annotations', () => {
 
   test('posting to a complete thread explains that posting did not reopen it', async () => {
     renderReader({
+      readConversation: () => Promise.resolve(completeThread()),
       post: async () => ({
         message: fixture.wrapUp,
         conversation: fixture.rotation,
@@ -533,8 +542,85 @@ describe('Reader annotations', () => {
     expect(keys[1]).not.toBe(keys[0]);
   });
 
+  test("a failed attempt's key is not restored when state arrived during the attempt", async () => {
+    const keys: string[] = [];
+    let changes = 0;
+    let wake: ((version: string) => void) | undefined;
+    let fail: ((error: Error) => void) | undefined;
+    const open: MessagePage = {
+      messages: [...fixture.rotationMessages].reverse(),
+      nextCursor: 'qc_end' as MessagePage['nextCursor'],
+      hasMore: false,
+      annotations: { status: 'open', pins: [] },
+    };
+    const api = fixtureApi({
+      readConversation: () => Promise.resolve(open),
+      completeConversation: (_id: string, key: string) => {
+        keys.push(key);
+        return keys.length === 1
+          ? new Promise<ConversationAnnotations>((_resolve, reject) => {
+              fail = reject;
+            })
+          : Promise.resolve({ status: 'complete' as const, pins: [] as const });
+      },
+      awaitChanges: () => {
+        changes += 1;
+        return changes === 1
+          ? Promise.resolve('v1')
+          : new Promise<string>((resolve) => {
+              if (changes === 2) wake = resolve;
+            });
+      },
+    });
+    render(
+      <AppProvider value={{ api, session: { displayName: 'pete' }, logout: () => {} }}>
+        <ChangesProvider api={api}>
+          <ToastHost>
+            <ReaderScreen space={fixture.delivery.id} conversation={fixture.rotation.id} />
+          </ToastHost>
+        </ChangesProvider>
+      </AppProvider>,
+    );
+    await userEvent.click(await screen.findByRole('button', { name: 'Complete' }));
+    await waitFor(() => expect(fail).toBeDefined());
+    // A poll lands while the attempt is still out, then the attempt fails.
+    await waitFor(() => expect(wake).toBeDefined());
+    await act(async () => {
+      wake!('v2');
+      await Promise.resolve();
+    });
+    await act(async () => {
+      fail!(new Error('answer lost'));
+      await Promise.resolve();
+    });
+    await screen.findByText(/answer lost/);
+    await userEvent.click(screen.getByRole('button', { name: 'Complete' }));
+    await waitFor(() => expect(keys).toHaveLength(2));
+    expect(keys[1]).not.toBe(keys[0]);
+  });
+
+  test('the completion notice goes when the thread is reopened from the header', async () => {
+    renderReader({
+      readConversation: () => Promise.resolve(completeThread()),
+      post: async () => ({
+        message: fixture.wrapUp,
+        conversation: fixture.rotation,
+        annotations: { status: 'complete', pins: [] },
+      }),
+      reopenConversation: () => Promise.resolve({ status: 'open' as const, pins: [] as const }),
+    });
+    await userEvent.type(await screen.findByLabelText('Message'), 'One more note');
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText(/new messages do not reopen it/);
+    // The header's Reopen, not the notice's link.
+    const header = screen.getByRole('heading', { level: 1 }).closest('header')!;
+    await userEvent.click(within(header).getByRole('button', { name: 'Reopen' }));
+    await waitFor(() => expect(screen.queryByText(/new messages do not reopen it/)).toBeNull());
+  });
+
   test('a failed inline Reopen is reported, not swallowed', async () => {
     renderReader({
+      readConversation: () => Promise.resolve(completeThread()),
       post: async () => ({
         message: fixture.wrapUp,
         conversation: fixture.rotation,
@@ -544,8 +630,8 @@ describe('Reader annotations', () => {
     });
     await userEvent.type(await screen.findByLabelText('Message'), 'One more note');
     await userEvent.click(screen.getByRole('button', { name: 'Send' }));
-    await screen.findByText(/new messages do not reopen it/);
-    await userEvent.click(screen.getByRole('button', { name: 'Reopen' }));
+    const notice = (await screen.findByText(/new messages do not reopen it/)).closest('p')!;
+    await userEvent.click(within(notice).getByRole('button', { name: 'Reopen' }));
     expect(await screen.findByText(/reopen went wrong/)).toBeTruthy();
   });
 });

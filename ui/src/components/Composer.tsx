@@ -11,7 +11,7 @@
  *   `identity()` is agent-only -- so this checks for C0 control characters
  *   generally and warns rather than pretending to know.
  */
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { ConversationAnnotations, ConversationId, SpaceId } from '../api/index.js';
 import { useApi } from '../app/api-context.js';
@@ -35,6 +35,7 @@ export function Composer({
   onPosted,
   runAnnotationAction,
   onAnnotations,
+  annotations,
 }: {
   space: SpaceId;
   conversation?: ConversationId | undefined;
@@ -47,6 +48,13 @@ export function Composer({
    */
   runAnnotationAction?: (<T>(action: () => Promise<T>) => Promise<T>) | undefined;
   onAnnotations?: ((annotations: ConversationAnnotations) => void) | undefined;
+  /**
+   * The thread's current annotation state, a new object on every arrival —
+   * so the composer hears what the thread hears: the completion notice shows
+   * only while the thread is still complete, and an unresolved inline Reopen
+   * is retired the moment newer state lands, as the thread's own attempts are.
+   */
+  annotations?: ConversationAnnotations | undefined;
 }): ReactNode {
   const api = useApi();
   const notify = useNotify();
@@ -67,6 +75,10 @@ export function Composer({
   const draftKey = useRef<string | null>(null);
   /** The inline Reopen's key, kept across a failed attempt like the draft's. */
   const reopenKey = useRef<string | null>(null);
+  useEffect(() => {
+    reopenKey.current = null;
+  }, [annotations]);
+  const stillComplete = annotations === undefined || annotations.status === 'complete';
 
   const newThread = conversation === undefined;
   const hasControl = hasControlCharacter(body) || hasControlCharacter(title);
@@ -206,7 +218,7 @@ export function Composer({
         </p>
       )}
 
-      {completeNotice && conversation !== undefined && (
+      {completeNotice && stillComplete && conversation !== undefined && (
         <p className="composer-notice">
           This thread is complete; new messages do not reopen it.{' '}
           <button
