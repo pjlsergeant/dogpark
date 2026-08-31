@@ -327,7 +327,15 @@ function Thread({
    * back on the message that was the first unread when the row was clicked.
    */
   const unreadConsumed = useRef(false);
+  /**
+   * A catch-up landing that ran out of pages before the first unread holds
+   * the read mark: marking the newest message would declare the unshown ones
+   * read. The hold lifts only once that many of the newest messages are on
+   * screen — walked back to with Load older — never on a Refresh, which shows
+   * the newest page alone and would otherwise lift it for nothing.
+   */
   const markHeld = useRef(false);
+  const unreadNeeded = useRef(0);
   const [unreadBeyond, setUnreadBeyond] = useState(false);
   /**
    * Annotations arrive from three places — a full load, the newest-page poll,
@@ -396,20 +404,17 @@ function Thread({
         seek.current === undefined && unreadCount !== undefined && !unreadConsumed.current;
       const result = firstUnread
         ? await loadFirstUnread(api, conversation, unreadCount, asOf, unreadTip)
-        : {
-            loaded: await loadThread(api, conversation, seek.current, asOf),
-            target: undefined,
-            reached: true,
-          };
+        : { loaded: await loadThread(api, conversation, seek.current, asOf), target: undefined };
       const thread = result.loaded;
       if (mine !== generation.current) return;
       // Consumed by a load that landed, so a transient failure's Retry still
       // keeps the promise the catch-up row made.
       if (firstUnread) unreadConsumed.current = true;
-      // A landing that fell short of the first unread must not mark what it
-      // never showed: the mark holds until a full load that does not.
-      markHeld.current = !result.reached;
-      setUnreadBeyond(!result.reached);
+      if ('reached' in result && !result.reached) {
+        markHeld.current = true;
+        unreadNeeded.current = result.needed;
+        setUnreadBeyond(true);
+      }
       if (result.target !== undefined) seek.current = result.target;
       setUnreadTarget(result.target);
       setLoaded(thread);
@@ -583,14 +588,18 @@ function Thread({
   // a thread whose mark never moved would sit in catch-up as unread.
   useEffect(() => {
     if (asOf !== undefined || newestId === undefined || marked.current === newestId) return;
-    if (markHeld.current) return;
+    if (markHeld.current) {
+      if (count < unreadNeeded.current) return;
+      markHeld.current = false;
+      setUnreadBeyond(false);
+    }
     marked.current = newestId;
     void api.advanceReadMark(conversation, newestId).catch((cause: unknown) => {
       // Forget only this attempt: a newer tip's mark may already be out.
       if (marked.current === newestId) marked.current = undefined;
       setError(toApiError(cause));
     });
-  }, [api, asOf, conversation, newestId, arrivals]);
+  }, [api, asOf, conversation, newestId, arrivals, count]);
 
   // As of a read, the rendered messages carry the title as it stood then;
   // the thread list is today's, so it is only a fallback while nothing has
@@ -728,8 +737,8 @@ function Thread({
       <div className="thread-body">
         {unreadBeyond && (
           <p className="thread-notice muted small">
-            More unread here than could be loaded at once; the older messages are behind “Load older
-            messages”, and your read mark stays where it was until you Refresh.
+            More unread here than could be loaded at once. The older ones are behind “Load older
+            messages”; your read mark stays where it was until they have been shown.
           </p>
         )}
         {pinned.size > 0 && (

@@ -92,7 +92,6 @@ export async function loadThread(
   return holdsTarget() ? loaded : newest;
 }
 
-/** Load enough history that the last `unreadCount` messages have a first row. */
 /**
  * Load enough history that the last `unreadCount` messages have a first row.
  *
@@ -103,7 +102,9 @@ export async function loadThread(
  * two messages can share a millisecond and never share a seq.
  *
  * `reached` is false when the page budget ran out first. The caller must not
- * treat that as a landing: the first unread is still beyond what is shown.
+ * treat that as a landing: the first unread is still beyond what is shown, and
+ * `needed` says how many of the newest messages have to be on screen before
+ * everything the row counted has been displayed.
  */
 export async function loadFirstUnread(
   api: ThreadReader,
@@ -115,6 +116,7 @@ export async function loadFirstUnread(
   readonly loaded: Loaded;
   readonly target: MessageId | undefined;
   readonly reached: boolean;
+  readonly needed: number;
 }> {
   let loaded = await loadThread(api, conversation, undefined, asOf);
   const wanted = (): number =>
@@ -130,12 +132,12 @@ export async function loadFirstUnread(
   ) {
     loaded = await olderPage(api, conversation, loaded, asOf);
   }
-  const reached = loaded.messages.length >= wanted() || !loaded.hasMore;
+  const needed = wanted();
+  const reached = loaded.messages.length >= needed || !loaded.hasMore;
   return {
     loaded,
-    target: reached
-      ? loaded.messages.at(-Math.min(wanted(), loaded.messages.length))?.id
-      : undefined,
+    target: reached ? loaded.messages.at(-Math.min(needed, loaded.messages.length))?.id : undefined,
     reached,
+    needed,
   };
 }
