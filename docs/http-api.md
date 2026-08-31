@@ -118,13 +118,16 @@ rows. Both endpoints require `format=markdown`, `format=json`, or
 | GET | `/conversations/:id/export` | one conversation |
 | GET | `/spaces/:id/export` | every conversation in the space, ordered by its first message sequence |
 
-Markdown contains current conversation and space labels, the space description
-at the start of a space export, current completion and pin state (including pin
-actor names), and sender/timestamp message blocks. An export is one snapshot
-at the stream tip it began under: message rendering — sender names, mentions
-(ADR-0014), pin actors — is as it stood at that tip, so a rename or a post
-landing mid-export cannot split one document against itself. Every attachment remains listed as
-metadata. Missing bytes are called out instead of failing the export.
+Markdown carries the space description at the start of a space export, each
+conversation's completion and pin state (with pin actor names), and
+sender/timestamp message blocks. An export is one snapshot at the position it
+began under — the stream tip and the label-history position, the same pair a
+read-log row records: messages at or below the tip, annotations as of it, and
+rendering — sender names, mentions (ADR-0014), pin actors — as it stood then,
+so a rename or a post landing mid-export cannot split one document against
+itself. The space and conversation headers are current labels. Every attachment
+remains listed as metadata. Missing bytes are called out instead of failing the
+export.
 
 JSON is an `ExportDocument`: the protocol `Space`, `Conversation`,
 `ConversationAnnotations`, and `Message` wire shapes, with attachment metadata

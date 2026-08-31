@@ -129,6 +129,38 @@ describe('Reader poll ordering', () => {
   });
 });
 
+describe('Reader poll on an empty thread', () => {
+  test('the first messages to arrive are appended rather than mistaken for a gap', async () => {
+    const empty: MessagePage = {
+      messages: [],
+      nextCursor: 'qc_end' as MessagePage['nextCursor'],
+      hasMore: false,
+      annotations: { status: 'open', pins: [] },
+    };
+    const full: MessagePage = { ...empty, messages: [...fixture.rotationMessages].reverse() };
+    let reads = 0;
+    let changes = 0;
+    const api = fixtureApi({
+      readConversation: () => Promise.resolve((reads += 1) === 1 ? empty : full),
+      awaitChanges: () => {
+        changes += 1;
+        return changes === 1 ? Promise.resolve('v1') : new Promise<string>(() => {});
+      },
+    });
+    render(
+      <AppProvider value={{ api, session: { displayName: 'pete' }, logout: () => {} }}>
+        <ChangesProvider api={api}>
+          <ToastHost>
+            <ReaderScreen space={fixture.delivery.id} conversation={fixture.rotation.id} />
+          </ToastHost>
+        </ChangesProvider>
+      </AppProvider>,
+    );
+    await waitFor(() => expect(reads).toBe(2));
+    await screen.findAllByText(/Checks green/);
+  });
+});
+
 describe('Reader action ordering', () => {
   test('of two pins in flight, the one clicked last wins whatever order the answers land', async () => {
     const pete = fixture.pete;

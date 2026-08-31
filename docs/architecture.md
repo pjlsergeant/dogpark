@@ -291,5 +291,7 @@ not exposed. **It is not a chat client** (ADR-0007).
   cannot be retried by hand.
 * The admin API lists a space's members but not an agent's spaces; only the
   agent sees those, through `identity()`.
-* There is no unread state, so the reader polls rather than knowing what is
-  new.
+* The human's unread state is a per-conversation mark advanced by the Reader
+  as it displays, kept apart from the agents' read log; the catch-up screen is
+  built on it. It is a convenience cursor, not evidence: nothing an agent sees
+  depends on it, and it is not reconstructible.

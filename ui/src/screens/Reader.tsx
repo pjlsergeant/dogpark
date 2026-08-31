@@ -427,7 +427,11 @@ function Thread({
         if (current === null) return current;
         const held = new Set(current.messages.map((m) => m.id));
         const added = newest.filter((m) => !held.has(m.id));
-        if (added.length === 0 || added.length === newest.length) return current;
+        if (added.length === 0) return current;
+        // No overlap means more than a page arrived and appending would leave
+        // a hole — unless nothing was held, in which case the newest page is
+        // simply the thread's first page and there is nothing to be behind.
+        if (held.size > 0 && added.length === newest.length) return current;
         return { ...current, messages: [...current.messages, ...added] };
       });
     } catch {
