@@ -11,7 +11,6 @@ import type {
   QueryCursor,
   Space,
   SpaceId,
-  Timestamp,
 } from '../types.js';
 import type { AppContext } from './context.js';
 import { notFound } from './errors.js';
@@ -23,13 +22,16 @@ const PAGE_SIZE = 200;
  * One export is one snapshot. The bundle walks each conversation three times
  * — markdown, JSON, attachments — as separate paged reads, so a post landing
  * mid-export would otherwise put a message in the .json that the .md never
- * saw. `takenAt` is the exclusive upper bound every walk reads under, and
- * the annotations are taken once, so the documents in one archive agree.
+ * saw. `tip` is the stream seq when the export began: every walk reads at or
+ * below it and the annotations are taken as of it, so the documents in one
+ * archive agree. A seq, not the clock — a message committed earlier in the
+ * same millisecond the export starts is before the export, and a timestamp
+ * bound could not say so.
  */
 export interface ExportSource {
   readonly space: Space & { readonly description?: string | undefined };
   readonly conversations: readonly Conversation[];
-  readonly takenAt: Timestamp;
+  readonly tip: number;
   readonly annotations: ReadonlyMap<ConversationId, ConversationAnnotations>;
 }
 
@@ -38,12 +40,15 @@ function snapshot(
   space: ExportSource['space'],
   conversations: readonly Conversation[],
 ): ExportSource {
-  const takenAt = ctx.now().toISOString() as Timestamp;
+  const tip = ctx.store.currentTip();
   const annotations = new Map<ConversationId, ConversationAnnotations>();
   for (const conversation of conversations) {
-    annotations.set(conversation.id, ctx.store.getConversationAnnotations(conversation.id));
+    annotations.set(
+      conversation.id,
+      ctx.store.getConversationAnnotationsAsOf(conversation.id, { tip }),
+    );
   }
-  return { space, conversations, takenAt, annotations };
+  return { space, conversations, tip, annotations };
 }
 
 function safeName(value: string, fallback: string): string {
@@ -89,15 +94,16 @@ export function spaceExportSource(ctx: AppContext, id: SpaceId): ExportSource {
 async function* messages(
   store: Store,
   conversation: ConversationId,
-  takenAt: Timestamp,
+  tip: number,
 ): AsyncGenerator<Message> {
   let after: QueryCursor | undefined;
   do {
     const page = store.readConversation(
       HUMAN,
       conversation,
-      { order: 'oldest', until: takenAt, ...(after === undefined ? {} : { after }) },
+      { order: 'oldest', ...(after === undefined ? {} : { after }) },
       PAGE_SIZE,
+      tip,
     );
     for (const message of page.messages) yield message;
     if (!page.hasMore) return;
@@ -132,7 +138,7 @@ async function* markdownChunks(
     };
     yield `${source.conversations.length === 1 ? '#' : '##'} ${conversation.title}\n\n`;
     yield `Space: ${source.space.name}\n\n${annotationLine(item)}\n\n`;
-    for await (const message of messages(ctx.store, conversation.id, source.takenAt)) {
+    for await (const message of messages(ctx.store, conversation.id, source.tip)) {
       yield `### ${message.sender.displayName} — ${message.sentAt}\n\n${message.body}\n\n`;
       if (message.attachments.length > 0) {
         yield `Attachments:\n`;
@@ -162,7 +168,7 @@ async function* jsonChunks(ctx: AppContext, source: ExportSource): AsyncGenerato
       annotationsOf(source, conversation),
     )},"messages":[`;
     let firstMessage = true;
-    for await (const message of messages(ctx.store, conversation.id, source.takenAt)) {
+    for await (const message of messages(ctx.store, conversation.id, source.tip)) {
       if (!firstMessage) yield ',';
       firstMessage = false;
       yield JSON.stringify(message);
@@ -198,7 +204,7 @@ export function exportBundle(ctx: AppContext, source: ExportSource, rootName: st
     try {
       const added = new Set<string>();
       for (const conversation of source.conversations) {
-        for await (const message of messages(ctx.store, conversation.id, source.takenAt)) {
+        for await (const message of messages(ctx.store, conversation.id, source.tip)) {
           for (const attachment of message.attachments) {
             if (added.has(attachment.id)) continue;
             added.add(attachment.id);

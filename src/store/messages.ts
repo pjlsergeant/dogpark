@@ -87,6 +87,7 @@ export function messageStore(
   | 'searchMessages'
   | 'getAttachment'
   | 'readConversationAsOf'
+  | 'currentTip'
 > {
   const { db, st, now, nextSeq, toConversation, requireAgentRow, isCurrentMember } = ctx;
   const { newRenderCache, mentionName, toMessage, toEvent } = createRenderer(ctx);
@@ -484,6 +485,7 @@ export function messageStore(
       conversation: ConversationId,
       range: Range | undefined,
       limit: number | undefined,
+      ceiling: number | undefined,
     ): MessagePage => {
       const row = st.getConversation.get({ id: conversation });
       if (row === undefined) throw notFound('conversation');
@@ -491,7 +493,7 @@ export function messageStore(
       // history here, including what the stream skipped.
       requireReadAccess(reader, row.space_id as SpaceId, 'conversation');
 
-      const plan = planQuery(range, limit);
+      const plan = planQuery(range, limit, ceiling);
       const page = {
         ...pageMessages(conversationRows(conversation, plan), plan),
         annotations: annotations.getConversationAnnotations(conversation),
@@ -553,8 +555,11 @@ export function messageStore(
       return readStreamTx(agent, args ?? {});
     },
 
-    readConversation(reader, conversation, range, limit) {
-      return readConversationTx(reader, conversation, range, limit);
+    readConversation(reader, conversation, range, limit, ceiling) {
+      return readConversationTx(reader, conversation, range, limit, ceiling);
+    },
+    currentTip() {
+      return tip();
     },
 
     readSpace(reader, space, range, limit) {

@@ -169,6 +169,55 @@ describe('Reader action ordering', () => {
   });
 });
 
+describe('Reader composer ordering', () => {
+  test('a post that pins, answered after a later standalone pin, does not repaint the older pin', async () => {
+    const pete = fixture.pete;
+    const page: MessagePage = {
+      messages: [...fixture.rotationMessages].reverse(),
+      nextCursor: 'qc_end' as MessagePage['nextCursor'],
+      hasMore: false,
+    };
+    let resolvePost: ((result: Awaited<ReturnType<typeof api.post>>) => void) | undefined;
+    const api = fixtureApi({
+      readConversation: () => Promise.resolve(page),
+      post: () =>
+        new Promise<Awaited<ReturnType<typeof api.post>>>((resolve) => {
+          resolvePost = resolve;
+        }),
+      pinMessage: (_conversation: string, message: MessageId) =>
+        Promise.resolve({ status: 'open' as const, pins: [{ message, actor: pete }] }),
+    });
+    render(
+      <AppProvider value={{ api, session: { displayName: 'pete' }, logout: () => {} }}>
+        <ToastHost>
+          <ReaderScreen space={fixture.delivery.id} conversation={fixture.rotation.id} />
+        </ToastHost>
+      </AppProvider>,
+    );
+    const inArticle = (nodes: readonly HTMLElement[]): HTMLElement =>
+      nodes.find((node) => node.closest('article') !== null)!.closest('article')!;
+    const target = inArticle(await screen.findAllByText(/Checks green/));
+
+    await userEvent.type(screen.getByLabelText('Message'), 'wrapping up');
+    await userEvent.click(screen.getByLabelText('pin this message'));
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(resolvePost).toBeDefined());
+    await userEvent.click(within(target).getByRole('button', { name: 'Pin' }));
+    await waitFor(() => expect(target.textContent).toContain('pinned by you'));
+
+    // The post's answer lands last but began first: it must not win.
+    await act(async () => {
+      resolvePost!({
+        message: fixture.wrapUp,
+        conversation: fixture.rotation,
+        annotations: { status: 'open', pins: [{ message: fixture.fromPete.id, actor: pete }] },
+      });
+      await Promise.resolve();
+    });
+    expect(target.textContent).toContain('pinned by you');
+  });
+});
+
 describe('Reader annotations', () => {
   test('complete and reopen update the status immediately', async () => {
     let annotations: ConversationAnnotations = { status: 'open', pins: [] };

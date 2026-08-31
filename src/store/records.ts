@@ -468,12 +468,21 @@ export interface Store {
    * newest-first, so `messages[0]` is the newest message on it. `hasMore`
    * means "more in the direction you are travelling" — older ones, backwards.
    */
+  /**
+   * `ceiling` is an inclusive seq bound for a caller taking a snapshot — the
+   * export reads every conversation under the tip it saw when it began, so
+   * three walks over one thread agree. The clock could not say that: two
+   * writes share a millisecond, and `until` is exclusive.
+   */
   readConversation(
     reader: Reader,
     conversation: ConversationId,
     range?: Range | undefined,
     limit?: number | undefined,
+    ceiling?: number | undefined,
   ): MessagePage;
+  /** The largest seq allocated so far: the stream's tip, as a snapshot bound. */
+  currentTip(): number;
   readSpace(
     reader: Reader,
     space: SpaceId,

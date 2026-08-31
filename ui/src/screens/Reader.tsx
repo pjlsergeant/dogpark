@@ -323,10 +323,11 @@ function Thread({
    * leave A on screen while the server holds B. The action begun last is the
    * human's latest intent, so only its answer is shown; an earlier action's
    * late answer still bumps the epoch — it is newer than any poll — but paints
-   * nothing. The composer's post answers are accepted as they come: a post
-   * conflicts with no pin, and its flags are the newest word on completion.
+   * nothing. The composer's posts (which may complete or pin) and its inline
+   * Reopen take serials the same way, through `beginAction`.
    */
   const actionSerial = useRef(0);
+  const beginAction = (): number => (actionSerial.current += 1);
   const acceptFromAction = (next: ConversationAnnotations, serial?: number): void => {
     annotationEpoch.current += 1;
     if (serial === undefined || serial === actionSerial.current) setAnnotations(next);
@@ -525,7 +526,7 @@ function Thread({
   }, [annotations]);
   const humanPin = annotations.pins.find((pin) => pin.actor.kind === 'human')?.message;
   const updateAnnotations = async (action: () => Promise<ConversationAnnotations>) => {
-    const serial = (actionSerial.current += 1);
+    const serial = beginAction();
     try {
       acceptFromAction(await action(), serial);
       onPosted();
@@ -714,6 +715,7 @@ function Thread({
             void load();
             onPosted();
           }}
+          beginAnnotationAction={beginAction}
           onAnnotations={acceptFromAction}
         />
       )}

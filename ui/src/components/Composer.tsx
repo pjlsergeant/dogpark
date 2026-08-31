@@ -33,12 +33,20 @@ export function Composer({
   space,
   conversation,
   onPosted,
+  beginAnnotationAction,
   onAnnotations,
 }: {
   space: SpaceId;
   conversation?: ConversationId | undefined;
   onPosted: (conversation: ConversationId) => void;
-  onAnnotations?: ((annotations: ConversationAnnotations) => void) | undefined;
+  /**
+   * A post that completes or pins, and the inline Reopen, change annotations
+   * like the thread's own buttons do, so they join the same ordering: take a
+   * serial when the action begins, hand it back with the answer.
+   */
+  beginAnnotationAction?: (() => number) | undefined;
+  onAnnotations?:
+    ((annotations: ConversationAnnotations, serial?: number | undefined) => void) | undefined;
 }): ReactNode {
   const api = useApi();
   const notify = useNotify();
@@ -72,6 +80,7 @@ export function Composer({
 
   const send = useCallback(async () => {
     if (!ready || busy) return;
+    const serial = beginAnnotationAction?.();
     setBusy(true);
     draftKey.current ??= idempotencyKey();
     try {
@@ -92,7 +101,7 @@ export function Composer({
       setComplete(false);
       setPin(false);
       setCompleteNotice(result.annotations.status === 'complete' && !complete);
-      onAnnotations?.(result.annotations);
+      onAnnotations?.(result.annotations, serial);
       onPosted(result.conversation.id);
     } catch (cause) {
       notify('bad', cause instanceof Error ? cause.message : String(cause));
@@ -101,6 +110,7 @@ export function Composer({
     }
   }, [
     api,
+    beginAnnotationAction,
     body,
     busy,
     complete,
@@ -186,12 +196,13 @@ export function Composer({
           <button
             type="button"
             className="link-button"
-            onClick={() =>
+            onClick={() => {
+              const reopenSerial = beginAnnotationAction?.();
               void api.reopenConversation(conversation).then((annotations) => {
                 setCompleteNotice(false);
-                onAnnotations?.(annotations);
-              })
-            }
+                onAnnotations?.(annotations, reopenSerial);
+              });
+            }}
           >
             Reopen
           </button>

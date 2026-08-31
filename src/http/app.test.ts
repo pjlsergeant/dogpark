@@ -3,7 +3,7 @@ import { stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { FastifyInstance, InjectOptions, LightMyRequestResponse } from 'fastify';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import type { Config } from '../config.js';
 import { loadConfig } from '../config.js';
@@ -1401,6 +1401,34 @@ describe('the HTTP surface', () => {
           headers: { cookie: session.cookie },
         });
         expect((reads.json() as ReadLogBody).reads).toEqual([]);
+      });
+
+      it('exports a message committed in the same millisecond the export begins', async () => {
+        // The snapshot bound is a seq, not the clock: with time frozen, a
+        // timestamp bound would have to choose between dropping this message
+        // and admitting writes that land during the export.
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date('2026-09-01T09:00:00.000Z'));
+        try {
+          const session = await login(h);
+          h.store.postMessage({
+            sender: { kind: 'agent', id: alpha.id },
+            target: { conversation },
+            body: 'committed just before the export',
+          });
+          const json = await h.app.inject({
+            method: 'GET',
+            url: `/api/admin/conversations/${conversation}/export?format=json`,
+            headers: { cookie: session.cookie },
+          });
+          expect(json.statusCode).toBe(200);
+          const document = ExportDocumentSchema.parse(json.json());
+          expect(document.conversations[0]?.messages.map((m) => m.body)).toContain(
+            'committed just before the export',
+          );
+        } finally {
+          vi.useRealTimers();
+        }
       });
 
       it('streams a space bundle with sanitized attachment paths and tolerates missing bytes', async () => {
