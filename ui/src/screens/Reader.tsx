@@ -383,17 +383,22 @@ function Thread({
     return () => globalThis.clearInterval(timer);
   }, [pollNewest, asOf]);
 
-  const messages = loaded?.messages ?? [];
-  const count = messages.length;
   /**
    * As of a past read, the messages call can 404 for a thread the agent could
    * not see then (the membership check refuses it) — or for a read or thread
    * that no longer exists. The server deliberately does not distinguish the
-   * two. Either way the "as X could have seen it" banner would be a success
-   * frame around a refusal, so it is reframed and the pane says so honestly.
+   * two, so the "as X could have seen it" banner is reframed and the pane says
+   * so honestly. A refusal also shows NO thread state: `loaded` can still hold
+   * another view of this conversation (today's messages after "Back to now",
+   * then the browser's Back restoring `?asOf=`), and rendering it under the
+   * refusal copy would present exactly the messages the refusal says cannot
+   * be shown.
    */
   const asOfRefused = asOf !== undefined && error !== null && error.code === 'not_found';
-  const onFirstPage = loaded?.pages === 1;
+  const shown = asOfRefused ? null : loaded;
+  const messages = shown?.messages ?? [];
+  const count = messages.length;
+  const onFirstPage = shown?.pages === 1;
   // The newest message's id, not the count: a full page replaced by a full
   // page — the human posting into a thread longer than one page — changes
   // what is newest without changing how many are shown.
@@ -512,7 +517,7 @@ function Thread({
         ) : (
           error !== null && <Failure error={error} onRetry={() => void load()} />
         )}
-        {loaded !== null && count === 0 && (
+        {shown !== null && count === 0 && (
           <Empty>
             {asOf === undefined
               ? 'Nothing here yet. Say something.'
@@ -520,7 +525,7 @@ function Thread({
           </Empty>
         )}
 
-        {loaded?.hasMore === true && (
+        {shown?.hasMore === true && (
           <div className="load-more">
             <button type="button" className="btn" onClick={() => void loadOlder()} disabled={busy}>
               {busy ? 'Loading...' : 'Load older messages'}

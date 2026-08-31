@@ -59,6 +59,16 @@ describe('mergeReads', () => {
     expect(new Set(ids(merged)).size).toBe(merged.length);
   });
 
+  it('signals a gap when an unheld row sits behind a held one — a compaction slide-in, not news', () => {
+    // A sweep deleted r2 and r1 from the log, so older rows slid up onto the
+    // newest page. r0 is unheld but OLDER than the held r3: prepending it
+    // would present it as the tip. Only a contiguous unheld PREFIX is genuinely
+    // new; an unheld id after a held one means the page shifted underneath us.
+    const existing = [row(3), row(2), row(1)];
+    const fetched = [row(3), row(0)];
+    expect(mergeReads(existing, fetched)).toEqual({ kind: 'gap' });
+  });
+
   it('replaces a held row re-fetched with a moved collapsedCount, fresh data winning', () => {
     // A compaction sweep swallowed more empty polls into this row: same id, but
     // a higher collapsedCount and an earlier firstReadAt. The re-fetch wins.

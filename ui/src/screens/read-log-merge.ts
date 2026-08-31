@@ -41,8 +41,16 @@ export function mergeReads(
     return fetched.length === 0 ? { kind: 'unchanged' } : { kind: 'merged', rows: fetched };
   }
   const held = new Set(existing.map((entry) => entry.id));
-  const fresh = fetched.filter((entry) => !held.has(entry.id));
-  // Shared nothing: a gap the poll cannot bridge without a hole.
+  // Genuinely new rows can only be a contiguous prefix of the newest-first
+  // page: everything the poll has not seen, then the overlap with what it has.
+  // An unheld id AFTER a held one is not news — a compaction sweep deleted
+  // held rows and older ones slid up onto the page — and prepending it would
+  // present an older row as the tip. That, like sharing nothing at all, is a
+  // gap the caller settles with a refresh.
+  let prefix = 0;
+  while (prefix < fetched.length && !held.has(fetched[prefix]?.id ?? '')) prefix += 1;
+  if (fetched.slice(prefix).some((entry) => !held.has(entry.id))) return { kind: 'gap' };
+  const fresh = fetched.slice(0, prefix);
   if (fresh.length > 0 && fresh.length === fetched.length) return { kind: 'gap' };
 
   // A re-fetched row replaces the held one where a compaction has moved it on.
