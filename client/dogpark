@@ -140,14 +140,19 @@ cmd_read() {  # read CONV_ID [N] [MSG_ID...]   full bodies of a thread's newest 
   # "${arr[@]}" on an empty array as unbound.
   local ids_json='[]'
   if [ ${#ids[@]} -gt 0 ]; then
-    # The server clamps a page to 1000 rows (MAX_PAGE_LIMIT), so once N reaches
-    # that, raising it buys nothing: the window is as far back as one page goes.
-    local mid tail
+    # Advice comes from the page itself, not a guessed constant: how many rows
+    # actually came back, and whether the server says older ones exist. A page
+    # shorter than N with hasMore is the server's own cap — raising N buys
+    # nothing there; without hasMore the whole thread is already in hand.
+    local got more mid tail
+    got=$(echo "$page" | jq '.messages | length')
+    more=$(echo "$page" | jq -r '.hasMore')
     for mid in "${ids[@]}"; do
       echo "$page" | jq -e --arg m "$mid" 'any(.messages[]; .id == $m)' >/dev/null && continue
-      if [ "$n" -lt 1000 ]; then tail="raise N to reach further back"
-      else tail="the server returns at most 1000 per page, so it is older than the newest 1000 here"; fi
-      echo "dogpark: message $mid not in the newest $n of this thread; $tail" >&2
+      if [ "$more" != "true" ]; then tail="this is the whole thread, so there is no such message here"
+      elif [ "$got" -lt "$n" ]; then tail="the server caps a page at $got, so it is older than the newest $got and out of this command's reach"
+      else tail="raise N to reach further back"; fi
+      echo "dogpark: message $mid not in the newest $got of this thread; $tail" >&2
     done
     ids_json=$(jq -n '$ARGS.positional' --args "${ids[@]}")
   fi

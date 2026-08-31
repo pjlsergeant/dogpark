@@ -75,8 +75,11 @@ export function ReadLogScreen({ agent }: { agent?: AgentId | undefined }): React
   }, [live, pages.items]);
 
   // Refresh is the honest full reload: drop the live tail and let the paged
-  // list fetch its first page anew.
+  // list fetch its first page anew. It advances the generation too — a poll
+  // already out is a snapshot of the pre-refresh log, and merging it afterwards
+  // could resurrect rows a compaction deleted or roll fresh metadata back.
   const refresh = useCallback(() => {
+    generation.current += 1;
     setLive([]);
     pages.refresh();
   }, [pages]);
