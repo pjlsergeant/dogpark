@@ -336,6 +336,12 @@ function Thread({
    */
   const markHeld = useRef(false);
   const unreadNeeded = useRef(0);
+  /**
+   * The newest seq on screen when the hold was set. Messages the poll brings
+   * in afterwards sit above it and must not count towards the older unread
+   * still to be shown, so the release counts only what is at or below it.
+   */
+  const landingTip = useRef(0);
   const [unreadBeyond, setUnreadBeyond] = useState(false);
   /**
    * Annotations arrive from three places — a full load, the newest-page poll,
@@ -413,6 +419,7 @@ function Thread({
       if ('reached' in result && !result.reached) {
         markHeld.current = true;
         unreadNeeded.current = result.needed;
+        landingTip.current = thread.messages.at(-1)?.seq ?? 0;
         setUnreadBeyond(true);
       }
       if (result.target !== undefined) seek.current = result.target;
@@ -589,7 +596,10 @@ function Thread({
   useEffect(() => {
     if (asOf !== undefined || newestId === undefined || marked.current === newestId) return;
     if (markHeld.current) {
-      if (count < unreadNeeded.current) return;
+      const shown = messages.filter(
+        (m) => m.seq !== undefined && m.seq <= landingTip.current,
+      ).length;
+      if (shown < unreadNeeded.current) return;
       markHeld.current = false;
       setUnreadBeyond(false);
     }
@@ -599,7 +609,7 @@ function Thread({
       if (marked.current === newestId) marked.current = undefined;
       setError(toApiError(cause));
     });
-  }, [api, asOf, conversation, newestId, arrivals, count]);
+  }, [api, asOf, conversation, newestId, arrivals, count, messages]);
 
   // As of a read, the rendered messages carry the title as it stood then;
   // the thread list is today's, so it is only a fallback while nothing has

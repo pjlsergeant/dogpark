@@ -159,6 +159,76 @@ describe('Reader catch-up marks', () => {
     expect(advanceReadMark).not.toHaveBeenCalled();
   });
 
+  test('messages arriving after a capped landing do not stand in for the older unread', async () => {
+    // Fifty-two single-message pages and fifty-two unread: the landing shows
+    // fifty. Two new messages then arrive by poll. Fifty-two are on screen, but
+    // the two oldest unread still are not, so the mark must stay held.
+    const total = 52;
+    const all = Array.from({ length: total + 2 }, (_, i) => ({
+      ...fixture.wrapUp,
+      id: `m_live_${i + 1}` as MessageId,
+      seq: i + 1,
+      body: `live message ${i + 1}`,
+    }));
+    let arrived = false;
+    let changes = 0;
+    let wake: ((version: string) => void) | undefined;
+    const advanceReadMark = vi.fn(() => Promise.resolve());
+    const api = fixtureApi({
+      advanceReadMark,
+      readConversation: (_id: ConversationId, query?: { after?: string | undefined }) => {
+        if (arrived && query?.after === undefined) {
+          // The newest page after the arrivals: overlaps the held tip by one.
+          return Promise.resolve({
+            messages: [all[53]!, all[52]!, all[51]!],
+            nextCursor: '51' as MessagePage['nextCursor'],
+            hasMore: true,
+          });
+        }
+        const end = query?.after === undefined ? total : Number(query.after);
+        const start = Math.max(0, end - 1);
+        return Promise.resolve({
+          messages: all.slice(start, end).reverse(),
+          nextCursor: String(start) as MessagePage['nextCursor'],
+          hasMore: start > 0,
+        });
+      },
+      awaitChanges: () => {
+        changes += 1;
+        return new Promise<string>((resolve) => {
+          if (changes === 1) wake = resolve;
+        });
+      },
+    });
+    render(
+      <AppProvider value={{ api, session: { displayName: 'pete' }, logout: () => {} }}>
+        <ChangesProvider api={api}>
+          <ToastHost>
+            <ReaderScreen
+              space={fixture.delivery.id}
+              conversation={fixture.rotation.id}
+              unreadCount={total}
+              unreadTip={total}
+            />
+          </ToastHost>
+        </ChangesProvider>
+      </AppProvider>,
+    );
+    await screen.findByText(/More unread here than could be loaded/);
+    await waitFor(() => expect(wake).toBeDefined());
+    arrived = true;
+    await act(async () => {
+      wake!('v1');
+      await Promise.resolve();
+    });
+    await screen.findByText(/live message 54/);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(advanceReadMark).not.toHaveBeenCalled();
+    expect(screen.queryByText(/More unread here than could be loaded/)).not.toBeNull();
+  });
+
   test('the held mark advances once the older unread have been walked back to', async () => {
     // Fifty-two single-message pages, fifty-two unread: the landing stops two
     // short. Two Load older clicks show them all, and only then does the mark
