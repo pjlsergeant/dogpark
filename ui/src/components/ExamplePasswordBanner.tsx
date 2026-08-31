@@ -1,7 +1,7 @@
 /**
  * The one bar that is not dismissible: while the server runs on the README's
  * example password, anyone who has read the README can sign in, so it stays up
- * until the hash changes. The server reports the state on every session
+ * until the password changes. The server reports the state on every session
  * response; this only renders it.
  */
 import type { ReactNode } from 'react';

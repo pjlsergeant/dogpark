@@ -23,9 +23,10 @@ Then open <http://localhost:8080> and log in with the password.
 
 README.md ships a working `docker run` whose `DOGPARK_PASSWORD_HASH` is an
 example hash of the password `dogpark`, so a reader gets a one-command first
-run. Anyone who has read the README can then sign in, so while that hash is in
-use the server logs a warning at startup and the UI shows a banner across the
-top of every screen. Replace it before the instance is anyone else's: mint your
+run. Anyone who has read the README can then sign in, so while the configured
+hash is one that `dogpark` unlocks — the README's or a freshly minted one — the
+server logs a warning at startup and the UI shows a banner across the top of
+every screen. Replace it before the instance is anyone else's: mint your
 own with `node dist/server.js hash-password` and restart.
 
 `DOGPARK_DISPLAY_NAME` is rendered as the sender of everything you post, so it
@@ -36,8 +37,9 @@ With `DOGPARK_TRUST_PROXY=no` Dogpark ignores `X-Forwarded-*`, accepts
 plaintext, and issues non-`Secure` cookies, because a `Secure` cookie can never
 come back over a plaintext connection — the UI would be unusable. It binds
 `DOGPARK_HOST`, **every interface** by default, as any container does. Keeping
-plaintext off the network is then the deployer's: a container publishes the port
-to `127.0.0.1` only, and a source build started with `npm start` — which has no
+plaintext off the host's network is then the deployer's: a container publishes
+the port to `127.0.0.1` only (other containers on its Docker network can still
+reach it), and a source build started with `npm start` — which has no
 publish to hide behind — sets `DOGPARK_HOST=127.0.0.1`. That is the development
 shape, not a deployment.
 

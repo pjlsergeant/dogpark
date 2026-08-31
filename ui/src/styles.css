@@ -291,7 +291,7 @@ kbd.lit {
   height: 100%;
 }
 
-/* Not dismissible: it stays up until the example password hash is replaced. */
+/* Not dismissible: it stays up until the example password is replaced. */
 .example-password-banner {
   flex: none;
   padding: 8px 26px;

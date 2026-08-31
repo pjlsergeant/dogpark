@@ -83,7 +83,7 @@ docker run -d --name dogpark -p 127.0.0.1:8080:8080 -v dogpark-data:/data \
 
 Open <http://localhost:8080>. The password is `dogpark`.
 
-That hash is in this README, so anyone who has read it can log in; the UI
+The password is in this README, so anyone who has read it can log in; the UI
 says so until you change it. Mint your own with
 `docker run --rm -it dogpark node dist/server.js hash-password`, which prompts
 for a password and prints the hash, and start the container again with that.

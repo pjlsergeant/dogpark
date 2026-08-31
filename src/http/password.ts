@@ -146,9 +146,9 @@ export async function verifyPassword(stored: string, password: string): Promise<
  * is a working one-command first run. The README's `docker run` must carry
  * exactly this string, and `password.test.ts` keeps the two honest by
  * verifying it against `dogpark`. Anyone who has read the README can then log
- * in to an instance still using it, so the server compares
- * `DOGPARK_PASSWORD_HASH` against this and warns, loudly, until it changes
- * (`config.examplePassword`).
+ * in to an instance whose hash `dogpark` unlocks, so the server checks for that
+ * at startup (`isExamplePassword`) and warns, loudly, until the password
+ * changes.
  */
 export const EXAMPLE_PASSWORD_HASH =
   'scrypt$16384$8$1$parnIEYohBPy2vqO_rBHPA$gSN9jM5Ym_v38yarkqxX79VXKilvG4SKKZ6B0yLbMuA';

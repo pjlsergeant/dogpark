@@ -128,7 +128,7 @@ async function main(): Promise<void> {
   }
   if (config.examplePassword) {
     app.log.warn(
-      'DOGPARK_PASSWORD_HASH is the example from README.md: anyone who has read it can log in. ' +
+      "DOGPARK_PASSWORD_HASH is unlocked by the README's example password: anyone who has read it can log in. " +
         'Set it to a hash of your own password and restart; mint one with hash-password ' +
         '(see README.md).',
     );
@@ -138,8 +138,8 @@ async function main(): Promise<void> {
     // the network in the clear (ADR-0016).
     app.log.warn(
       { host: binding.host, trustedProxies: config.trustProxy },
-      'listening on every interface because a proxy is declared: publish this port only to ' +
-        'that proxy, or anything that can reach it speaks to Dogpark directly, in plaintext',
+      'a proxy is declared: publish this port only to that proxy, or anything that can ' +
+        'reach it speaks to Dogpark directly, in plaintext',
     );
   } else {
     app.log.warn(

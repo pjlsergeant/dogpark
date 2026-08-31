@@ -1,4 +1,4 @@
-# Plaintext is refused unless a proxy is declared
+# TLS is the proxy declaration
 
 Dogpark speaks plain HTTP and never terminates TLS (ADR-0008). Whether
 something in front of it does is `DOGPARK_TRUST_PROXY`, which has no default:
@@ -18,17 +18,19 @@ Three things follow from the declaration, and they move together:
   deployer's — `DOGPARK_HOST` and `-p`. The default is every interface
   (`0.0.0.0`), because that is the only default that reaches a container: a
   loopback-only default would leave an unpublished port unreachable even from
-  another container on the same network. Keeping plaintext off the network is
-  then the port publish (`-p 127.0.0.1:`) or, for a source build with no
-  publish, `DOGPARK_HOST=127.0.0.1`.
+  another container on the same network. Keeping plaintext off the host's
+  network is then the port publish (`-p 127.0.0.1:`) or, for a source build
+  with no publish, `DOGPARK_HOST=127.0.0.1`. Neither hides a container from
+  the others on its Docker network; that is the network's own business.
 * **Whether cookies are `Secure`.** Only when a proxy is declared. Without one
   there is no TLS to promise, and a `Secure` cookie a browser then refuses to
   send is worse than an honest one.
 * **Whether TLS is proved per request.** Declared: every `/api/*` request must
   carry the proxy's `X-Forwarded-Proto: https`.
 
-A missing header is refused, not waved through. Proxy mode binds `0.0.0.0`, so
-a request that reaches the process directly can simply omit it — and treating
+A missing header is refused, not waved through. Whatever can reach the bound
+interface can reach the process, so a request that arrives directly can simply
+omit the header — and treating
 silence as consent would make the check optional for exactly the caller it
 exists to stop. A declared proxy is expected to set it; one that does not is
 not terminating TLS in a way Dogpark can verify.
@@ -52,8 +54,8 @@ The residual gap is a caller *inside* a declared range — a `/16` that names
 more than the proxy — which is believed like the proxy is. Declare addresses,
 not neighbourhoods.
 
-Without a proxy Dogpark accepts plaintext; keeping that off the network is the
-deployer's port publish or `DOGPARK_HOST=127.0.0.1`. What remains refused is the
+Without a proxy Dogpark accepts plaintext; how far that reaches is the
+deployer's port publish, `DOGPARK_HOST`, and the container network. What remains refused is the
 ambiguous state — no declaration at all.
 
 _2026-08-31: the "Where to listen" bullet was amended. The undeclared case used
