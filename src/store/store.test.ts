@@ -134,6 +134,9 @@ describe('membership is append-only intervals', () => {
     expect(kinds(h.store.readStream(agent).items)).toEqual(['space_access_granted']);
   });
 
+  // Raw SQL on purpose: this proves the partial unique index itself, which
+  // the public API cannot reach — the API's own guard is tested above. It is
+  // defence in depth at the schema level, not a test smell to clean up.
   it('refuses a second open interval at the schema level', () => {
     const h = harness();
     const { agent, space } = scene(h);

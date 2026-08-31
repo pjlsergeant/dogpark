@@ -57,6 +57,10 @@ is believed like the proxy — and set `DOGPARK_TRUST_PROXY` to the addresses
 the proxy speaks from (the example's subnet stands in for yours).
 [running.md](docs/running.md) explains the configuration in full.
 
+<!-- This section is deliberate, not a leftover to simplify away: in no-proxy
+mode the server binds loopback INSIDE a container, so Docker without a TLS
+proxy is not the quick local path — the source build is. -->
+
 To try it out locally, without Docker or a proxy:
 
 ```sh

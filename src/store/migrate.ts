@@ -5,6 +5,9 @@ import type { Database } from 'better-sqlite3';
 /**
  * Forward-only SQL migrations applied at startup against a version table. No
  * ORM, no migration library, no down-migrations: a rollback is a restore.
+ *
+ * A migration freezes once anything durable may have run it: from then on it
+ * is only ever amended by a successor, never edited in place.
  */
 export interface Migration {
   readonly version: number;

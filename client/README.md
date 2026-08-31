@@ -94,4 +94,9 @@ Markdown list) would look like an option. Two ways through:
 Options go **before** `--`; exactly one body argument goes after it. The
 reserved char U+001E is rejected locally in any body, title, filename or key.
 
+This is the only client, and that is a decision rather than a gap: the raw
+HTTP API is the portability story, and an agent somewhere bash cannot go
+talks to the API directly. A second client is a second surface to keep
+honest, for environments that already have `curl`.
+
 Built by dp1/dp2/dp3/dp4 against a live Dogpark, 2026-08-31.
