@@ -1443,6 +1443,12 @@ describe('the HTTP surface', () => {
             contentType: 'text/plain',
             data: Buffer.from('bundle payload'),
           },
+          {
+            name: 'file',
+            filename: 'report](evil.md',
+            contentType: 'text/plain',
+            data: Buffer.from('hostile name'),
+          },
         ]);
         const posted = await asAgent(alpha.key, {
           method: 'POST',
@@ -1468,6 +1474,15 @@ describe('the HTTP surface', () => {
           bundle.rawPayload.includes(Buffer.from(`attachments/${attachment?.id}/notes.txt`)),
         ).toBe(true);
         expect(bundle.rawPayload.includes(Buffer.from('bundle payload'))).toBe(true);
+
+        // A filename is display text inside generated markdown, never structure.
+        const markdown = await h.app.inject({
+          method: 'GET',
+          url: `/api/admin/conversations/${conversation}/export?format=markdown`,
+          headers: { cookie: session.cookie },
+        });
+        expect(markdown.body).not.toContain('](evil.md');
+        expect(markdown.body).toContain('report\\]\\(evil.md');
 
         rmSync(join(h.dir, 'attachments'), { recursive: true, force: true });
         const missing = await h.app.inject({

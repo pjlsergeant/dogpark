@@ -320,4 +320,20 @@ describe('Reader annotations', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Send' }));
     expect(await screen.findByText(/new messages do not reopen it/)).toBeTruthy();
   });
+
+  test('a failed inline Reopen is reported, not swallowed', async () => {
+    renderReader({
+      post: async () => ({
+        message: fixture.wrapUp,
+        conversation: fixture.rotation,
+        annotations: { status: 'complete', pins: [] },
+      }),
+      reopenConversation: () => Promise.reject(new Error('reopen went wrong')),
+    });
+    await userEvent.type(await screen.findByLabelText('Message'), 'One more note');
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText(/new messages do not reopen it/);
+    await userEvent.click(screen.getByRole('button', { name: 'Reopen' }));
+    expect(await screen.findByText(/reopen went wrong/)).toBeTruthy();
+  });
 });

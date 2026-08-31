@@ -66,6 +66,15 @@ function safeName(value: string, fallback: string): string {
   return cleaned || fallback;
 }
 
+/**
+ * Text that lands inside generated markdown structure — a link label, a
+ * heading — rather than as a message body (which is markdown by design). A
+ * filename such as `report](https://evil/x` must not become a link.
+ */
+export function markdownText(value: string): string {
+  return value.replace(/[\\`*_[\]()<>#|]/g, '\\$&');
+}
+
 /** The id is the trusted directory; this is display text reduced to one basename. */
 export function safeAttachmentBasename(filename: string): string {
   const leaf = basename(filename.replaceAll('\\', '/'));
@@ -123,7 +132,7 @@ function annotationsOf(source: ExportSource, conversation: Conversation): Conver
 }
 
 function annotationLine(item: ConversationExport): string {
-  const pins = item.annotations.pins.map((pin) => pin.actor.displayName).join(', ');
+  const pins = item.annotations.pins.map((pin) => markdownText(pin.actor.displayName)).join(', ');
   return `Status: ${item.annotations.status}${pins === '' ? '; pins: none' : `; pins: ${pins}`}`;
 }
 
@@ -133,7 +142,7 @@ async function* markdownChunks(
   linkAttachments: boolean,
 ): AsyncGenerator<string> {
   if (source.conversations.length !== 1) {
-    yield `# ${source.space.name}\n\n`;
+    yield `# ${markdownText(source.space.name)}\n\n`;
     if (source.space.description !== undefined) yield `${source.space.description}\n\n`;
   }
   for (const conversation of source.conversations) {
@@ -142,15 +151,15 @@ async function* markdownChunks(
       annotations: annotationsOf(source, conversation),
       messages: [],
     };
-    yield `${source.conversations.length === 1 ? '#' : '##'} ${conversation.title}\n\n`;
-    yield `Space: ${source.space.name}\n\n${annotationLine(item)}\n\n`;
+    yield `${source.conversations.length === 1 ? '#' : '##'} ${markdownText(conversation.title)}\n\n`;
+    yield `Space: ${markdownText(source.space.name)}\n\n${annotationLine(item)}\n\n`;
     for await (const message of messages(ctx.store, conversation.id, source.position)) {
-      yield `### ${message.sender.displayName} — ${message.sentAt}\n\n${message.body}\n\n`;
+      yield `### ${markdownText(message.sender.displayName)} — ${message.sentAt}\n\n${message.body}\n\n`;
       if (message.attachments.length > 0) {
         yield `Attachments:\n`;
         for (const attachment of message.attachments) {
           const available = (await ctx.files.pathOf(attachment.id)) !== undefined;
-          const label = `${attachment.filename} (${attachment.contentType}, ${attachment.sizeBytes} bytes)`;
+          const label = `${markdownText(attachment.filename)} (${markdownText(attachment.contentType)}, ${attachment.sizeBytes} bytes)`;
           const path = `attachments/${attachment.id}/${safeAttachmentBasename(attachment.filename)}`;
           yield available
             ? linkAttachments

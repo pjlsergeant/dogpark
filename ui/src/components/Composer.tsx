@@ -198,10 +198,15 @@ export function Composer({
             className="link-button"
             onClick={() => {
               const reopenSerial = beginAnnotationAction?.();
-              void api.reopenConversation(conversation).then((annotations) => {
-                setCompleteNotice(false);
-                onAnnotations?.(annotations, reopenSerial);
-              });
+              void api
+                .reopenConversation(conversation)
+                .then((annotations) => {
+                  setCompleteNotice(false);
+                  onAnnotations?.(annotations, reopenSerial);
+                })
+                .catch((cause: unknown) => {
+                  notify('bad', cause instanceof Error ? cause.message : String(cause));
+                });
             }}
           >
             Reopen
