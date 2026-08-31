@@ -16,6 +16,11 @@ type Composed = ReturnType<typeof composeStory>;
 
 const modules = import.meta.glob('../src/**/*.stories.tsx', { eager: true });
 
+// A glob that matches nothing would leave this file passing and testing air.
+test('there are stories to render', () => {
+  expect(Object.keys(modules).length).toBeGreaterThan(10);
+});
+
 for (const [path, module] of Object.entries(modules)) {
   const stories = composeStories(module as StoryModule) as Record<string, Composed>;
   describe(path.replace('../src/', ''), () => {

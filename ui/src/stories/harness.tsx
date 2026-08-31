@@ -26,15 +26,9 @@ import { ToastHost } from '../components/Toasts.js';
 import * as fixture from './fixtures.js';
 
 /** A call that never answers: the screen stays in its loading state. */
-export const hangs =
-  () =>
-  (): Promise<never> =>
-    new Promise<never>(() => {});
+export const hangs = () => (): Promise<never> => new Promise<never>(() => {});
 
-export const fails =
-  (error: ApiError) =>
-  (): Promise<never> =>
-    Promise.reject(error);
+export const fails = (error: ApiError) => (): Promise<never> => Promise.reject(error);
 
 export function apiError(code: ErrorCode | 'network' | 'unknown', message: string): ApiError {
   const status = code === 'unauthenticated' ? 401 : code === 'not_found' ? 404 : 500;
@@ -85,7 +79,15 @@ export function fixtureApi(overrides: Partial<DogparkAdminApi> = {}): DogparkAdm
       Promise.resolve({ id, space: fixture.delivery.id, title }),
     post: () => Promise.resolve({ message: fixture.wrapUp, conversation: fixture.rotation }),
 
-    listReads: () => Promise.resolve({ items: fixture.reads, nextCursor: 'qc_r1', hasMore: true }),
+    listReads: (filter) =>
+      Promise.resolve({
+        items:
+          filter?.agent === undefined
+            ? fixture.reads
+            : fixture.reads.filter((entry) => entry.agent.id === filter.agent),
+        nextCursor: 'qc_r1',
+        hasMore: true,
+      }),
     getRead: () => Promise.resolve(fixture.conversationRead),
     listEscalations: () =>
       Promise.resolve({
