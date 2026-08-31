@@ -293,10 +293,20 @@ export function createHttpApi(): DogparkAdminApi {
       const raw = await request('GET', '/escalations', {
         query: { order: filter?.order, after: filter?.after, limit: filter?.limit },
       });
+      const extra = raw as {
+        unacknowledged: number;
+        undelivered: number;
+        webhookConfigured: boolean;
+      };
       return {
         ...toPage<Escalation>(raw, 'escalations'),
-        undelivered: (raw as { undelivered: number }).undelivered,
+        unacknowledged: extra.unacknowledged,
+        undelivered: extra.undelivered,
+        webhookConfigured: extra.webhookConfigured,
       };
+    },
+    async acknowledgeEscalation(id) {
+      return (await request('POST', `/escalations/${encodeURIComponent(id)}/ack`)) as Escalation;
     },
     async search(query: SearchQuery) {
       return toPage<SearchResult>(

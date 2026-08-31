@@ -1,11 +1,13 @@
 /**
  * The escalation inbox.
  *
- * An escalation is recorded whether or not anyone was told, so the
- * notification state is shown as prominently as the reason: a failed webhook
- * is the case where this screen is the only thing standing between an agent
- * saying "something is wrong" and nobody hearing it.
+ * An escalation is the product's page-a-human channel, so the headline is
+ * whether anyone has *seen* it: the badge counts the unacknowledged, and each
+ * one carries an acknowledge action. Delivery state — whether the webhook was
+ * told — is a separate axis, demoted to per-row detail, and dropped entirely
+ * when no webhook is configured, where it would only be noise.
  */
+import { useCallback } from 'react';
 import type { ReactNode } from 'react';
 import type { Escalation, EscalationPage, NotificationState } from '../api/index.js';
 import { useApi } from '../app/api-context.js';
@@ -15,6 +17,7 @@ import { usePages } from '../app/usePages.js';
 import { href } from '../app/router.js';
 import { Empty, Failure, Loading, Pill, Time } from '../components/bits.js';
 import { LoadMore } from '../components/LoadMore.js';
+import { useNotify } from '../components/Toasts.js';
 import { InlineMarkdown } from '../markdown/Markdown.js';
 
 const TONE: Record<NotificationState, string> = {
@@ -29,11 +32,24 @@ const EXPLANATION: Record<NotificationState, string> = {
   failed: 'Delivery gave up after retrying. Nobody was told out of band.',
 };
 
-function Row({ escalation, spaceName }: { escalation: Escalation; spaceName: string }): ReactNode {
+function Row({
+  escalation,
+  spaceName,
+  webhookConfigured,
+  onAcknowledge,
+}: {
+  escalation: Escalation;
+  spaceName: string;
+  webhookConfigured: boolean;
+  onAcknowledge: (escalation: Escalation) => void;
+}): ReactNode {
   const status = escalation.notification;
   const attempts = status.attempts;
+  const acknowledgedAt = escalation.acknowledgedAt;
   return (
-    <li className={`escalation escalation-${status.state}`}>
+    <li
+      className={`escalation escalation-${status.state}${acknowledgedAt !== null ? ' escalation-acknowledged' : ''}`}
+    >
       <div className="escalation-head">
         <div>
           <strong>{escalation.agent.displayName}</strong> <span className="muted">flagged</span>{' '}
@@ -43,7 +59,9 @@ function Row({ escalation, spaceName }: { escalation: Escalation; spaceName: str
           <span className="muted">in {spaceName}</span>
         </div>
         <div className="row">
-          <Pill tone={TONE[status.state]}>{status.state}</Pill>
+          {/* Delivery state is meaningless without a webhook, so it is shown
+              only when one is configured. */}
+          {webhookConfigured && <Pill tone={TONE[status.state]}>{status.state}</Pill>}
           <span className="muted">
             <Time iso={escalation.raisedAt} />
           </span>
@@ -55,36 +73,51 @@ function Row({ escalation, spaceName }: { escalation: Escalation; spaceName: str
         <InlineMarkdown source={escalation.reason} />
       </blockquote>
 
-      <div className="escalation-notify muted small">
-        {EXPLANATION[status.state]}{' '}
-        {attempts > 0 && (
-          <>
-            {attempts} attempt{attempts === 1 ? '' : 's'}
-            {status.lastAttemptAt !== null && (
-              <>
-                , last <Time iso={status.lastAttemptAt} />
-              </>
-            )}
-            {status.nextAttemptAt !== null && (
-              <>
-                , next <Time iso={status.nextAttemptAt} />
-              </>
-            )}
-            .
-          </>
-        )}
-        {status.lastError !== null && (
-          <div className="escalation-error">
-            <code>{status.lastError}</code>
-          </div>
+      <div className="escalation-foot row">
+        {acknowledgedAt !== null ? (
+          <span className="muted small">
+            Acknowledged <Time iso={acknowledgedAt} />
+          </span>
+        ) : (
+          <button type="button" className="btn" onClick={() => onAcknowledge(escalation)}>
+            Acknowledge
+          </button>
         )}
       </div>
+
+      {webhookConfigured && (
+        <div className="escalation-notify muted small">
+          {EXPLANATION[status.state]}{' '}
+          {attempts > 0 && (
+            <>
+              {attempts} attempt{attempts === 1 ? '' : 's'}
+              {status.lastAttemptAt !== null && (
+                <>
+                  , last <Time iso={status.lastAttemptAt} />
+                </>
+              )}
+              {status.nextAttemptAt !== null && (
+                <>
+                  , next <Time iso={status.nextAttemptAt} />
+                </>
+              )}
+              .
+            </>
+          )}
+          {status.lastError !== null && (
+            <div className="escalation-error">
+              <code>{status.lastError}</code>
+            </div>
+          )}
+        </div>
+      )}
     </li>
   );
 }
 
 export function EscalationsScreen(): ReactNode {
   const api = useApi();
+  const notify = useNotify();
   const pages = usePages<Escalation, EscalationPage>(
     (after) => api.listEscalations(after === undefined ? undefined : { after }),
     [api],
@@ -97,9 +130,29 @@ export function EscalationsScreen(): ReactNode {
     if (!pages.paged) pages.refresh();
   });
   // Counted server-side over every row, not over the page on screen.
-  const undelivered = pages.first.data?.undelivered ?? 0;
+  const unacknowledged = pages.first.data?.unacknowledged ?? 0;
+  // Delivery state is meaningless without a webhook; the server says whether
+  // there is one, and the whole delivery axis is dropped when there is not.
+  const webhookConfigured = pages.first.data?.webhookConfigured ?? false;
   const nameOf = (id: string): string =>
     (spaces.state.data ?? []).find((s) => s.id === id)?.name ?? 'a space';
+
+  const acknowledge = useCallback(
+    (escalation: Escalation) => {
+      void (async () => {
+        try {
+          await api.acknowledgeEscalation(escalation.id);
+          notify('ok', 'Acknowledged.');
+          // The ack signals, but this is the person's own gesture, so refresh
+          // now rather than waiting for the poll to return.
+          pages.refresh();
+        } catch (cause) {
+          notify('bad', cause instanceof Error ? cause.message : String(cause));
+        }
+      })();
+    },
+    [api, notify, pages],
+  );
 
   return (
     <section className="screen">
@@ -111,7 +164,7 @@ export function EscalationsScreen(): ReactNode {
           </p>
         </div>
         <div className="row">
-          {undelivered > 0 && <Pill tone="warn">{undelivered} not delivered</Pill>}
+          {unacknowledged > 0 && <Pill tone="warn">{unacknowledged} unacknowledged</Pill>}
           <button type="button" className="btn" onClick={pages.refresh}>
             Refresh
           </button>
@@ -132,6 +185,8 @@ export function EscalationsScreen(): ReactNode {
             key={escalation.id}
             escalation={escalation}
             spaceName={nameOf(escalation.conversation.space)}
+            webhookConfigured={webhookConfigured}
+            onAcknowledge={acknowledge}
           />
         ))}
       </ul>

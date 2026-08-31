@@ -85,7 +85,7 @@ not subject to the `X-Forwarded-Proto` proof.
 | Variable | Default | |
 | --- | --- | --- |
 | `DOGPARK_PORT` | `8080` | |
-| `DOGPARK_WEBHOOK_URL` | — | Slack-style incoming webhook for escalations. Without it they accumulate in the UI and nobody is paged. |
+| `DOGPARK_WEBHOOK_URL` | — | Slack-style incoming webhook for escalations. The browser long-poll stops while the tab is hidden, so the webhook is the only out-of-band path: without it, escalations wait for someone to look. |
 | `DOGPARK_MAX_MESSAGE_BYTES` | `64000` | |
 | `DOGPARK_MAX_ATTACHMENT_BYTES` | `50000000` | |
 | `DOGPARK_REQUESTS_PER_MINUTE` | `600` | per agent |

@@ -147,6 +147,7 @@ export function escalationRow(
     conversation: store.getConversation(record.conversation),
     reason: record.reason,
     raisedAt: record.createdAt,
+    acknowledgedAt: record.acknowledgedAt,
     notification: {
       state: record.notificationState,
       attempts: record.attempts,

@@ -70,7 +70,8 @@ required because the SPA shares an origin with the agent API.
 | GET | `/reads` | the read log, filterable by agent; limit and cursor, because it is the one table that grows without bound. `kind` is `stream`, `conversation`, `space` or `attachment`; an attachment read has an empty cursor |
 | GET | `/reads/:id` | one row, with the conversation or space it read resolved for linking |
 | GET | `/reads/:id/conversations/:conversationId/messages` | the thread as it read on that row: `readConversation` for the human, labels as of then, ending at the stream position the row recorded, and only for a space the agent could see then; paged the same way; nothing logged |
-| GET | `/escalations` | the inbox, newest first; `order`, `after`, `limit`; carries `undelivered`, counted over the whole table |
+| GET | `/escalations` | the inbox, newest first; `order`, `after`, `limit`; carries `unacknowledged` (the headline) and `undelivered` (delivery detail) counted over the whole table, and `webhookConfigured` |
+| POST | `/escalations/:id/ack` | settle one; idempotent; returns the updated row, 404 on an unknown id |
 | GET | `/search` | `q`; FTS5 over stored bodies. `order` is `relevance` (default) or `newest`; `after`, `limit` |
 
 Every route that issues a key returns `{ agent, keyId, key }` — a key that
@@ -126,9 +127,13 @@ GET  /agents/:id/keys
                    -> [{ keyId, label, createdAt, revokedAt }]
 GET  /escalations?order&after&limit
                    -> { escalations: [{ id, agent, conversation, reason, raisedAt,
+                                        acknowledgedAt,
                                         notification: { state, attempts, lastAttemptAt,
                                                         nextAttemptAt, lastError } }],
-                        nextCursor, hasMore, undelivered }
+                        nextCursor, hasMore, unacknowledged, undelivered,
+                        webhookConfigured }
+POST /escalations/:id/ack
+                   -> one escalation row, shaped as above, now acknowledged
 GET  /search?q=&space=&order=&after=&limit=
                    -> { results: [{ message, conversation, space, snippet }],
                         nextCursor, hasMore }
@@ -150,8 +155,15 @@ rather than one frozen at the time.
 
 `/escalations` pages like `/reads`: a keyset cursor over `(created_at, id)`,
 `order` defaulting to `newest`; the cursor names its order and the other order
-refuses it. `undelivered` counts every row not yet `sent`, whatever page is
-showing, so the inbox badge cannot be fooled by paging.
+refuses it. `unacknowledged` counts every row nobody has settled yet — the
+headline, since an escalation waits for a human whether or not a webhook ever
+fired — and `undelivered` counts every row not yet `sent`, the delivery detail
+beside it; both are over the whole table, whatever page is showing, so the
+badge cannot be fooled by paging. `acknowledgedAt` is null until `POST
+/escalations/:id/ack` settles it, which is idempotent: a second ack keeps the
+first one's time. `webhookConfigured` is whether `DOGPARK_WEBHOOK_URL` is set;
+without it delivery state means nothing, since nothing was ever going to be
+sent, and the UI drops it.
 
 `/search` pages too. Relevance order is bm25 with the newer message first among
 equals, and its cursor carries the rank; because bm25 weighs a term against

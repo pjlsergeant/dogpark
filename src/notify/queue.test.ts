@@ -1,8 +1,9 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { escalationQueue } from './queue.js';
+import { Notifier } from './webhook.js';
 import type { Store } from '../store/index.js';
 import { openStore } from '../store/index.js';
 import type { IdempotencyKey } from '../types.js';
@@ -55,7 +56,7 @@ describe('the escalation queue adapter', () => {
       return only.notificationState;
     };
 
-    queue.markFailed(id, Date.now() + 60_000);
+    queue.markFailed(id, Date.now() + 60_000, 'webhook responded 500');
     expect(changes).toBe(1);
     expect(state()).toBe('pending');
 
@@ -63,9 +64,41 @@ describe('the escalation queue adapter', () => {
     expect(changes).toBe(2);
     expect(state()).toBe('sent');
 
-    queue.markGivenUp(id);
+    queue.markGivenUp(id, 'gave up after 8 attempts: webhook responded 500');
     expect(changes).toBe(3);
     expect(state()).toBe('failed');
+  });
+
+  it('records the real delivery reason on a failed attempt, not a stand-in', async () => {
+    // The row is the only place a human learns why the page-a-human channel
+    // is silent. A webhook answering 503 has to leave "503" on the row, not a
+    // hardcoded string, so the reason is visible during backoff.
+    const { store, id } = raised();
+    const queue = escalationQueue(store, () => {});
+    const fetch = vi.fn(async () => new Response('nope', { status: 503 }));
+    await new Notifier(queue, { webhookUrl: 'https://hook', fetch, now: () => 0 }).drain();
+
+    const [only] = store.listEscalations().escalations;
+    expect(only?.id).toBe(id);
+    // Still pending — it will be retried — but the live cause is on the row.
+    expect(only?.notificationState).toBe('pending');
+    expect(only?.lastError).toBe('webhook responded 503');
+  });
+
+  it('keeps the real cause in the terminal marker when it gives up', async () => {
+    const { store, id } = raised();
+    const queue = escalationQueue(store, () => {});
+    const fetch = vi.fn(async () => {
+      throw new Error('getaddrinfo ENOTFOUND hook');
+    });
+    await new Notifier(queue, { webhookUrl: 'https://hook', fetch, maxAttempts: 1 }).drain();
+
+    const [only] = store.listEscalations().escalations;
+    expect(only?.id).toBe(id);
+    expect(only?.notificationState).toBe('failed');
+    // A terminal marker that still names the cause, rather than discarding it.
+    expect(only?.lastError).toContain('gave up');
+    expect(only?.lastError).toContain('getaddrinfo ENOTFOUND hook');
   });
 
   it('lists what is due with the names the webhook message wants', () => {

@@ -402,6 +402,7 @@ export const escalations: readonly Escalation[] = [
     reason:
       'Two of us disagree about whether to change an interface the server owns, and I do not think an agent should decide that. `store.test.ts` stays flaky until someone picks.',
     raisedAt: at('2026-08-30T12:46:00.000Z'),
+    acknowledgedAt: null,
     notification: {
       state: 'failed',
       attempts: 5,
@@ -416,6 +417,7 @@ export const escalations: readonly Escalation[] = [
     conversation: rotation,
     reason: 'The rollback SQL in this thread would drop a role that production also uses.',
     raisedAt: at('2026-08-30T16:10:00.000Z'),
+    acknowledgedAt: at('2026-08-30T16:22:00.000Z'),
     notification: {
       state: 'sent',
       attempts: 1,
@@ -430,6 +432,7 @@ export const escalations: readonly Escalation[] = [
     conversation: backups,
     reason: 'Backup window overran into the maintenance window twice this week.',
     raisedAt: at('2026-08-30T07:02:00.000Z'),
+    acknowledgedAt: null,
     notification: {
       state: 'pending',
       attempts: 0,

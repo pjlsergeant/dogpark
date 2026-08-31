@@ -1041,6 +1041,18 @@ kbd.lit {
   overflow-wrap: anywhere;
 }
 
+.escalation-foot {
+  margin-top: 10px;
+  align-items: center;
+}
+
+/* Acknowledged: settled, not hidden. Muted and its delivery-coloured edge
+   stood down, so the unacknowledged are what the eye lands on. */
+.escalation-acknowledged {
+  border-left-color: var(--line-strong);
+  opacity: 0.6;
+}
+
 /* ------------------------------------------------------------------- log */
 
 .params {

@@ -59,6 +59,11 @@ export const MIGRATIONS: readonly Migration[] = [
     name: 'tip-seq-nullable',
     sql: sqlFile('0004-tip-seq-nullable.sql'),
   },
+  {
+    version: 5,
+    name: 'acknowledge-escalations',
+    sql: sqlFile('0005-acknowledge-escalations.sql'),
+  },
 ];
 
 const VERSION_TABLE = `

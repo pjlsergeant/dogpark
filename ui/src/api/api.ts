@@ -11,7 +11,9 @@ import type {
   Conversation,
   ConversationId,
   ConversationSummary,
+  Escalation,
   EscalationFilter,
+  EscalationId,
   EscalationPage,
   HumanPostRequest,
   HumanPostResult,
@@ -88,6 +90,8 @@ export interface DogparkAdminApi {
   listReads(filter?: ReadLogFilter): Promise<Page<ReadLogEntry>>;
   getRead(id: string): Promise<ReadLogEntry>;
   listEscalations(filter?: EscalationFilter): Promise<EscalationPage>;
+  /** Settle one; idempotent, so a double-click is harmless. Returns the settled row. */
+  acknowledgeEscalation(id: EscalationId): Promise<Escalation>;
   search(query: SearchQuery): Promise<Page<SearchResult>>;
 
   /**

@@ -94,8 +94,15 @@ export function fixtureApi(overrides: Partial<DogparkAdminApi> = {}): DogparkAdm
         items: fixture.escalations,
         nextCursor: null,
         hasMore: false,
+        unacknowledged: 2,
         undelivered: 2,
+        webhookConfigured: true,
       }),
+    acknowledgeEscalation: (id) => {
+      const found = fixture.escalations.find((each) => each.id === id) ?? fixture.escalations[0];
+      if (found === undefined) return Promise.reject(new Error('no escalation'));
+      return Promise.resolve({ ...found, acknowledgedAt: found.raisedAt });
+    },
     search: () =>
       Promise.resolve({ items: fixture.searchResults, nextCursor: null, hasMore: false }),
 

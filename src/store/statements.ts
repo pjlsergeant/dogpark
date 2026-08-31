@@ -88,6 +88,7 @@ export interface EscalationRow {
   last_attempt_at: string | null;
   next_attempt_at: string | null;
   last_error: string | null;
+  acknowledged_at: string | null;
 }
 
 export interface ReadLogRow {
@@ -662,6 +663,14 @@ export function prepareStatements(db: Db) {
     ),
     countUndelivered: prepare<[], { n: number }>(
       "SELECT COUNT(*) AS n FROM escalation WHERE notification_state != 'sent'",
+    ),
+    countUnacknowledged: prepare<[], { n: number }>(
+      'SELECT COUNT(*) AS n FROM escalation WHERE acknowledged_at IS NULL',
+    ),
+    // Only the first ack sets the time: acknowledging again is a no-op, so the
+    // stamp records when the human first settled it, not the last click.
+    acknowledgeEscalation: prepare<{ id: string; at: string }, unknown>(
+      'UPDATE escalation SET acknowledged_at = @at ' + 'WHERE id = @id AND acknowledged_at IS NULL',
     ),
     markEscalation: prepare<
       {

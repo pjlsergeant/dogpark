@@ -274,7 +274,9 @@ not exposed. **It is not a chat client** (ADR-0007).
   kept for ever. Whether that stays true of attachments on a small volume is
   still open.
 * Whether FTS5 is enough, once there is history to judge it against.
-* Escalations cannot be acknowledged or retried, so the inbox only grows.
+* Escalations can now be acknowledged — the inbox badge counts the
+  unacknowledged, not the never-delivered — but a given-up delivery still
+  cannot be retried by hand.
 * The admin API lists a space's members but not an agent's spaces; only the
   agent sees those, through `identity()`.
 * There is no unread state, so the reader polls rather than knowing what is

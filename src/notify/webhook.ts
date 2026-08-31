@@ -26,8 +26,15 @@ export interface PendingEscalation {
 export interface EscalationQueue {
   listDue(now: number, limit: number): PendingEscalation[];
   markSent(id: string): void;
-  markFailed(id: string, nextAttemptAt: number): void;
-  markGivenUp(id: string): void;
+  /**
+   * A failed attempt that will be retried. `error` is the real reason this
+   * send did not land — an HTTP status, a timeout, a DNS failure — recorded
+   * on the row so the inbox shows the live cause during backoff rather than a
+   * hardcoded stand-in.
+   */
+  markFailed(id: string, nextAttemptAt: number, error: string): void;
+  /** The terminal failure. `error` carries the cause, not just that we stopped. */
+  markGivenUp(id: string, error: string): void;
 }
 
 export interface NotifierOptions {
@@ -115,10 +122,16 @@ export class Notifier {
         if (!res.ok) throw new Error(`webhook responded ${res.status}`);
         this.#queue.markSent(e.id);
         sent++;
-      } catch {
+      } catch (cause) {
+        // The real reason, kept rather than swallowed: the row is the only
+        // place a human ever learns why the page-a-human channel is silent.
+        const reason = cause instanceof Error ? cause.message : String(cause);
         const attempts = e.attempts + 1;
-        if (attempts >= this.#maxAttempts) this.#queue.markGivenUp(e.id);
-        else this.#queue.markFailed(e.id, this.#now() + backoffMs(attempts));
+        if (attempts >= this.#maxAttempts) {
+          this.#queue.markGivenUp(e.id, `gave up after ${attempts} attempts: ${reason}`);
+        } else {
+          this.#queue.markFailed(e.id, this.#now() + backoffMs(attempts), reason);
+        }
       }
     }
     return sent;

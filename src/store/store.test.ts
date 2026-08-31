@@ -1455,6 +1455,44 @@ describe('escalations', () => {
     expect(sent.notificationState).toBe('sent');
   });
 
+  it('acknowledges idempotently and counts what is still unacknowledged', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const conversation = h.store.resolveOrCreateConversation(space, 'notes').id;
+    const raise = (n: number): string =>
+      h.store.recordEscalation({
+        agent,
+        conversation,
+        reason: `problem ${n}`,
+        idempotencyKey: key(`ack-e${n}`),
+      }).escalation.id;
+    const [first, second] = [raise(1), raise(2)];
+
+    // Everything starts unacknowledged: acknowledging is a separate axis from
+    // delivery, so a never-delivered escalation still wants a human until one
+    // settles it.
+    expect(h.store.countUnacknowledgedEscalations()).toBe(2);
+    const before = h.store.listEscalations().escalations;
+    expect(before.every((e) => e.acknowledgedAt === null)).toBe(true);
+
+    h.advance(30);
+    const acked = h.store.acknowledgeEscalation(first ?? '');
+    expect(acked?.acknowledgedAt).toBe(h.at());
+    expect(h.store.countUnacknowledgedEscalations()).toBe(1);
+
+    // A second ack is a no-op that still succeeds and keeps the first time.
+    h.advance(30);
+    const again = h.store.acknowledgeEscalation(first ?? '');
+    expect(again?.acknowledgedAt).toBe(acked?.acknowledgedAt);
+    expect(h.store.countUnacknowledgedEscalations()).toBe(1);
+
+    h.store.acknowledgeEscalation(second ?? '');
+    expect(h.store.countUnacknowledgedEscalations()).toBe(0);
+
+    // An unknown id is a miss, not an error: the route turns it into a 404.
+    expect(h.store.acknowledgeEscalation('esc_nope')).toBeUndefined();
+  });
+
   it('pages newest first for the inbox and oldest first for the notifier, without a gap', () => {
     const h = harness();
     const { agent, space } = scene(h);

@@ -212,6 +212,8 @@ export interface Escalation {
   readonly conversation: Conversation;
   readonly reason: string;
   readonly raisedAt: Timestamp;
+  /** When the human settled it; null while it still wants one. */
+  readonly acknowledgedAt: Timestamp | null;
   readonly notification: NotificationStatus;
 }
 
@@ -250,9 +252,14 @@ export interface EscalationFilter {
   readonly limit?: number | undefined;
 }
 
-/** The inbox page, with the badge's count taken over the whole table. */
+/** The inbox page, with the counts taken over the whole table, not the page. */
 export interface EscalationPage extends Page<Escalation> {
+  /** The headline: escalations nobody has settled yet. */
+  readonly unacknowledged: number;
+  /** Delivery detail beside it: rows the webhook has not sent. */
   readonly undelivered: number;
+  /** Whether a webhook is configured at all; without one, delivery state is noise. */
+  readonly webhookConfigured: boolean;
 }
 
 export type SearchOrder = 'relevance' | 'newest';

@@ -43,6 +43,7 @@ docker run -d --name dogpark -v dogpark-data:/data \
   -e DOGPARK_DISPLAY_NAME=you \
   -e DOGPARK_TRUST_PROXY=10.0.1.0/24 \
   dogpark
+# add -e DOGPARK_WEBHOOK_URL=https://hooks.example/... — the out-of-band alarm for escalations
 ```
 
 The volume matters. `/data` holds the SQLite database and the attachments,

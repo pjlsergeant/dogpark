@@ -131,6 +131,8 @@ export interface EscalationRecord {
   readonly lastAttemptAt: Timestamp | null;
   readonly nextAttemptAt: Timestamp | null;
   readonly lastError: string | null;
+  /** When the human settled it; null while it still waits for one. */
+  readonly acknowledgedAt: Timestamp | null;
 }
 
 export interface RecordEscalationInput {
@@ -445,8 +447,10 @@ export interface Store {
   // Escalations
   recordEscalation(input: RecordEscalationInput): EscalationOutcome;
   listEscalations(filter?: EscalationFilter): EscalationPage;
-  /** Rows not yet `sent`: what the inbox badge counts, whatever page it shows. */
+  /** Rows the webhook has not delivered: delivery detail, not the headline. */
   countUndeliveredEscalations(): number;
+  /** Rows nobody has settled: what the inbox badge counts, whatever page it shows. */
+  countUnacknowledgedEscalations(): number;
   markEscalationNotification(
     escalation: string,
     state: NotificationState,
@@ -455,6 +459,12 @@ export interface Store {
       readonly nextAttemptAt?: Timestamp | undefined;
     },
   ): EscalationRecord;
+  /**
+   * Settle an escalation. Idempotent: a second ack keeps the first one's time
+   * and still succeeds. Returns the settled record, or undefined for an id
+   * that names no escalation.
+   */
+  acknowledgeEscalation(escalation: string): EscalationRecord | undefined;
 
   // The read log
   /**

@@ -355,8 +355,11 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
 
       /**
        * The inbox, newest first unless asked otherwise, paged like the read
-       * log. `undelivered` is counted over the whole table, so the badge is
-       * right whatever page is showing.
+       * log. Both counts are over the whole table, so a badge is right whatever
+       * page is showing. `unacknowledged` is the headline — what still wants a
+       * human — and `undelivered` is delivery detail beside it. `webhookConfigured`
+       * lets the UI drop delivery state entirely: without a webhook it is
+       * meaningless noise, since nothing was ever going to be sent.
        */
       guarded.get('/escalations', async (request) => {
         const query = parse(EscalationsQuery, request.query, 'query');
@@ -370,8 +373,23 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
           escalations: page.escalations.map((record) => escalationRow(ctx.store, cache, record)),
           nextCursor: page.nextCursor,
           hasMore: page.hasMore,
+          unacknowledged: ctx.store.countUnacknowledgedEscalations(),
           undelivered: ctx.store.countUndeliveredEscalations(),
+          webhookConfigured: ctx.config.DOGPARK_WEBHOOK_URL !== undefined,
         };
+      });
+
+      /**
+       * Settle an escalation: the human has seen it and it drops out of the
+       * headline count. Idempotent, so a double-click is harmless, and a
+       * change the UI shows, so the badge and the row refresh.
+       */
+      guarded.post('/escalations/:id/ack', async (request) => {
+        const { id } = request.params as { id: string };
+        const record = ctx.store.acknowledgeEscalation(id);
+        if (record === undefined) throw notFound('escalation');
+        ctx.writes.adminOnly();
+        return escalationRow(ctx.store, new Map<string, Agent>(), record);
       });
 
       // The store turns FTS5's own parse failure into `invalid_request` — the

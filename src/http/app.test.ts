@@ -123,10 +123,12 @@ async function login(h: Harness): Promise<{ cookie: string; csrf: string }> {
 // ---------------------------------------------------------------------------
 
 interface EscalationsBody {
-  escalations: { reason: string }[];
+  escalations: { id: string; reason: string; acknowledgedAt: string | null }[];
   nextCursor: string | null;
   hasMore: boolean;
+  unacknowledged: number;
   undelivered: number;
+  webhookConfigured: boolean;
 }
 
 describe('the HTTP surface', () => {
@@ -1600,20 +1602,34 @@ describe('the HTTP surface', () => {
         url: '/api/admin/escalations',
         headers: { cookie: session.cookie },
       });
-      const { escalations: rows, undelivered } = inbox.json() as {
+      const {
+        escalations: rows,
+        unacknowledged,
+        undelivered,
+        webhookConfigured,
+      } = inbox.json() as {
         escalations: {
           agent: { id: string };
           conversation: { id: string };
           raisedAt: string;
+          acknowledgedAt: string | null;
           notification: { state: string };
         }[];
+        unacknowledged: number;
         undelivered: number;
+        webhookConfigured: boolean;
       };
       expect(rows).toHaveLength(1);
       expect(rows[0]?.agent.id).toBe(alpha.id);
       expect(rows[0]?.conversation.id).toBe(conversation);
       expect(rows[0]?.notification.state).toBe('pending');
+      expect(rows[0]?.acknowledgedAt).toBe(null);
+      // The headline count is what still wants a human; delivery is detail
+      // beside it, and this harness runs with no webhook, so the UI can drop
+      // delivery state entirely.
+      expect(unacknowledged).toBe(1);
       expect(undelivered).toBe(1);
+      expect(webhookConfigured).toBe(false);
 
       const found = await h.app.inject({
         method: 'GET',
@@ -1666,6 +1682,55 @@ describe('the HTTP surface', () => {
         headers: { cookie: session.cookie },
       });
       expect(bad.statusCode).toBe(400);
+    });
+
+    it('acknowledges an escalation, moves the headline count, and 404s an unknown id', async () => {
+      await asAgent(alpha.key, {
+        method: 'POST',
+        url: '/api/agent/escalations',
+        payload: { conversation, reason: 'numbers look wrong', idempotencyKey: 'ack1' },
+      });
+      const session = await login(h);
+      const inbox = async (): Promise<EscalationsBody> =>
+        (
+          await h.app.inject({
+            method: 'GET',
+            url: '/api/admin/escalations',
+            headers: { cookie: session.cookie },
+          })
+        ).json() as EscalationsBody;
+
+      const before = await inbox();
+      expect(before.unacknowledged).toBe(1);
+      const id = before.escalations[0]?.id ?? '';
+
+      const acked = await h.app.inject({
+        method: 'POST',
+        url: `/api/admin/escalations/${id}/ack`,
+        headers: { cookie: session.cookie, 'x-csrf-token': session.csrf },
+      });
+      expect(acked.statusCode).toBe(200);
+      expect((acked.json() as { acknowledgedAt: string | null }).acknowledgedAt).not.toBe(null);
+
+      const after = await inbox();
+      expect(after.unacknowledged).toBe(0);
+      expect(after.escalations[0]?.acknowledgedAt).not.toBe(null);
+
+      // Idempotent: a second ack still succeeds and the count stays put.
+      const again = await h.app.inject({
+        method: 'POST',
+        url: `/api/admin/escalations/${id}/ack`,
+        headers: { cookie: session.cookie, 'x-csrf-token': session.csrf },
+      });
+      expect(again.statusCode).toBe(200);
+      expect((await inbox()).unacknowledged).toBe(0);
+
+      const missing = await h.app.inject({
+        method: 'POST',
+        url: '/api/admin/escalations/esc_nope/ack',
+        headers: { cookie: session.cookie, 'x-csrf-token': session.csrf },
+      });
+      expect(missing.statusCode).toBe(404);
     });
 
     it('treats a malformed search query as a typo rather than a fault', async () => {
@@ -1958,6 +2023,13 @@ describe("the human's long poll and space counts", () => {
     // A replayed escalation recorded nothing, so it is not a change.
     expect((await escalate()).statusCode).toBe(204);
     await held();
+
+    // Acknowledging is a write the UI shows: the badge and the row both move.
+    const inbox = (await me.get('/api/admin/escalations')).json() as {
+      escalations: { id: string }[];
+    };
+    await me.send('POST', `/api/admin/escalations/${inbox.escalations[0]?.id}/ack`);
+    await moved();
 
     await me.send('POST', `/api/admin/agents/${created.agent.id}/archive`);
     await moved();
