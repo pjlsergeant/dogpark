@@ -9,6 +9,7 @@ import type {
   AgentId,
   AttachmentId,
   Conversation,
+  ConversationAnnotations,
   ConversationId,
   ConversationSummary,
   Escalation,
@@ -19,6 +20,7 @@ import type {
   HumanPostResult,
   IssuedKey,
   MessagePage,
+  MessageId,
   Page,
   ReadLogEntry,
   ReadLogFilter,
@@ -88,6 +90,10 @@ export interface DogparkAdminApi {
   readConversation(id: ConversationId, query?: ConversationQuery): Promise<MessagePage>;
   renameConversation(id: ConversationId, title: string): Promise<Conversation>;
   post(request: HumanPostRequest): Promise<HumanPostResult>;
+  completeConversation(id: ConversationId): Promise<ConversationAnnotations>;
+  reopenConversation(id: ConversationId): Promise<ConversationAnnotations>;
+  pinMessage(id: ConversationId, message: MessageId): Promise<ConversationAnnotations>;
+  unpinConversation(id: ConversationId): Promise<ConversationAnnotations>;
 
   // Forensics -------------------------------------------------------------
   listReads(filter?: ReadLogFilter): Promise<Page<ReadLogEntry>>;

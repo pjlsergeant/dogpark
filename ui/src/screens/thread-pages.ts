@@ -6,7 +6,13 @@
  * newest-first; each page is reversed into reading order and older pages go on
  * the front.
  */
-import type { ConversationId, DogparkAdminApi, Message, MessageId } from '../api/index.js';
+import type {
+  ConversationAnnotations,
+  ConversationId,
+  DogparkAdminApi,
+  Message,
+  MessageId,
+} from '../api/index.js';
 
 export interface Loaded {
   /** Oldest first, as rendered. */
@@ -15,6 +21,7 @@ export interface Loaded {
   readonly hasMore: boolean;
   /** How many pages have been pulled: on one, the reader follows the tip; on more, it stays put. */
   readonly pages: number;
+  readonly annotations?: ConversationAnnotations | undefined;
 }
 
 export type ThreadReader = Pick<DogparkAdminApi, 'readConversation'>;
@@ -46,6 +53,7 @@ export async function olderPage(
     nextCursor: page.nextCursor,
     hasMore: page.hasMore,
     pages: current.pages + 1,
+    annotations: current.annotations,
   };
 }
 
@@ -68,6 +76,7 @@ export async function loadThread(
     nextCursor: first.nextCursor,
     hasMore: first.hasMore,
     pages: 1,
+    annotations: first.annotations,
   };
   if (target === undefined) return newest;
   let loaded = newest;

@@ -13,7 +13,7 @@
  */
 import { useCallback, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import type { ConversationId, SpaceId } from '../api/index.js';
+import type { ConversationAnnotations, ConversationId, SpaceId } from '../api/index.js';
 import { useApi } from '../app/api-context.js';
 import { idempotencyKey, bytes } from '../app/format.js';
 import { Markdown } from '../markdown/Markdown.js';
@@ -33,10 +33,12 @@ export function Composer({
   space,
   conversation,
   onPosted,
+  onAnnotations,
 }: {
   space: SpaceId;
   conversation?: ConversationId | undefined;
   onPosted: (conversation: ConversationId) => void;
+  onAnnotations?: ((annotations: ConversationAnnotations) => void) | undefined;
 }): ReactNode {
   const api = useApi();
   const notify = useNotify();
@@ -45,6 +47,9 @@ export function Composer({
   const [files, setFiles] = useState<readonly File[]>([]);
   const [preview, setPreview] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [complete, setComplete] = useState(false);
+  const [pin, setPin] = useState(false);
+  const [completeNotice, setCompleteNotice] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   /** The draft's key; null until it is first sent, and again once it lands. */
   const draftKey = useRef<string | null>(null);
@@ -75,6 +80,8 @@ export function Composer({
         body,
         idempotencyKey: draftKey.current,
         files: files.length > 0 ? files : undefined,
+        ...(complete ? { complete: true } : {}),
+        ...(pin ? { pin: true } : {}),
       });
       draftKey.current = null;
       setBody('');
@@ -82,13 +89,32 @@ export function Composer({
       setFiles([]);
       if (fileInput.current !== null) fileInput.current.value = '';
       setPreview(false);
+      setComplete(false);
+      setPin(false);
+      setCompleteNotice(result.annotations.status === 'complete' && !complete);
+      onAnnotations?.(result.annotations);
       onPosted(result.conversation.id);
     } catch (cause) {
       notify('bad', cause instanceof Error ? cause.message : String(cause));
     } finally {
       setBusy(false);
     }
-  }, [api, body, busy, conversation, files, newThread, notify, onPosted, ready, space, title]);
+  }, [
+    api,
+    body,
+    busy,
+    complete,
+    conversation,
+    files,
+    newThread,
+    notify,
+    onAnnotations,
+    onPosted,
+    pin,
+    ready,
+    space,
+    title,
+  ]);
 
   return (
     <form
@@ -154,6 +180,24 @@ export function Composer({
         </p>
       )}
 
+      {completeNotice && conversation !== undefined && (
+        <p className="composer-notice">
+          This thread is complete; new messages do not reopen it.{' '}
+          <button
+            type="button"
+            className="link-button"
+            onClick={() =>
+              void api.reopenConversation(conversation).then((annotations) => {
+                setCompleteNotice(false);
+                onAnnotations?.(annotations);
+              })
+            }
+          >
+            Reopen
+          </button>
+        </p>
+      )}
+
       <div className="composer-actions">
         <input
           ref={fileInput}
@@ -176,6 +220,18 @@ export function Composer({
           {preview ? 'Edit' : 'Preview'}
         </button>
         <span className="spacer" />
+        <label className="composer-option">
+          <input
+            type="checkbox"
+            checked={complete}
+            onChange={(event) => setComplete(event.target.checked)}
+          />{' '}
+          mark complete
+        </label>
+        <label className="composer-option">
+          <input type="checkbox" checked={pin} onChange={(event) => setPin(event.target.checked)} />{' '}
+          pin this message
+        </label>
         <button type="submit" className="btn btn-primary" disabled={!ready || busy}>
           {busy ? 'Posting...' : newThread ? 'Start thread' : 'Send'}
         </button>

@@ -15,6 +15,7 @@ import {
   AdminAgentSchema,
   ChangesResponseSchema,
   ConversationSchema,
+  ConversationAnnotationsSchema,
   ConversationSummarySchema,
   EscalationSchema,
   EscalationsResponseSchema,
@@ -300,6 +301,32 @@ export function createHttpApi(): DogparkAdminApi {
         return decode(PostResultSchema, await request('POST', '/messages', { form }));
       }
       return decode(PostResultSchema, await request('POST', '/messages', { json: rest }));
+    },
+    async completeConversation(id) {
+      return decode(
+        ConversationAnnotationsSchema,
+        await request('POST', `/conversations/${encodeURIComponent(id)}/complete`, { json: {} }),
+      );
+    },
+    async reopenConversation(id) {
+      return decode(
+        ConversationAnnotationsSchema,
+        await request('POST', `/conversations/${encodeURIComponent(id)}/reopen`, { json: {} }),
+      );
+    },
+    async pinMessage(id, message) {
+      return decode(
+        ConversationAnnotationsSchema,
+        await request('POST', `/conversations/${encodeURIComponent(id)}/pin`, {
+          json: { messageId: message },
+        }),
+      );
+    },
+    async unpinConversation(id) {
+      return decode(
+        ConversationAnnotationsSchema,
+        await request('POST', `/conversations/${encodeURIComponent(id)}/unpin`, { json: {} }),
+      );
     },
 
     async listReads(filter) {
