@@ -51,6 +51,12 @@ describe('DOGPARK_READ_COLLAPSE_DAYS', () => {
 });
 
 describe('DOGPARK_TRUST_PROXY', () => {
+  it('has no default: an undeclared proxy refuses to start (ADR-0008, ADR-0016)', () => {
+    expect(() => loadConfig({ DOGPARK_PASSWORD_HASH: 'scrypt$1$1$1$a$b' })).toThrow(
+      /DOGPARK_TRUST_PROXY/,
+    );
+  });
+
   it('accepts addresses and ranges of either family', () => {
     const config = loadConfig({
       ...base,

@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -40,6 +40,51 @@ function parseRouteTree(tree: string): Route[] {
   }
   return routes;
 }
+
+describe('ADR index', () => {
+  const ADR_DIR = join(DOCS, 'adr');
+  const index = readFileSync(join(ADR_DIR, 'README.md'), 'utf8');
+  const rows = index.split('\n').filter((line) => /^\| \[\d{4}\]\(/.test(line));
+
+  it('has one row per decision file, and no row without a file', () => {
+    const files = readdirSync(ADR_DIR)
+      .filter((name) => /^\d{4}-.*\.md$/.test(name))
+      .sort();
+    const linked = rows.map((row) => /^\| \[\d{4}\]\(([^)]+)\)/.exec(row)?.[1] ?? row).sort();
+    expect(linked).toEqual(files);
+  });
+
+  it('arms every decision, or says no arm with a reason, and every named arm exists', () => {
+    const sources = new Map<string, string>();
+    const problems: string[] = [];
+    for (const row of rows) {
+      const adr = row.slice(3, 7);
+      const arm = (row.split('|')[3] ?? '').trim();
+      const named = [...arm.matchAll(/`([^`]+)` :: "([^"]+)"/g)];
+      if (named.length === 0) {
+        if (!/^no arm — \S/.test(arm))
+          problems.push(`${adr}: neither an arm nor a reasoned no arm`);
+        continue;
+      }
+      for (const [, file, test] of named) {
+        if (file === undefined || test === undefined) continue;
+        let source = sources.get(file);
+        if (source === undefined) {
+          try {
+            source = readFileSync(join(import.meta.dirname, '..', file), 'utf8');
+          } catch {
+            problems.push(`${adr}: arm file ${file} does not exist`);
+            continue;
+          }
+          sources.set(file, source);
+        }
+        if (!source.includes(test)) problems.push(`${adr}: no test named "${test}" in ${file}`);
+      }
+    }
+    expect(rows.length).toBeGreaterThanOrEqual(16);
+    expect(problems).toEqual([]);
+  });
+});
 
 describe('docs drift guards', () => {
   it('every DOGPARK_* variable config.ts reads appears in running.md', () => {
