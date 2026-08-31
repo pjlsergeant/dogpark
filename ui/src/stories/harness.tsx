@@ -83,6 +83,7 @@ export function fixtureApi(overrides: Partial<DogparkAdminApi> = {}): DogparkAdm
       Promise.resolve(space === fixture.delivery.id ? fixture.conversations : []),
     listCatchUp: () => Promise.resolve(fixture.catchUp),
     advanceReadMark: () => Promise.resolve(),
+    markAllRead: () => Promise.resolve(),
     readConversation: (id: ConversationId, query) => {
       const messages = fixture.messagesByConversation.get(id) ?? [];
       return Promise.resolve(

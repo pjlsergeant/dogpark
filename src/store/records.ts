@@ -432,6 +432,8 @@ export interface Store {
    * Forward only: a message behind the mark is a no-op, not a retreat.
    */
   advanceHumanReadMark(conversation: ConversationId, message: MessageId): boolean;
+  /** Advance every conversation to its newest message at or below the displayed stream bound. */
+  markAllHumanRead(through: number): number;
   listHumanCatchUp(options?: {
     readonly after?: QueryCursor | undefined;
     readonly limit?: number | undefined;

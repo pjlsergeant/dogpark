@@ -7,7 +7,7 @@ import type { HumanCatchUpRow } from './statements.js';
 
 export function humanReadMarkStore(
   ctx: StoreContext,
-): Pick<Store, 'advanceHumanReadMark' | 'listHumanCatchUp'> {
+): Pick<Store, 'advanceHumanReadMark' | 'markAllHumanRead' | 'listHumanCatchUp'> {
   const { st, now, humanDisplayName } = ctx;
 
   const sender = (row: HumanCatchUpRow): Sender =>
@@ -26,6 +26,10 @@ export function humanReadMarkStore(
       const row = st.messageById.get({ id: message });
       if (row === undefined || row.conversation_id !== conversation) throw notFound('message');
       return st.advanceHumanReadMark.run({ conversation, seq: row.seq, at: now() }).changes > 0;
+    },
+
+    markAllHumanRead(through) {
+      return st.markAllHumanRead.run({ through, at: now() }).changes;
     },
 
     listHumanCatchUp(options = {}) {

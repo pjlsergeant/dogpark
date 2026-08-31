@@ -1,8 +1,9 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import type { HumanCatchUpConversation, Page } from '../api/index.js';
+import type { ApiError } from '../api/index.js';
 import { useApi } from '../app/api-context.js';
 import { useOnChange } from '../app/changes.js';
-import { useAsync } from '../app/useAsync.js';
+import { toApiError, useAsync } from '../app/useAsync.js';
 import { usePages } from '../app/usePages.js';
 import { href } from '../app/router.js';
 import { Empty, Failure, Loading, Pill, Time } from '../components/bits.js';
@@ -18,11 +19,32 @@ export function CatchUpScreen(): ReactNode {
     [api],
   );
   const escalations = useAsync(() => api.listEscalations({ limit: 1 }), [api]);
+  const [markingAll, setMarkingAll] = useState(false);
+  const [markAllError, setMarkAllError] = useState<ApiError | null>(null);
   useOnChange(() => {
     if (!pages.paged) pages.refresh();
     escalations.reload();
   });
   const unacknowledged = escalations.state.data?.unacknowledged ?? 0;
+
+  const markAllRead = async () => {
+    if (
+      !window.confirm(
+        'Mark every conversation shown here as read?\n\nRead marks only move forward, so this cannot be undone.',
+      )
+    )
+      return;
+    setMarkingAll(true);
+    setMarkAllError(null);
+    try {
+      await api.markAllRead(pages.items[0]!.latestActivitySeq);
+      pages.refresh();
+    } catch (cause) {
+      setMarkAllError(toApiError(cause));
+    } finally {
+      setMarkingAll(false);
+    }
+  };
 
   return (
     <section className="screen catch-up">
@@ -31,9 +53,16 @@ export function CatchUpScreen(): ReactNode {
           <h1>Catch up</h1>
           <p className="muted">Unread activity across every space, newest first.</p>
         </div>
-        <button type="button" className="btn" onClick={pages.refresh}>
-          Refresh
-        </button>
+        <div className="row">
+          {pages.first.data !== null && pages.items.length > 0 && (
+            <button type="button" className="btn" disabled={markingAll} onClick={markAllRead}>
+              Mark all as read
+            </button>
+          )}
+          <button type="button" className="btn" onClick={pages.refresh}>
+            Refresh
+          </button>
+        </div>
       </header>
 
       {unacknowledged > 0 && (
@@ -48,6 +77,7 @@ export function CatchUpScreen(): ReactNode {
       )}
 
       {pages.first.error !== null && <Failure error={pages.first.error} onRetry={pages.refresh} />}
+      {markAllError !== null && <Failure error={markAllError} onRetry={markAllRead} />}
       {pages.first.status === 'loading' && pages.first.data === null && (
         <Loading what="unread conversations" />
       )}

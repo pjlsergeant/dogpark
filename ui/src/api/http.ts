@@ -286,6 +286,9 @@ export function createHttpApi(): DogparkAdminApi {
     async advanceReadMark(conversation, message) {
       await request('POST', '/read-mark', { json: { conversation, message } });
     },
+    async markAllRead(through) {
+      await request('POST', '/read-mark/all', { json: { through } });
+    },
     async renameConversation(id, title) {
       return decode(
         ConversationSchema,
