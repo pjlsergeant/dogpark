@@ -319,18 +319,27 @@ function Thread({
   const pollSerial = useRef(0);
   const pollApplied = useRef(0);
   /**
-   * Actions race each other too: Pin A then Pin B, answered in reverse, would
-   * leave A on screen while the server holds B. The action begun last is the
-   * human's latest intent, so only its answer is shown; an earlier action's
-   * late answer still bumps the epoch — it is newer than any poll — but paints
-   * nothing. The composer's posts (which may complete or pin) and its inline
-   * Reopen take serials the same way, through `beginAction`.
+   * Actions would race each other too: Pin A then Pin B, and nothing says the
+   * server handles them in that order or answers in it. Picking an answer by
+   * client intent cannot fix that — the server may have finished on A. So
+   * actions run one at a time, in the order they were made: the second is
+   * sent only when the first has answered, every answer is the server's state
+   * after that action, and the last answer is its last word. The composer's
+   * posts (which may complete or pin) and its inline Reopen join the queue.
+   * A failed action does not block the ones behind it.
    */
-  const actionSerial = useRef(0);
-  const beginAction = (): number => (actionSerial.current += 1);
-  const acceptFromAction = (next: ConversationAnnotations, serial?: number): void => {
+  const actionQueue = useRef<Promise<unknown>>(Promise.resolve());
+  const runAction = <T,>(action: () => Promise<T>): Promise<T> => {
+    const run = actionQueue.current.then(action, action);
+    actionQueue.current = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  };
+  const acceptFromAction = (next: ConversationAnnotations): void => {
     annotationEpoch.current += 1;
-    if (serial === undefined || serial === actionSerial.current) setAnnotations(next);
+    setAnnotations(next);
   };
   const marked = useRef<MessageId | undefined>(undefined);
 
@@ -539,9 +548,8 @@ function Thread({
   }, [annotations]);
   const humanPin = annotations.pins.find((pin) => pin.actor.kind === 'human')?.message;
   const updateAnnotations = async (action: () => Promise<ConversationAnnotations>) => {
-    const serial = beginAction();
     try {
-      acceptFromAction(await action(), serial);
+      acceptFromAction(await runAction(action));
       onPosted();
     } catch (cause) {
       setError(toApiError(cause));
@@ -728,7 +736,7 @@ function Thread({
             void load();
             onPosted();
           }}
-          beginAnnotationAction={beginAction}
+          runAnnotationAction={runAction}
           onAnnotations={acceptFromAction}
         />
       )}

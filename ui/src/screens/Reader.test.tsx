@@ -169,7 +169,7 @@ describe('Reader poll on an empty thread', () => {
 });
 
 describe('Reader action ordering', () => {
-  test('of two pins in flight, the one clicked last wins whatever order the answers land', async () => {
+  test('two pins go to the server one at a time, in click order, and the second wins', async () => {
     const pete = fixture.pete;
     const pending = new Map<string, (annotations: ConversationAnnotations) => void>();
     const api = fixtureApi({
@@ -189,18 +189,21 @@ describe('Reader action ordering', () => {
       nodes.find((node) => node.closest('article') !== null)!.closest('article')!;
     const first = inArticle(await screen.findAllByText(/Nothing of mine in that window/));
     const second = inArticle(screen.getAllByText(/Checks green/));
-    await userEvent.click(within(first).getByRole('button', { name: 'Pin' }));
-    await userEvent.click(within(second).getByRole('button', { name: 'Pin' }));
-    await waitFor(() => expect(pending.size).toBe(2));
-
     const firstId = first.id.replace(/^m-/, '') as MessageId;
     const secondId = second.id.replace(/^m-/, '') as MessageId;
-    await act(async () => {
-      pending.get(secondId)!({ status: 'open', pins: [{ message: secondId, actor: pete }] });
-      await Promise.resolve();
-    });
+    await userEvent.click(within(first).getByRole('button', { name: 'Pin' }));
+    await userEvent.click(within(second).getByRole('button', { name: 'Pin' }));
+    // Only the first request is out; the second waits for its answer.
+    await waitFor(() => expect(pending.has(firstId)).toBe(true));
+    expect(pending.has(secondId)).toBe(false);
+
     await act(async () => {
       pending.get(firstId)!({ status: 'open', pins: [{ message: firstId, actor: pete }] });
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(pending.has(secondId)).toBe(true));
+    await act(async () => {
+      pending.get(secondId)!({ status: 'open', pins: [{ message: secondId, actor: pete }] });
       await Promise.resolve();
     });
     expect(second.textContent).toContain('pinned by you');
@@ -209,7 +212,7 @@ describe('Reader action ordering', () => {
 });
 
 describe('Reader composer ordering', () => {
-  test('a post that pins, answered after a later standalone pin, does not repaint the older pin', async () => {
+  test('a standalone pin waits behind an in-flight post, so the later click is the final state', async () => {
     const pete = fixture.pete;
     const page: MessagePage = {
       messages: [...fixture.rotationMessages].reverse(),
@@ -223,8 +226,9 @@ describe('Reader composer ordering', () => {
         new Promise<Awaited<ReturnType<typeof api.post>>>((resolve) => {
           resolvePost = resolve;
         }),
-      pinMessage: (_conversation: string, message: MessageId) =>
+      pinMessage: vi.fn((_conversation: string, message: MessageId) =>
         Promise.resolve({ status: 'open' as const, pins: [{ message, actor: pete }] }),
+      ),
     });
     render(
       <AppProvider value={{ api, session: { displayName: 'pete' }, logout: () => {} }}>
@@ -242,9 +246,9 @@ describe('Reader composer ordering', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Send' }));
     await waitFor(() => expect(resolvePost).toBeDefined());
     await userEvent.click(within(target).getByRole('button', { name: 'Pin' }));
-    await waitFor(() => expect(target.textContent).toContain('pinned by you'));
+    // The pin is queued behind the post, not raced against it.
+    expect(api.pinMessage).not.toHaveBeenCalled();
 
-    // The post's answer lands last but began first: it must not win.
     await act(async () => {
       resolvePost!({
         message: fixture.wrapUp,
@@ -253,7 +257,8 @@ describe('Reader composer ordering', () => {
       });
       await Promise.resolve();
     });
-    expect(target.textContent).toContain('pinned by you');
+    await waitFor(() => expect(api.pinMessage).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(target.textContent).toContain('pinned by you'));
   });
 });
 
@@ -319,6 +324,31 @@ describe('Reader annotations', () => {
     await userEvent.type(await screen.findByLabelText('Message'), 'One more note');
     await userEvent.click(screen.getByRole('button', { name: 'Send' }));
     expect(await screen.findByText(/new messages do not reopen it/)).toBeTruthy();
+  });
+
+  test('flipping a post flag after a failed send retries under a fresh idempotency key', async () => {
+    const keys: string[] = [];
+    let attempts = 0;
+    renderReader({
+      post: (request: { idempotencyKey: string }) => {
+        keys.push(request.idempotencyKey);
+        attempts += 1;
+        return attempts === 1
+          ? Promise.reject(new Error('lost on the wire'))
+          : Promise.resolve({
+              message: fixture.wrapUp,
+              conversation: fixture.rotation,
+              annotations: { status: 'complete' as const, pins: [] as const },
+            });
+      },
+    });
+    await userEvent.type(await screen.findByLabelText('Message'), 'Done here');
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText(/lost on the wire/);
+    await userEvent.click(screen.getByLabelText('mark complete'));
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(keys).toHaveLength(2));
+    expect(keys[0]).not.toBe(keys[1]);
   });
 
   test('a failed inline Reopen is reported, not swallowed', async () => {

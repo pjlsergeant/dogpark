@@ -33,7 +33,7 @@ export function Composer({
   space,
   conversation,
   onPosted,
-  beginAnnotationAction,
+  runAnnotationAction,
   onAnnotations,
 }: {
   space: SpaceId;
@@ -41,12 +41,12 @@ export function Composer({
   onPosted: (conversation: ConversationId) => void;
   /**
    * A post that completes or pins, and the inline Reopen, change annotations
-   * like the thread's own buttons do, so they join the same ordering: take a
-   * serial when the action begins, hand it back with the answer.
+   * like the thread's own buttons do, so they run through the thread's action
+   * queue: one such request in flight at a time, in the order they were made,
+   * so the last answer is the server's last word.
    */
-  beginAnnotationAction?: (() => number) | undefined;
-  onAnnotations?:
-    ((annotations: ConversationAnnotations, serial?: number | undefined) => void) | undefined;
+  runAnnotationAction?: (<T>(action: () => Promise<T>) => Promise<T>) | undefined;
+  onAnnotations?: ((annotations: ConversationAnnotations) => void) | undefined;
 }): ReactNode {
   const api = useApi();
   const notify = useNotify();
@@ -77,21 +77,28 @@ export function Composer({
   const editBody = edit(setBody);
   const editTitle = edit(setTitle);
   const editFiles = edit(setFiles);
+  // The flags are part of the request the server hashes under the key, so a
+  // retry with a flag flipped is a different request and needs a fresh key.
+  const editComplete = edit(setComplete);
+  const editPin = edit(setPin);
+  const run = runAnnotationAction ?? (<T,>(action: () => Promise<T>): Promise<T> => action());
 
   const send = useCallback(async () => {
     if (!ready || busy) return;
-    const serial = beginAnnotationAction?.();
     setBusy(true);
     draftKey.current ??= idempotencyKey();
+    const key = draftKey.current;
     try {
-      const result = await api.post({
-        target: newThread ? { space, title: title.trim() } : { conversation },
-        body,
-        idempotencyKey: draftKey.current,
-        files: files.length > 0 ? files : undefined,
-        ...(complete ? { complete: true } : {}),
-        ...(pin ? { pin: true } : {}),
-      });
+      const result = await run(() =>
+        api.post({
+          target: newThread ? { space, title: title.trim() } : { conversation },
+          body,
+          idempotencyKey: key,
+          files: files.length > 0 ? files : undefined,
+          ...(complete ? { complete: true } : {}),
+          ...(pin ? { pin: true } : {}),
+        }),
+      );
       draftKey.current = null;
       setBody('');
       setTitle('');
@@ -101,7 +108,7 @@ export function Composer({
       setComplete(false);
       setPin(false);
       setCompleteNotice(result.annotations.status === 'complete' && !complete);
-      onAnnotations?.(result.annotations, serial);
+      onAnnotations?.(result.annotations);
       onPosted(result.conversation.id);
     } catch (cause) {
       notify('bad', cause instanceof Error ? cause.message : String(cause));
@@ -110,7 +117,7 @@ export function Composer({
     }
   }, [
     api,
-    beginAnnotationAction,
+    run,
     body,
     busy,
     complete,
@@ -197,12 +204,10 @@ export function Composer({
             type="button"
             className="link-button"
             onClick={() => {
-              const reopenSerial = beginAnnotationAction?.();
-              void api
-                .reopenConversation(conversation)
+              void run(() => api.reopenConversation(conversation))
                 .then((annotations) => {
                   setCompleteNotice(false);
-                  onAnnotations?.(annotations, reopenSerial);
+                  onAnnotations?.(annotations);
                 })
                 .catch((cause: unknown) => {
                   notify('bad', cause instanceof Error ? cause.message : String(cause));
@@ -240,12 +245,16 @@ export function Composer({
           <input
             type="checkbox"
             checked={complete}
-            onChange={(event) => setComplete(event.target.checked)}
+            onChange={(event) => editComplete(event.target.checked)}
           />{' '}
           mark complete
         </label>
         <label className="composer-option">
-          <input type="checkbox" checked={pin} onChange={(event) => setPin(event.target.checked)} />{' '}
+          <input
+            type="checkbox"
+            checked={pin}
+            onChange={(event) => editPin(event.target.checked)}
+          />{' '}
           pin this message
         </label>
         <button type="submit" className="btn btn-primary" disabled={!ready || busy}>
