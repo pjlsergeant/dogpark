@@ -455,6 +455,27 @@ describe('Reader annotations', () => {
     );
   });
 
+  test('a retried Complete replays under the key of the attempt that failed', async () => {
+    const keys: string[] = [];
+    let attempts = 0;
+    renderReader({
+      completeConversation: (_id: string, key: string) => {
+        keys.push(key);
+        attempts += 1;
+        return attempts === 1
+          ? Promise.reject(new Error('answer lost'))
+          : Promise.resolve({ status: 'complete' as const, pins: [] as const });
+      },
+    });
+    await userEvent.click(await screen.findByRole('button', { name: 'Complete' }));
+    await screen.findByText(/answer lost/);
+    await userEvent.click(screen.getByRole('button', { name: 'Complete' }));
+    await screen.findByRole('button', { name: 'Reopen' });
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).toBeTruthy();
+    expect(keys[1]).toBe(keys[0]);
+  });
+
   test('a failed inline Reopen is reported, not swallowed', async () => {
     renderReader({
       post: async () => ({

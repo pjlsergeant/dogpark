@@ -312,30 +312,36 @@ export function createHttpApi(): DogparkAdminApi {
       }
       return decode(PostResultSchema, await request('POST', '/messages', { json: rest }));
     },
-    async completeConversation(id) {
+    async completeConversation(id, idempotencyKey) {
       return decode(
         ConversationAnnotationsSchema,
-        await request('POST', `/conversations/${encodeURIComponent(id)}/complete`, { json: {} }),
-      );
-    },
-    async reopenConversation(id) {
-      return decode(
-        ConversationAnnotationsSchema,
-        await request('POST', `/conversations/${encodeURIComponent(id)}/reopen`, { json: {} }),
-      );
-    },
-    async pinMessage(id, message) {
-      return decode(
-        ConversationAnnotationsSchema,
-        await request('POST', `/conversations/${encodeURIComponent(id)}/pin`, {
-          json: { messageId: message },
+        await request('POST', `/conversations/${encodeURIComponent(id)}/complete`, {
+          json: { idempotencyKey },
         }),
       );
     },
-    async unpinConversation(id) {
+    async reopenConversation(id, idempotencyKey) {
       return decode(
         ConversationAnnotationsSchema,
-        await request('POST', `/conversations/${encodeURIComponent(id)}/unpin`, { json: {} }),
+        await request('POST', `/conversations/${encodeURIComponent(id)}/reopen`, {
+          json: { idempotencyKey },
+        }),
+      );
+    },
+    async pinMessage(id, message, idempotencyKey) {
+      return decode(
+        ConversationAnnotationsSchema,
+        await request('POST', `/conversations/${encodeURIComponent(id)}/pin`, {
+          json: { messageId: message, idempotencyKey },
+        }),
+      );
+    },
+    async unpinConversation(id, idempotencyKey) {
+      return decode(
+        ConversationAnnotationsSchema,
+        await request('POST', `/conversations/${encodeURIComponent(id)}/unpin`, {
+          json: { idempotencyKey },
+        }),
       );
     },
 

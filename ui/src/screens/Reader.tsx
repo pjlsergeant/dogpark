@@ -22,7 +22,7 @@ import { useApi } from '../app/api-context.js';
 import { useOnChange } from '../app/changes.js';
 import { toApiError, useAsync } from '../app/useAsync.js';
 import { href, navigate } from '../app/router.js';
-import { absoluteTime, dayHeading, sameDay } from '../app/format.js';
+import { absoluteTime, dayHeading, idempotencyKey, sameDay } from '../app/format.js';
 import { Empty, Failure, Loading, Pill, Time } from '../components/bits.js';
 import { MessageView } from '../components/MessageView.js';
 import { Composer } from '../components/Composer.js';
@@ -551,9 +551,23 @@ function Thread({
     return byMessage;
   }, [annotations]);
   const humanPin = annotations.pins.find((pin) => pin.actor.kind === 'human')?.message;
-  const updateAnnotations = async (action: () => Promise<ConversationAnnotations>) => {
+  /**
+   * One idempotency key per attempt, kept until the attempt is confirmed: a
+   * click that failed without an answer may have been applied, and the next
+   * click on the same control replays it rather than doing it again. If
+   * someone reopened the thread in between, the replay answers `open` — the
+   * truth, shown, not overridden by a second completion.
+   */
+  const attemptKeys = useRef(new Map<string, string>());
+  const updateAnnotations = async (
+    attempt: string,
+    action: (key: string) => Promise<ConversationAnnotations>,
+  ) => {
+    const key = attemptKeys.current.get(attempt) ?? idempotencyKey();
+    attemptKeys.current.set(attempt, key);
     try {
-      acceptFromAction(await runAction(action));
+      acceptFromAction(await runAction(() => action(key)));
+      attemptKeys.current.delete(attempt);
       onPosted();
     } catch (cause) {
       setError(toApiError(cause));
@@ -584,10 +598,12 @@ function Thread({
                 type="button"
                 className="btn"
                 onClick={() =>
-                  void updateAnnotations(() =>
-                    annotations.status === 'complete'
-                      ? api.reopenConversation(conversation)
-                      : api.completeConversation(conversation),
+                  void updateAnnotations(
+                    annotations.status === 'complete' ? 'reopen' : 'complete',
+                    (key) =>
+                      annotations.status === 'complete'
+                        ? api.reopenConversation(conversation, key)
+                        : api.completeConversation(conversation, key),
                   )
                 }
               >
@@ -717,10 +733,12 @@ function Thread({
                 onPin={
                   asOf === undefined
                     ? () =>
-                        void updateAnnotations(() =>
-                          humanPin === each.id
-                            ? api.unpinConversation(conversation)
-                            : api.pinMessage(conversation, each.id),
+                        void updateAnnotations(
+                          humanPin === each.id ? 'unpin' : `pin:${each.id}`,
+                          (key) =>
+                            humanPin === each.id
+                              ? api.unpinConversation(conversation, key)
+                              : api.pinMessage(conversation, each.id, key),
                         )
                     : undefined
                 }

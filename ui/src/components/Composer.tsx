@@ -65,6 +65,8 @@ export function Composer({
   const fileInput = useRef<HTMLInputElement>(null);
   /** The draft's key; null until it is first sent, and again once it lands. */
   const draftKey = useRef<string | null>(null);
+  /** The inline Reopen's key, kept across a failed attempt like the draft's. */
+  const reopenKey = useRef<string | null>(null);
 
   const newThread = conversation === undefined;
   const hasControl = hasControlCharacter(body) || hasControlCharacter(title);
@@ -211,8 +213,11 @@ export function Composer({
             type="button"
             className="link-button"
             onClick={() => {
-              void run(() => api.reopenConversation(conversation))
+              reopenKey.current ??= idempotencyKey();
+              const key = reopenKey.current;
+              void run(() => api.reopenConversation(conversation, key))
                 .then((annotations) => {
+                  reopenKey.current = null;
                   setCompleteNotice(false);
                   onAnnotations?.(annotations);
                 })

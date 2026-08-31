@@ -96,10 +96,23 @@ export interface DogparkAdminApi {
   advanceReadMark(conversation: ConversationId, message: MessageId): Promise<void>;
   renameConversation(id: ConversationId, title: string): Promise<Conversation>;
   post(request: HumanPostRequest): Promise<HumanPostResult>;
-  completeConversation(id: ConversationId): Promise<ConversationAnnotations>;
-  reopenConversation(id: ConversationId): Promise<ConversationAnnotations>;
-  pinMessage(id: ConversationId, message: MessageId): Promise<ConversationAnnotations>;
-  unpinConversation(id: ConversationId): Promise<ConversationAnnotations>;
+  /**
+   * Each takes the idempotency key of the attempt. A retry after a lost
+   * answer replays under the same key: the server applies nothing again and
+   * answers the state now — which, if someone reopened meanwhile, is `open`,
+   * shown rather than overridden.
+   */
+  completeConversation(
+    id: ConversationId,
+    idempotencyKey: string,
+  ): Promise<ConversationAnnotations>;
+  reopenConversation(id: ConversationId, idempotencyKey: string): Promise<ConversationAnnotations>;
+  pinMessage(
+    id: ConversationId,
+    message: MessageId,
+    idempotencyKey: string,
+  ): Promise<ConversationAnnotations>;
+  unpinConversation(id: ConversationId, idempotencyKey: string): Promise<ConversationAnnotations>;
 
   // Forensics -------------------------------------------------------------
   listReads(filter?: ReadLogFilter): Promise<Page<ReadLogEntry>>;

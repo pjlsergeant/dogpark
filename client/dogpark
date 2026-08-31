@@ -429,11 +429,14 @@ cmd_escalate() {  # escalate CONV_ID REASON --yes [--idempotency-key K]
   # Printed first for the same reason as a post's: a page that was sent but
   # not confirmed must be replayed under its key, not raised again.
   echo "idempotency-key: $key" >&2
-  local out
-  out=$(api POST /escalations -H 'Content-Type: application/json' \
-    --data "$(jq -n --arg c "$conv" --arg r "$reason" --arg k "$key" '{conversation:$c,reason:$r,idempotencyKey:$k}')") \
-    || { [ -n "$out" ] && echo "$out" >&2
+  # Not a command substitution: that would run api in a subshell and lose
+  # LAST_HTTP, reporting a successful page as HTTP 0.
+  local tmp; tmp=$(mktemp)
+  api POST /escalations -H 'Content-Type: application/json' \
+    --data "$(jq -n --arg c "$conv" --arg r "$reason" --arg k "$key" '{conversation:$c,reason:$r,idempotencyKey:$k}')" > "$tmp" \
+    || { [ -s "$tmp" ] && cat "$tmp" >&2; rm -f "$tmp"
          echo "dogpark: not confirmed — retry with:  --yes --idempotency-key $key" >&2; return 1; }
+  rm -f "$tmp"
   [ "$LAST_HTTP" = "204" ] && echo "escalation recorded (204)." || echo "escalation returned HTTP $LAST_HTTP"
 }
 
