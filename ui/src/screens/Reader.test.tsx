@@ -476,6 +476,63 @@ describe('Reader annotations', () => {
     expect(keys[1]).toBe(keys[0]);
   });
 
+  test('a retained key is retired once newer annotation state has arrived', async () => {
+    const keys: string[] = [];
+    let completes = 0;
+    let changes = 0;
+    const page = (status: 'open' | 'complete'): MessagePage => ({
+      messages: [...fixture.rotationMessages].reverse(),
+      nextCursor: 'qc_end' as MessagePage['nextCursor'],
+      hasMore: false,
+      annotations: { status, pins: [] },
+    });
+    let wake: ((version: string) => void) | undefined;
+    const api = fixtureApi({
+      // Before the failed click the thread reads open; after it, the lost
+      // answer's completion did land, and the next poll says so.
+      readConversation: () => Promise.resolve(page(completes >= 1 ? 'complete' : 'open')),
+      completeConversation: (_id: string, key: string) => {
+        keys.push(key);
+        completes += 1;
+        return completes === 1
+          ? Promise.reject(new Error('answer lost'))
+          : Promise.resolve({ status: 'complete' as const, pins: [] as const });
+      },
+      reopenConversation: () => Promise.resolve({ status: 'open' as const, pins: [] as const }),
+      // One wake at mount; the second is held until the test releases it.
+      awaitChanges: () => {
+        changes += 1;
+        return changes === 1
+          ? Promise.resolve('v1')
+          : new Promise<string>((resolve) => {
+              if (changes === 2) wake = resolve;
+            });
+      },
+    });
+    render(
+      <AppProvider value={{ api, session: { displayName: 'pete' }, logout: () => {} }}>
+        <ChangesProvider api={api}>
+          <ToastHost>
+            <ReaderScreen space={fixture.delivery.id} conversation={fixture.rotation.id} />
+          </ToastHost>
+        </ChangesProvider>
+      </AppProvider>,
+    );
+    await userEvent.click(await screen.findByRole('button', { name: 'Complete' }));
+    await screen.findByText(/answer lost/);
+    // The poll brings the truth: it did complete. Reopen it, then complete again.
+    await waitFor(() => expect(wake).toBeDefined());
+    await act(async () => {
+      wake!('v2');
+      await Promise.resolve();
+    });
+    await screen.findByRole('button', { name: 'Reopen' });
+    await userEvent.click(screen.getByRole('button', { name: 'Reopen' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Complete' }));
+    await waitFor(() => expect(keys).toHaveLength(2));
+    expect(keys[1]).not.toBe(keys[0]);
+  });
+
   test('a failed inline Reopen is reported, not swallowed', async () => {
     renderReader({
       post: async () => ({

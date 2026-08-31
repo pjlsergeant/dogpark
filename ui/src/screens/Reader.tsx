@@ -339,9 +339,27 @@ function Thread({
   };
   const acceptFromAction = (next: ConversationAnnotations): void => {
     annotationEpoch.current += 1;
-    setAnnotations(next);
+    acceptAnnotations(next);
   };
   const marked = useRef<MessageId | undefined>(undefined);
+  /**
+   * One idempotency key per attempt, kept while the attempt is unresolved: a
+   * click that failed without an answer may have been applied, and the next
+   * click on the same control replays it rather than doing it again. If
+   * someone reopened the thread in between, the replay answers `open` — the
+   * truth, shown, not overridden by a second completion.
+   *
+   * Unresolved means the UI has seen no annotation state since. Any state
+   * that lands — an action's answer, a poll, a load — says what is true now,
+   * and a click made against it is a fresh intent: keeping an older key past
+   * that point would turn the click into a replay that applies nothing.
+   */
+  const attemptKeys = useRef(new Map<string, string>());
+  /** Every arrival of annotation state retires unresolved attempts. */
+  const acceptAnnotations = (next: ConversationAnnotations): void => {
+    attemptKeys.current.clear();
+    setAnnotations(next);
+  };
 
   const load = useCallback(async () => {
     const mine = (generation.current += 1);
@@ -362,7 +380,7 @@ function Thread({
       }
       setLoaded(thread);
       if (thread.annotations !== undefined && epoch === annotationEpoch.current) {
-        setAnnotations(thread.annotations);
+        acceptAnnotations(thread.annotations);
       }
       setArrivals((n) => n + 1);
     } catch (cause) {
@@ -430,7 +448,7 @@ function Thread({
         serial > pollApplied.current
       ) {
         pollApplied.current = serial;
-        setAnnotations(page.annotations);
+        acceptAnnotations(page.annotations);
       }
       setLoaded((current) => {
         if (current === null) return current;
@@ -551,25 +569,16 @@ function Thread({
     return byMessage;
   }, [annotations]);
   const humanPin = annotations.pins.find((pin) => pin.actor.kind === 'human')?.message;
-  /**
-   * One idempotency key per attempt, kept until the attempt is confirmed: a
-   * click that failed without an answer may have been applied, and the next
-   * click on the same control replays it rather than doing it again. If
-   * someone reopened the thread in between, the replay answers `open` — the
-   * truth, shown, not overridden by a second completion.
-   */
-  const attemptKeys = useRef(new Map<string, string>());
   const updateAnnotations = async (
     attempt: string,
     action: (key: string) => Promise<ConversationAnnotations>,
   ) => {
     const key = attemptKeys.current.get(attempt) ?? idempotencyKey();
-    attemptKeys.current.set(attempt, key);
     try {
       acceptFromAction(await runAction(() => action(key)));
-      attemptKeys.current.delete(attempt);
       onPosted();
     } catch (cause) {
+      attemptKeys.current.set(attempt, key);
       setError(toApiError(cause));
     }
   };
