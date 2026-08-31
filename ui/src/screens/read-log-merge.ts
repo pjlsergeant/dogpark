@@ -28,9 +28,18 @@ export type MergeReads =
   | { readonly kind: 'gap' }
   | { readonly kind: 'merged'; readonly rows: readonly ReadLogEntry[] };
 
-/** The only fields a held row can change under: what a compaction sweep moves. */
-function compacted(a: ReadLogEntry, b: ReadLogEntry): boolean {
-  return a.collapsedCount !== b.collapsedCount || a.firstReadAt !== b.firstReadAt;
+/**
+ * Whether a held row has moved under us. A compaction sweep moves
+ * `collapsedCount`/`firstReadAt`, and the server resolves labels as they are
+ * now, so a rename changes `agent.displayName` on a re-fetch of the same id.
+ */
+function updated(a: ReadLogEntry, b: ReadLogEntry): boolean {
+  return (
+    a.collapsedCount !== b.collapsedCount ||
+    a.firstReadAt !== b.firstReadAt ||
+    a.agent.displayName !== b.agent.displayName ||
+    a.itemCount !== b.itemCount
+  );
 }
 
 export function mergeReads(
@@ -58,7 +67,7 @@ export function mergeReads(
   let changed = fresh.length > 0;
   const rebuilt = existing.map((entry) => {
     const latest = byId.get(entry.id);
-    if (latest !== undefined && compacted(latest, entry)) {
+    if (latest !== undefined && updated(latest, entry)) {
       changed = true;
       return latest;
     }

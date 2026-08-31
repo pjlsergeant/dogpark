@@ -215,7 +215,11 @@ function SpaceReader({
           </div>
         ) : (
           <Thread
-            key={conversation}
+            // asOf is part of the key: live and as-of are different views of
+            // the same thread, and a remount is what keeps one view's loaded
+            // messages from flashing (or sticking, on a failed load) under the
+            // other's banner.
+            key={`${conversation}:${asOf ?? ''}`}
             space={space}
             conversation={conversation}
             highlight={message}

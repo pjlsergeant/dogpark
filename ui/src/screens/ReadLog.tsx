@@ -131,6 +131,15 @@ export function ReadLogScreen({ agent }: { agent?: AgentId | undefined }): React
       }
       // result is [...fresh, ...seen]; keep the part ahead of the first page.
       const next = result.rows.slice(0, result.rows.length - pagedRef.current.length);
+      // A replacement can land in the first-page suffix too — the common case
+      // is the tip row itself, mutated by a compaction sweep — and `live`
+      // cannot carry it: only usePages owns those rows. At the tip, reload
+      // honestly to pick it up; paged into history, leave it to Refresh.
+      const suffix = result.rows.slice(next.length);
+      if (suffix.some((entry, i) => entry !== pagedRef.current[i])) {
+        if (!pagedBackRef.current) refreshRef.current();
+        return;
+      }
       // Past the cap, the tail would grow without bound: reload honestly at the
       // tip, or, when reading history, keep what is held rather than piling on.
       if (next.length > LIVE_CAP) {

@@ -69,6 +69,17 @@ describe('mergeReads', () => {
     expect(mergeReads(existing, fetched)).toEqual({ kind: 'gap' });
   });
 
+  it('replaces a held row whose agent was renamed, so labels stay current', () => {
+    // readLogRow resolves labels as they are now; a held row must not pin the
+    // old name after a rename just because its id is already on screen.
+    const existing = [row(2), row(1)];
+    const fetched = [
+      row(2, { agent: { id: 'agent0000000000' as AgentId, displayName: 'ranger' } }),
+    ];
+    const merged = rowsOf(mergeReads(existing, fetched));
+    expect(merged[0]?.agent.displayName).toBe('ranger');
+  });
+
   it('replaces a held row re-fetched with a moved collapsedCount, fresh data winning', () => {
     // A compaction sweep swallowed more empty polls into this row: same id, but
     // a higher collapsedCount and an earlier firstReadAt. The re-fetch wins.
