@@ -96,6 +96,7 @@ export function createRenderer(ctx: StoreContext) {
       mentions: parseMentions(row.body, (agent) => resolve(agent) !== undefined),
       attachments: toAttachments(row.id),
       sentAt: row.sent_at as Timestamp,
+      seq: row.seq,
     };
   }
 

@@ -91,6 +91,7 @@ export function spaceStore(
         conversationCount: row.conversation_count,
         messageCount: row.message_count,
         lastActivityAt: row.last_sent_at as Timestamp | null,
+        unreadCount: row.unread_count,
       }));
     },
 

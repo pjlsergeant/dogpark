@@ -24,7 +24,11 @@ read and a rename in the same millisecond are still ordered the way they
 happened. It is a label snapshot, not proof of inclusion — *which* rows a read
 covered is answered by the row's kind, parameters and cursor (ADR-0005). The
 one label outside the database is the human's display name, which is
-configuration and changes only with a restart.
+configuration and changes only with a restart. So an as-of view renders the
+human's name as it is *now*, not as it stood at the read: changing
+`DOGPARK_DISPLAY_NAME` rewrites how every past read renders the human. That is
+an accepted bound of the reconstruction, deliberately not journaled — there is
+one human, and the rename is rare.
 
 ## Consequences
 

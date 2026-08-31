@@ -5,7 +5,6 @@ import type {
   ConversationId,
   Cursor,
   IdempotencyKey,
-  MessageId,
   PostTarget,
   QueryCursor,
   Range,
@@ -13,25 +12,70 @@ import type {
   SpaceId,
   Timestamp,
 } from '../types.js';
+import {
+  AgentsQuery,
+  AnnotationActionBody,
+  ChangesQuery,
+  CatchUpQuery,
+  DescriptionBody,
+  EscalateBody,
+  EscalationsQuery,
+  ExportQuery,
+  HumanPostBody,
+  HumanAnnotationActionBody,
+  HumanPinBody,
+  HumanReadMarkBody,
+  KeyBody,
+  MAX_REASON_CHARS,
+  MAX_TITLE_CHARS,
+  NameBody,
+  PasswordBody,
+  PostBody,
+  PinBody,
+  RangeQuery,
+  ReadLogQuery,
+  SearchQuery,
+  StreamQuery,
+  Target,
+  TitleBody,
+} from '../types.js';
 import { invalid } from './errors.js';
 
 /**
- * Request validation. Ids are not pattern-checked here: an id the store does
- * not know is `not_found`, and a stricter answer for a malformed one would
- * tell a prober that its guess was at least the right shape.
+ * Request validation lives with the rest of the protocol in `src/types.ts`,
+ * where the request schemas sit beside the response schemas they answer. This
+ * module re-exports them so the routes import from one place, and adds the
+ * helpers that turn a parsed query into the store's own types — helpers that
+ * depend on the HTTP layer's error type and the store's cursor brands, so they
+ * cannot live in the isomorphic protocol module.
  */
-const Id = z.string().min(1).max(128);
-
-/**
- * The same ceiling whichever door a title comes through: a thread opened by a
- * post target and one renamed afterwards are the same title.
- */
-export const MAX_TITLE_CHARS = 200;
-/**
- * A reason is the agent's own words and goes into a webhook payload, so it is
- * bounded like a title rather than like a body.
- */
-export const MAX_REASON_CHARS = 2000;
+export {
+  AgentsQuery,
+  AnnotationActionBody,
+  ChangesQuery,
+  CatchUpQuery,
+  DescriptionBody,
+  EscalateBody,
+  EscalationsQuery,
+  ExportQuery,
+  HumanPostBody,
+  HumanAnnotationActionBody,
+  HumanPinBody,
+  HumanReadMarkBody,
+  KeyBody,
+  MAX_REASON_CHARS,
+  MAX_TITLE_CHARS,
+  NameBody,
+  PasswordBody,
+  PostBody,
+  PinBody,
+  RangeQuery,
+  ReadLogQuery,
+  SearchQuery,
+  StreamQuery,
+  Target,
+  TitleBody,
+};
 
 export function parse<T>(schema: z.ZodType<T>, value: unknown, what: string): T {
   const result = schema.safeParse(value);
@@ -42,83 +86,6 @@ export function parse<T>(schema: z.ZodType<T>, value: unknown, what: string): T 
     first === undefined ? 'is not valid' : `${path === '' ? '' : `${path}: `}${first.message}`;
   throw invalid(`${what} ${detail}`);
 }
-
-const Target = z.union([
-  z.strictObject({ conversation: Id }),
-  z.strictObject({ space: Id, title: z.string().min(1).max(MAX_TITLE_CHARS) }),
-]);
-
-export const PostBody = z.strictObject({
-  target: Target,
-  body: z.string(),
-  idempotencyKey: z.string().min(1).max(200),
-});
-
-/** The human's post. The key is optional — a browser need not mint one — and
- * durable when given, like an agent's. */
-export const HumanPostBody = z.strictObject({
-  target: Target,
-  body: z.string(),
-  idempotencyKey: z.string().min(1).max(200).optional(),
-});
-
-export const EscalateBody = z.strictObject({
-  conversation: Id,
-  reason: z.string().min(1).max(MAX_REASON_CHARS),
-  idempotencyKey: z.string().min(1).max(200),
-});
-
-export const NameBody = z.strictObject({ name: z.string().min(1).max(128) });
-export const TitleBody = z.strictObject({ title: z.string().min(1).max(MAX_TITLE_CHARS) });
-export const KeyBody = z.strictObject({ label: z.string().min(1).max(128).optional() });
-export const PasswordBody = z.strictObject({ password: z.string().min(1).max(1024) });
-
-export const StreamQuery = z.strictObject({
-  after: z.string().min(1).optional(),
-  since: z.string().min(1).optional(),
-  tip: z.string().optional(),
-  waitSeconds: z.coerce.number().int().nonnegative().optional(),
-  limit: z.coerce.number().int().positive().optional(),
-});
-
-export const RangeQuery = z.strictObject({
-  since: z.string().min(1).optional(),
-  until: z.string().min(1).optional(),
-  after: z.string().min(1).optional(),
-  order: z.enum(['oldest', 'newest']).optional(),
-  limit: z.coerce.number().int().positive().optional(),
-});
-
-export const AgentsQuery = z.strictObject({ space: Id.optional() });
-
-/** The human's long poll: the last version seen, and how long to wait past it. */
-export const ChangesQuery = z.strictObject({
-  /** Opaque: whatever the last answer said. */
-  after: z.string().min(1).max(64).optional(),
-  waitSeconds: z.coerce.number().int().nonnegative().optional(),
-});
-
-export const ReadLogQuery = z.strictObject({
-  agent: Id.optional(),
-  limit: z.coerce.number().int().positive().optional(),
-  since: z.string().optional(),
-  until: z.string().optional(),
-  after: z.string().optional(),
-});
-
-export const EscalationsQuery = z.strictObject({
-  order: z.enum(['oldest', 'newest']).optional(),
-  after: z.string().optional(),
-  limit: z.coerce.number().int().positive().optional(),
-});
-
-export const SearchQuery = z.strictObject({
-  q: z.string().min(1),
-  space: Id.optional(),
-  order: z.enum(['relevance', 'newest']).optional(),
-  after: z.string().optional(),
-  limit: z.coerce.number().int().positive().optional(),
-});
 
 const TRUE = new Set(['', '1', 'true', 'yes', 'on']);
 
@@ -170,7 +137,6 @@ export function toTarget(target: z.infer<typeof Target>): PostTarget {
 export const asAgentId = (value: string): AgentId => value as AgentId;
 export const asSpaceId = (value: string): SpaceId => value as SpaceId;
 export const asConversationId = (value: string): ConversationId => value as ConversationId;
-export const asMessageId = (value: string): MessageId => value as MessageId;
 export const asIdempotencyKey = (value: string): IdempotencyKey => value as IdempotencyKey;
 export const asTimestamp = (value: string): Timestamp => value as Timestamp;
 /**

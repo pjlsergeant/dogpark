@@ -37,6 +37,19 @@ export interface SpaceSummaryRow extends SpaceRow {
   conversation_count: number;
   message_count: number;
   last_sent_at: string | null;
+  unread_count: number;
+}
+
+export interface HumanCatchUpRow extends ConversationRow {
+  space_name: string;
+  unread_count: number;
+  latest_seq: number;
+  latest_at: string;
+  last_sender_kind: string;
+  last_sender_agent_id: string | null;
+  last_sender_name: string | null;
+  status: string;
+  has_pins: number;
 }
 
 export interface AgentNameRow {
@@ -88,6 +101,7 @@ export interface EscalationRow {
   last_attempt_at: string | null;
   next_attempt_at: string | null;
   last_error: string | null;
+  acknowledged_at: string | null;
 }
 
 export interface ReadLogRow {
@@ -225,12 +239,17 @@ export function prepareStatements(db: Db) {
       'SELECT label FROM label_history WHERE kind = @kind AND subject_id = @subject ' +
         'AND seq > @labelSeq ORDER BY seq ASC LIMIT 1',
     ),
+    // The label position a read-log row records (see recordRead), for a
+    // snapshot taken outside the read log.
+    currentLabelSeq: prepare<[], { seq: number }>(
+      'SELECT COALESCE(MAX(seq), 0) AS seq FROM label_history',
+    ),
     // `tip_seq` is null when the row never recorded a tip (0004); a stored 0 is
     // a real one — the read ran before any sequence was allocated.
     readLabelSeq: prepare<
       { id: string },
-      { label_seq: number; read_at: string; tip_seq: number | null }
-    >('SELECT label_seq, read_at, tip_seq FROM read_log WHERE id = @id'),
+      { label_seq: number; read_at: string; tip_seq: number | null; agent_id: string }
+    >('SELECT label_seq, read_at, tip_seq, agent_id FROM read_log WHERE id = @id'),
     setArchived: prepare<{ id: string; archived: number }, unknown>(
       'UPDATE agent SET archived = @archived WHERE id = @id',
     ),
@@ -292,7 +311,10 @@ export function prepareStatements(db: Db) {
         '       (SELECT COUNT(*) FROM message m JOIN conversation c ON c.id = m.conversation_id ' +
         '         WHERE c.space_id = s.id) AS message_count, ' +
         '       (SELECT MAX(m.sent_at) FROM message m JOIN conversation c ON c.id = m.conversation_id ' +
-        '         WHERE c.space_id = s.id) AS last_sent_at ' +
+        '         WHERE c.space_id = s.id) AS last_sent_at, ' +
+        '       (SELECT COUNT(*) FROM message m JOIN conversation c ON c.id = m.conversation_id ' +
+        '         LEFT JOIN human_read_mark r ON r.conversation_id = c.id ' +
+        '        WHERE c.space_id = s.id AND m.seq > COALESCE(r.seq, 0)) AS unread_count ' +
         '  FROM space s ORDER BY s.name',
     ),
 
@@ -327,6 +349,34 @@ export function prepareStatements(db: Db) {
         'WHERE (@agent IS NULL OR agent_id = @agent) AND (@space IS NULL OR space_id = @space) ' +
         'ORDER BY granted_seq',
     ),
+    // Whether an interval was open at a stream position: the as-of view asks
+    // it of the tip a read recorded, to reconstruct only what the agent could
+    // have seen. Containment is in sequence space — granted at or before the
+    // tip, not yet revoked by it — the same total order the stream is built on.
+    membershipAtSeq: prepare<{ agent: string; space: string; tip: number }, { id: string }>(
+      'SELECT id FROM membership WHERE agent_id = @agent AND space_id = @space ' +
+        'AND granted_seq <= @tip AND (revoked_seq IS NULL OR revoked_seq > @tip) LIMIT 1',
+    ),
+    // The same question against the clock, for a legacy row that recorded no
+    // tip: the millisecond-coarse fallback the as-of ceiling already uses. That
+    // ceiling is `read_at + 1ms` exclusive, so a message stamped in the read's
+    // own millisecond is on the page; to stay consistent, a revocation in that
+    // same millisecond must not hide the conversation that message belongs to.
+    // Hence `>= @readAt` keeps membership — only a revocation strictly before
+    // the read removes it — while a grant at or before the read still grants it.
+    membershipAtTime: prepare<{ agent: string; space: string; readAt: string }, { id: string }>(
+      'SELECT id FROM membership WHERE agent_id = @agent AND space_id = @space ' +
+        'AND granted_at <= @readAt AND (revoked_at IS NULL OR revoked_at >= @readAt) LIMIT 1',
+    ),
+    // A conversation comes to exist with its first message, so "did it exist
+    // at the read" is "does it hold a message at or below the tip" — or, for a
+    // legacy row, sent before the read's millisecond ceiling.
+    conversationExistedAtSeq: prepare<{ conversation: string; tip: number }, { one: number }>(
+      'SELECT 1 AS one FROM message WHERE conversation_id = @conversation AND seq <= @tip LIMIT 1',
+    ),
+    conversationExistedAtTime: prepare<{ conversation: string; before: string }, { one: number }>(
+      'SELECT 1 AS one FROM message WHERE conversation_id = @conversation AND sent_at < @before LIMIT 1',
+    ),
     // Includes the caller: a roster that omits you is not a roster.
     peers: prepare<{ agent: string; space: string | null }, AgentNameRow>(
       'SELECT DISTINCT a.id, a.display_name FROM agent a ' +
@@ -360,6 +410,11 @@ export function prepareStatements(db: Db) {
     ),
     getConversation: prepare<{ id: string }, ConversationRow>(
       'SELECT id, space_id, title FROM conversation WHERE id = @id',
+    ),
+    conversationsForExport: prepare<{ space: string }, ConversationRow>(
+      'SELECT c.id, c.space_id, c.title FROM conversation c ' +
+        'LEFT JOIN message m ON m.conversation_id = c.id WHERE c.space_id = @space ' +
+        'GROUP BY c.id ORDER BY MIN(m.seq), c.created_at, c.id',
     ),
     renameConversation: prepare<{ id: string; title: string }, unknown>(
       'UPDATE conversation SET title = @title WHERE id = @id',
@@ -527,6 +582,26 @@ export function prepareStatements(db: Db) {
         ' GROUP BY c.id ' +
         ' ORDER BY last_seq DESC, c.created_at DESC, c.id',
     ),
+    advanceHumanReadMark: prepare<{ conversation: string; seq: number; at: string }, unknown>(
+      'INSERT INTO human_read_mark (conversation_id, seq, updated_at) VALUES (@conversation, @seq, @at) ' +
+        'ON CONFLICT (conversation_id) DO UPDATE SET seq = excluded.seq, updated_at = excluded.updated_at ' +
+        'WHERE excluded.seq > human_read_mark.seq',
+    ),
+    humanCatchUp: prepare<{ after: number | null; limit: number }, HumanCatchUpRow>(
+      'WITH tips AS (' +
+        ' SELECT c.id, MAX(m.seq) AS latest_seq FROM conversation c JOIN message m ON m.conversation_id = c.id GROUP BY c.id' +
+        ') SELECT c.id, c.space_id, c.title, s.name AS space_name, ' +
+        ' (SELECT COUNT(*) FROM message unread WHERE unread.conversation_id = c.id AND unread.seq > COALESCE(r.seq, 0)) AS unread_count, ' +
+        ' tips.latest_seq, m.sent_at AS latest_at, m.sender_kind AS last_sender_kind, ' +
+        ' m.sender_agent_id AS last_sender_agent_id, a.display_name AS last_sender_name, ' +
+        " COALESCE((SELECT CASE ca.kind WHEN 'completed' THEN 'complete' ELSE 'open' END FROM conversation_annotation ca WHERE ca.conversation_id = c.id AND ca.kind IN ('completed','reopened') ORDER BY ca.seq DESC LIMIT 1), 'open') AS status, " +
+        " EXISTS(SELECT 1 FROM conversation_annotation pin WHERE pin.conversation_id = c.id AND pin.kind = 'pinned' AND NOT EXISTS (SELECT 1 FROM conversation_annotation later WHERE later.conversation_id = c.id AND later.actor_kind = pin.actor_kind AND later.actor_agent_id IS pin.actor_agent_id AND later.kind IN ('pinned','unpinned') AND later.seq > pin.seq)) AS has_pins " +
+        ' FROM tips JOIN conversation c ON c.id = tips.id JOIN space s ON s.id = c.space_id ' +
+        ' JOIN message m ON m.seq = tips.latest_seq LEFT JOIN agent a ON a.id = m.sender_agent_id ' +
+        ' LEFT JOIN human_read_mark r ON r.conversation_id = c.id ' +
+        ' WHERE tips.latest_seq > COALESCE(r.seq, 0) AND (@after IS NULL OR tips.latest_seq < @after) ' +
+        ' ORDER BY tips.latest_seq DESC LIMIT @limit',
+    ),
     // Relevance is bm25 `rank` (lower is better), with seq breaking ties so
     // the order is total and a keyset cursor can continue it. FTS5 allows
     // `rank` in WHERE, which is what makes the continuation a single query.
@@ -646,6 +721,14 @@ export function prepareStatements(db: Db) {
     ),
     countUndelivered: prepare<[], { n: number }>(
       "SELECT COUNT(*) AS n FROM escalation WHERE notification_state != 'sent'",
+    ),
+    countUnacknowledged: prepare<[], { n: number }>(
+      'SELECT COUNT(*) AS n FROM escalation WHERE acknowledged_at IS NULL',
+    ),
+    // Only the first ack sets the time: acknowledging again is a no-op, so the
+    // stamp records when the human first settled it, not the last click.
+    acknowledgeEscalation: prepare<{ id: string; at: string }, unknown>(
+      'UPDATE escalation SET acknowledged_at = @at ' + 'WHERE id = @id AND acknowledged_at IS NULL',
     ),
     markEscalation: prepare<
       {

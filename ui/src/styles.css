@@ -285,10 +285,32 @@ kbd.lit {
   color: var(--ink-muted);
 }
 
+.shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* Not dismissible: it stays up until the example password is replaced. */
+.example-password-banner {
+  flex: none;
+  padding: 8px 26px;
+  background: var(--warn-soft);
+  color: var(--warn);
+  border-bottom: 1px solid var(--warn);
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.example-password-banner code {
+  color: inherit;
+}
+
 .app {
   display: grid;
   grid-template-columns: 216px minmax(0, 1fr);
-  height: 100%;
+  flex: 1;
+  min-height: 0;
 }
 
 .sidebar {
@@ -414,10 +436,95 @@ kbd.lit {
   font-size: 1.02rem;
 }
 
+.description-text {
+  margin: 4px 0;
+  white-space: pre-wrap;
+  max-width: 72ch;
+}
+
+.description-block {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+
+.description-block p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
 .card-actions {
   display: flex;
   gap: 6px;
   margin-top: auto;
+}
+
+.catch-up-escalations {
+  align-items: center;
+  background: var(--warn-soft);
+  border: 1px solid var(--warn);
+  border-radius: 0.65rem;
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+  padding: 0.85rem 1rem;
+}
+
+.catch-up-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.catch-up-row {
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+  padding: 1rem 0;
+}
+
+.catch-up-row-main {
+  align-items: flex-start;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.export-menu {
+  position: relative;
+}
+
+.export-menu > summary {
+  list-style: none;
+}
+
+.export-options {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 0.45rem;
+  box-shadow: 0 0.5rem 1.5rem rgb(0 0 0 / 15%);
+  display: flex;
+  flex-direction: column;
+  min-width: 9rem;
+  padding: 0.35rem;
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.25rem);
+  z-index: 4;
+}
+
+.export-options a {
+  border-radius: 0.3rem;
+  padding: 0.45rem 0.55rem;
+  text-decoration: none;
 }
 
 .panel {
@@ -755,6 +862,13 @@ kbd.lit {
   overflow-wrap: anywhere;
 }
 
+.thread-annotations {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 0.75rem;
+}
+
 .thread-meta {
   font-size: 0.78rem;
   color: var(--ink-muted);
@@ -834,6 +948,28 @@ kbd.lit {
 .message-highlighted {
   background: var(--warn-soft);
   outline: 1px solid var(--warn);
+}
+
+.message-pinned {
+  box-shadow: inset 3px 0 var(--accent);
+  background: var(--accent-soft);
+}
+.message-pin-label {
+  color: var(--ink-muted);
+  font-size: 0.75rem;
+}
+.message-pin-action {
+  margin-left: auto;
+}
+.pinned-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
 }
 
 .avatar {
@@ -992,6 +1128,28 @@ kbd.lit {
   margin: 0;
 }
 
+.composer-notice {
+  color: var(--ink-muted);
+  font-size: 0.85rem;
+  margin: 0;
+}
+.composer-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+.link-button {
+  border: 0;
+  padding: 0;
+  background: none;
+  color: var(--accent);
+  text-decoration: underline;
+  cursor: pointer;
+  font: inherit;
+}
+
 /* ------------------------------------------------------------- escalations */
 
 .escalations {
@@ -1039,6 +1197,18 @@ kbd.lit {
 .escalation-error {
   margin-top: 6px;
   overflow-wrap: anywhere;
+}
+
+.escalation-foot {
+  margin-top: 10px;
+  align-items: center;
+}
+
+/* Acknowledged: settled, not hidden. Muted and its delivery-coloured edge
+   stood down, so the unacknowledged are what the eye lands on. */
+.escalation-acknowledged {
+  border-left-color: var(--line-strong);
+  opacity: 0.6;
 }
 
 /* ------------------------------------------------------------------- log */
@@ -1193,6 +1363,44 @@ kbd.lit {
   justify-content: flex-end;
   gap: 8px;
   margin-top: 18px;
+}
+
+.description-count {
+  margin: 4px 0 0;
+  text-align: right;
+  color: var(--ink-muted);
+  font-size: 0.8rem;
+}
+
+.description-count.over {
+  color: var(--bad);
+  font-weight: 600;
+}
+
+.announce-section {
+  border-top: 1px solid var(--line);
+  margin-top: 16px;
+  padding-top: 14px;
+}
+
+.announce-section textarea {
+  margin-bottom: 10px;
+}
+
+.space-checks {
+  border: 0;
+  padding: 0;
+  margin: 8px 0 0;
+}
+
+.space-checks legend {
+  color: var(--ink-soft);
+  font-size: 0.85rem;
+  margin-bottom: 5px;
+}
+
+.description-actions .spacer {
+  flex: 1;
 }
 
 /* ---------------------------------------------------------------- toasts */

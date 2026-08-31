@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { loadConfig } from './config.js';
 import { buildApp } from './http/app.js';
-import { hashPassword } from './http/password.js';
+import { EXAMPLE_PASSWORD, EXAMPLE_PASSWORD_HASH, hashPassword } from './http/password.js';
 import { CLIENT_PATH, GUIDE_PATH } from './http/static.js';
 import { openStore } from './store/index.js';
 
@@ -137,7 +137,7 @@ describe('docs drift guards', () => {
       // Sentinels: one shallow, one deeply nested. If printRoutes changes
       // format enough that routes stop parsing, these vanish first.
       expect(parsed).toContain('GET /api/agent/stream');
-      expect(parsed).toContain('GET /api/admin/reads/:id/messages/:messageId');
+      expect(parsed).toContain('GET /api/admin/reads/:id/conversations/:conversationId/messages');
 
       const adminAt = httpApi.indexOf('## Admin API');
       expect(adminAt).toBeGreaterThan(0);
@@ -178,5 +178,22 @@ describe('docs drift guards', () => {
       store.close();
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('the example password', () => {
+  // README.md's quick-start `docker run` sets the hash the server treats as
+  // the example, and the prose after that block names the password. Anchored
+  // to that fenced block and what follows it, not to the strings appearing
+  // somewhere in the file: a README whose quick start drifted to another hash
+  // while the constant survived elsewhere would otherwise still pass.
+  it('is what README.md ships in its quick start, and names the password it unlocks', () => {
+    const readme = readFileSync(join(ROOT, 'README.md'), 'utf8');
+    const blocks = [...readme.matchAll(/```sh\n([\s\S]*?)```\n+([^\n]*)/g)];
+    const quickStart = blocks.find(([, code]) => code?.includes('docker run -d'));
+    expect(quickStart, 'a ```sh block containing `docker run -d`').toBeDefined();
+    const [, code = '', after = ''] = quickStart ?? [];
+    expect(code).toContain(`-e DOGPARK_PASSWORD_HASH='${EXAMPLE_PASSWORD_HASH}'`);
+    expect(after).toContain(`The password is \`${EXAMPLE_PASSWORD}\`.`);
   });
 });

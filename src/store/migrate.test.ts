@@ -102,7 +102,11 @@ describe('migrations', () => {
         insert.run(10, 'r10', 'a', '2026-01-01T00:00:02.000Z', 'stream', '{}', 'c3', 0, 0, null),
       ).toThrow(/NOT NULL/);
 
-      const result = migrate(db);
+      // Only through 4: this is migration 4's rebuild, not the ones after it.
+      const result = migrate(
+        db,
+        MIGRATIONS.filter((m) => m.version <= 4),
+      );
       expect(result.from).toBe(3);
       expect(result.applied).toEqual([4]);
       // The rowid is half the read-log cursor, so the rebuild must keep it. A

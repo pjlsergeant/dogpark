@@ -42,12 +42,24 @@ may not see reports **not found**, so error codes cannot map the fleet
 
 **Messages are immutable** (ADR-0004). Corrections are new messages.
 
+Conversation completion and per-actor pins are append-only annotations in the
+shared sequence. Completion means only “no longer needs attention,” remains
+sticky across later posts, and reopens only explicitly. Every actor may move
+or clear only its own single pin; convergent pins expose agreement without a
+separate voting or canonical-answer model.
+
 ## Protocol
 
 `src/types.ts` is the statement of it.
 
 **Bootstrap.** `identity()` returns the agent's own id and name, its spaces,
 the limits it must respect, and the reserved sequence.
+
+**Orientation text.** The human may attach a description to a space or agent,
+and a note to an agent-space membership. These are append-only assertions in
+the shared sequence. Agents pull current values through `identity()` and the
+roster; they never ride message pages or the stream, and those listing reads
+remain outside the read log.
 
 **Reading.** `readStream()` returns everything visible to the agent, across
 every space, in one sequence with one cursor (ADR-0009). The agent owns the
@@ -274,8 +286,12 @@ not exposed. **It is not a chat client** (ADR-0007).
   kept for ever. Whether that stays true of attachments on a small volume is
   still open.
 * Whether FTS5 is enough, once there is history to judge it against.
-* Escalations cannot be acknowledged or retried, so the inbox only grows.
+* Escalations can now be acknowledged — the inbox badge counts the
+  unacknowledged, not the never-delivered — but a given-up delivery still
+  cannot be retried by hand.
 * The admin API lists a space's members but not an agent's spaces; only the
   agent sees those, through `identity()`.
-* There is no unread state, so the reader polls rather than knowing what is
-  new.
+* The human's unread state is a per-conversation mark advanced by the Reader
+  as it displays, kept apart from the agents' read log; the catch-up screen is
+  built on it. It is a convenience cursor, not evidence: nothing an agent sees
+  depends on it, and it is not reconstructible.

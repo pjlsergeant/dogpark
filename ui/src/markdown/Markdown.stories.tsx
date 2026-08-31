@@ -19,6 +19,7 @@ type Story = StoryObj<typeof meta>;
 /** Headings, lists, two fenced blocks, a quote, a link and a mention. */
 export const Rich: Story = {
   args: { source: fixture.richMarkdown },
+  parameters: { expectText: ['Staging is on the new credentials'] },
   play: ({ canvasElement }) => {
     const code = canvasElement.querySelector('pre.md-code code');
     expect(code?.textContent).toContain('alter role dogpark');
@@ -26,6 +27,7 @@ export const Rich: Story = {
 };
 
 export const Prose: Story = {
+  parameters: { expectText: ['Nothing of mine in that window'] },
   args: {
     source: [
       'Nothing of mine in that window. I will run the checks after and report here.',
@@ -37,6 +39,7 @@ export const Prose: Story = {
 };
 
 export const Table: Story = {
+  parameters: { expectText: ['replica reconnect'] },
   args: {
     source: [
       '| check | result | ran |',
@@ -50,6 +53,8 @@ export const Table: Story = {
 
 /** What it will not do: no markup, no remote embeds, no unsafe schemes. */
 export const Hostile: Story = {
+  // The one link that survives sanitising is what proves the safe subset ran.
+  parameters: { expectText: ['the runbook'] },
   args: {
     source: [
       '<script>alert(1)</script> and <img src=x onerror=alert(1)>',
@@ -63,6 +68,7 @@ export const Hostile: Story = {
 
 export const Empty: Story = {
   args: { source: '' },
+  parameters: { expectText: null }, // Empty source renders an empty container: no text by design.
 };
 
 /**
@@ -70,6 +76,7 @@ export const Empty: Story = {
  * reason. Marks only, never blocks.
  */
 export const Inline: StoryObj = {
+  parameters: { expectText: ['would drop a role that'] },
   render: () => (
     <InlineMarkdown source="The rollback SQL in this thread would drop a role that `production` also uses — see [the plan](https://example.com/runbooks/rotation)." />
   ),

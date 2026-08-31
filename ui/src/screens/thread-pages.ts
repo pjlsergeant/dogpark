@@ -6,7 +6,13 @@
  * newest-first; each page is reversed into reading order and older pages go on
  * the front.
  */
-import type { ConversationId, DogparkAdminApi, Message, MessageId } from '../api/index.js';
+import type {
+  ConversationAnnotations,
+  ConversationId,
+  DogparkAdminApi,
+  Message,
+  MessageId,
+} from '../api/index.js';
 
 export interface Loaded {
   /** Oldest first, as rendered. */
@@ -15,6 +21,7 @@ export interface Loaded {
   readonly hasMore: boolean;
   /** How many pages have been pulled: on one, the reader follows the tip; on more, it stays put. */
   readonly pages: number;
+  readonly annotations?: ConversationAnnotations | undefined;
 }
 
 export type ThreadReader = Pick<DogparkAdminApi, 'readConversation'>;
@@ -46,6 +53,7 @@ export async function olderPage(
     nextCursor: page.nextCursor,
     hasMore: page.hasMore,
     pages: current.pages + 1,
+    annotations: current.annotations,
   };
 }
 
@@ -68,6 +76,7 @@ export async function loadThread(
     nextCursor: first.nextCursor,
     hasMore: first.hasMore,
     pages: 1,
+    annotations: first.annotations,
   };
   if (target === undefined) return newest;
   let loaded = newest;
@@ -81,4 +90,52 @@ export async function loadThread(
     loaded = await olderPage(api, conversation, loaded, asOf);
   }
   return holdsTarget() ? loaded : newest;
+}
+
+/**
+ * The messages a catch-up row counted: the newest `unreadCount` of those at or
+ * below its `latestActivitySeq`. Anything above the tip arrived after the row
+ * was made and is not one of them — by seq, since two messages can share a
+ * millisecond and never share a seq. Without a tip, simply the newest
+ * `unreadCount` on screen.
+ */
+export function countedUnread(
+  messages: readonly Message[],
+  unreadCount: number,
+  tip: number | undefined,
+): readonly Message[] {
+  const eligible =
+    tip === undefined ? messages : messages.filter((m) => m.seq !== undefined && m.seq <= tip);
+  return eligible.slice(Math.max(0, eligible.length - unreadCount));
+}
+
+/**
+ * Load enough history that every message the catch-up row counted is on
+ * screen, and name the oldest of them. `reached` is false when the page
+ * budget ran out first; the caller must not treat that as a landing — the
+ * first unread is still beyond what is shown.
+ */
+export async function loadFirstUnread(
+  api: ThreadReader,
+  conversation: ConversationId,
+  unreadCount: number,
+  asOf?: string,
+  tip?: number,
+): Promise<{
+  readonly loaded: Loaded;
+  readonly target: MessageId | undefined;
+  readonly reached: boolean;
+}> {
+  let loaded = await loadThread(api, conversation, undefined, asOf);
+  const counted = (): readonly Message[] => countedUnread(loaded.messages, unreadCount, tip);
+  while (
+    counted().length < unreadCount &&
+    loaded.hasMore &&
+    loaded.nextCursor !== null &&
+    loaded.pages < MAX_PAGES_FOR_TARGET
+  ) {
+    loaded = await olderPage(api, conversation, loaded, asOf);
+  }
+  const reached = counted().length >= unreadCount || !loaded.hasMore;
+  return { loaded, target: reached ? counted()[0]?.id : undefined, reached };
 }

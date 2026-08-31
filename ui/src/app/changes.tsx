@@ -2,13 +2,14 @@
  * One long poll for the whole app.
  *
  * `GET /changes` is held open until something is written — a post, a
- * membership change, a rename, a roster or key change, an escalation — and
- * every screen showing something a write can move
- * refreshes itself when it returns. One request rather than one per screen,
- * and none while the tab is in the background, where there is nothing to keep
- * fresh; on coming back the version last seen is sent, so anything written
- * meanwhile answers at once. A server that cannot be reached is retried after
- * a pause rather than hammered.
+ * membership change, a rename, a roster or key change, an escalation — and a
+ * screen backed by a write refreshes itself when it returns. Only writes wake
+ * it: what an agent has read, and when it was last seen, are not writes, so the
+ * read log and last-seen telemetry sit outside this signal and refresh by their
+ * own means. One request rather than one per screen, and none while the tab is
+ * in the background, where there is nothing to keep fresh; on coming back the
+ * version last seen is sent, so anything written meanwhile answers at once. A
+ * server that cannot be reached is retried after a pause rather than hammered.
  */
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';

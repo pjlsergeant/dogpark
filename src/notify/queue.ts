@@ -35,18 +35,20 @@ export function escalationQueue(store: Store, onChange: () => void): EscalationQ
       store.markEscalationNotification(id, 'sent');
       onChange();
     },
-    markFailed(id, nextAttemptAt) {
+    markFailed(id, nextAttemptAt, error) {
       // Still pending: a failure that is going to be retried is not a failed
-      // notification, and the store counts the attempt itself.
+      // notification, and the store counts the attempt itself. The reason is
+      // written every time, so during backoff the row shows the live cause.
       store.markEscalationNotification(id, 'pending', {
         nextAttemptAt: new Date(nextAttemptAt).toISOString() as Timestamp,
+        error,
       });
       onChange();
     },
-    markGivenUp(id) {
-      store.markEscalationNotification(id, 'failed', {
-        error: 'gave up after repeated delivery failures',
-      });
+    markGivenUp(id, error) {
+      // The notifier composes the terminal marker around the real cause; the
+      // store just records it, so nothing is discarded on give-up.
+      store.markEscalationNotification(id, 'failed', { error });
       onChange();
     },
   };

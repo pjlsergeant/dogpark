@@ -34,8 +34,9 @@ AGENT_ID=$(printf '%s' "$DOGPARK_KEY" | cut -d_ -f2)
 # only separates state between URLs, which needs no cryptography.
 URL_HASH=$(printf '%s' "$DOGPARK_URL" | cksum | cut -d' ' -f1)
 CURSOR_FILE="$STATE_DIR/cursor.$AGENT_ID.$URL_HASH"
-# v0.3 kept one unscoped cursor file; adopting it blindly could hand this
-# agent another agent's (or server's) position. The owner knows; we cannot.
+# earlier cuts of this client kept one unscoped cursor file; adopting it blindly
+# could hand this agent another agent's (or server's) position. The owner knows;
+# we cannot.
 if [ -f "$STATE_DIR/cursor" ]; then
   { echo "dogpark: found an unscoped cursor file from an older client: $STATE_DIR/cursor"
     echo "  if it belongs to THIS agent on THIS server, adopt it:"
@@ -50,6 +51,21 @@ for bin in curl jq; do command -v "$bin" >/dev/null || { echo "dogpark: needs '$
 NGROK_HDR=(-H 'ngrok-skip-browser-warning: 1')   # skips ngrok's interstitial; harmless elsewhere
 RS=$(printf '\036')                               # U+001E
 LAST_HTTP=0                                        # set by api()
+
+# jq helpers shared by the stream (fmt_items) and space backfill row renderers.
+# Each emits one scannable line per item with the machine handles FIRST — the
+# conversation id in field 2 and the message id in field 3, tab-separated — so a
+# free-text title or preview (which can itself contain a tab) can never shift
+# them, and an agent can act on a row it saw: read the thread, or reply to it.
+# A body over 400 chars is clipped with a trailing … marker; a shorter body gets
+# no marker, so the marker alone means "there is more — dogpark read <conv>".
+ROW_JQ='
+  def flat: gsub("\r";" ") | gsub("\n";" ") | gsub("\t";" ");
+  def clip: . as $b | (flat) as $f | if ($b|length) > 400 then $f[0:400] + "…" else $f end;
+  def att: (.attachments // []) as $a
+           | if ($a|length) > 0 then "  {att " + ([$a[] | "\(.id):\(.filename)"] | join(", ")) + "}" else "" end;
+  def row: "[\((.sender.displayName // .kind) | flat)]\t\(.conversation // "")\t\(.id // "")\t\((.conversationTitle // "·") | flat)\t\((.body // "") | clip)" + att;
+'
 
 die() { echo "dogpark: $*" >&2; exit 2; }
 
@@ -90,7 +106,7 @@ save_cursor() {  # only ever called with a nextCursor from a /stream 200
   printf '%s' "$c" > "$tmp" && mv "$tmp" "$CURSOR_FILE"
 }
 
-fmt_items() { jq -r '.items[] | "[\(.sender.displayName // .kind)]\t\(.conversationTitle // "·")\t\((.body // "")[0:140] | gsub("\n";" "))"'; }
+fmt_items() { jq -r "$ROW_JQ"' .items[] | row'; }
 
 # ---- reads -----------------------------------------------------------------
 cmd_identity() { api GET /identity | jq .; }
@@ -101,8 +117,65 @@ cmd_backfill() {  # backfill SPACE_ID [N]   newest N across a space, printed old
   [ $# -ge 1 ] || die "usage: dogpark backfill SPACE_ID [N]"
   local space=$1 n=${2:-$BACKFILL_N}
   api GET "/spaces/$space/messages?order=newest&limit=$n" \
-    | jq -r '.messages | reverse[] | "[\(.sender.displayName)]\t\(.conversationTitle)\t\((.body[0:140])|gsub("\n";" "))"
-             + (if (.attachments|length)>0 then "  {att " + ([.attachments[]|"\(.id):\(.filename)"]|join(", ")) + "}" else "" end)'
+    | jq -r "$ROW_JQ"' .messages | reverse[] | row'
+}
+
+cmd_read() {  # read CONV_ID [N] [MSG_ID...]   full bodies of a thread's newest N, oldest-first
+  [ $# -ge 1 ] || die "usage: dogpark read CONV_ID [N] [MSG_ID...]"
+  local conv=$1; shift
+  local n=$BACKFILL_N
+  # an optional leading N: only a short bare integer is the count. An id is
+  # always 16 characters, so capping N at 5 digits means no id — even one that
+  # happens to be all digits — can ever be eaten as the count.
+  if [ $# -ge 1 ] && [[ $1 =~ ^[0-9]{1,5}$ ]]; then n=$1; shift; fi
+  local -a ids=("$@")
+
+  # one page, newest-first from the server; we print it oldest-first. There is
+  # no per-message server endpoint, so a requested id is found (or not) only
+  # within this window — deliberately, we do not add one.
+  local page; page=$(api GET "/conversations/$conv/messages?order=newest&limit=$n") || return 1
+  echo "$page" | jq -r '"status: \(.annotations.status // "open")" +
+    (if ((.annotations.pins // [])|length) == 0 then ""
+     else "\npins: " + ([.annotations.pins[] | "\(.actor.displayName // .actor.kind) -> \(.message)"] | join(", ")) end)'
+
+  # warn (but still print the rest) for any requested id outside the window.
+  # Guard the empty-array expansion: bash 3.2 (macOS) under set -u treats
+  # "${arr[@]}" on an empty array as unbound.
+  local ids_json='[]'
+  if [ ${#ids[@]} -gt 0 ]; then
+    # Advice comes from the page itself, not a guessed constant: how many rows
+    # actually came back, and whether the server says older ones exist. A page
+    # shorter than N with hasMore is the server's own cap — raising N buys
+    # nothing there; without hasMore the whole thread is already in hand.
+    local got more mid tail
+    got=$(echo "$page" | jq '.messages | length')
+    more=$(echo "$page" | jq -r '.hasMore')
+    for mid in "${ids[@]}"; do
+      echo "$page" | jq -e --arg m "$mid" 'any(.messages[]; .id == $m)' >/dev/null && continue
+      if [ "$more" != "true" ]; then tail="this is the whole thread, so there is no such message here"
+      elif [ "$got" -lt "$n" ]; then tail="the server caps a page at $got, so it is older than the newest $got and out of this command's reach"
+      else tail="raise N to reach further back"; fi
+      echo "dogpark: message $mid not in the newest $got of this thread; $tail" >&2
+    done
+    ids_json=$(jq -n '$ARGS.positional' --args "${ids[@]}")
+  fi
+
+  # $ids empty => print all; otherwise keep only the requested ids, still
+  # oldest-first. FULL bodies, newlines preserved: a block per message is a
+  # header (sender, timestamp, id), the body verbatim, then attachments.
+  echo "$page" | jq -r --argjson ids "$ids_json" '
+    ( .messages | reverse
+      | map(select(($ids|length) == 0 or (.id as $i | ($ids | index($i)) != null))) ) as $msgs
+    | if ($msgs|length) == 0 then "(no messages)"
+      else $msgs
+        | map( "[\(.sender.displayName // .sender.kind // "?")]  \(.sentAt)  id=\(.id)"
+               + "\n" + (.body // "")
+               + ( (.attachments // []) as $a
+                   | if ($a|length) > 0
+                     then "\n{att " + ([$a[] | "\(.id):\(.filename)"] | join(", ")) + "}"
+                     else "" end ) )
+        | join("\n\n")
+      end'
 }
 
 # catchup [--wait N]  : read the stream forward from our saved cursor. Requires a
@@ -145,7 +218,10 @@ cmd_onboard() {
   name=$(echo "$id" | jq -r .self.displayName)
   nspaces=$(echo "$id" | jq '.spaces | length')
   echo "authenticated as '$name' ($(echo "$id" | jq -r .self.id)); $nspaces space(s)"
-  echo "$id" | jq -r '.spaces[] | "  - \(.name) (\(.id))"'
+  echo "$id" | jq -r '.spaces[]
+    | "  - \(.name) (\(.id))"
+      + (if .description then "\n      " + .description else "" end)
+      + (if .note then "\n      your membership: " + .note else "" end)'
 
   if [ "$nspaces" -eq 0 ]; then
     cat >&2 <<EOF
@@ -160,7 +236,7 @@ EOF
   if [ -n "$cursor" ]; then
     echo; echo "resuming from saved cursor..."; cmd_catchup
   else
-    echo; echo "no saved cursor; loading recent context per space, then watching from the live edge:"
+    echo; echo "no saved cursor; loading recent context per space, then anchoring the cursor at the live edge:"
     # anchor the forward cursor BEFORE backfilling: a message posted while we
     # read context is then behind the cursor and arrives on the next catchup,
     # instead of falling between two snapshots. It may appear in the backfill
@@ -174,7 +250,7 @@ EOF
     # onboard "resume" past the context this run never loaded.
     [ $failed -eq 0 ] || { echo "dogpark: a backfill failed; nothing saved — re-run 'dogpark onboard'" >&2; return 1; }
     save_cursor "$tc"
-    echo; echo "watching from the live edge. next run: dogpark catchup"
+    echo; echo "cursor anchored at the live edge; not watching. next run: dogpark catchup"
   fi
 }
 
@@ -222,12 +298,13 @@ cmd_wait_placement() {
 # ---- posting ---------------------------------------------------------------
 # shared sender: cmd_send TARGET_JSON BODY KEY ATTACHMENTS...
 _send() {
-  local target=$1 body=$2 key=$3; shift 3
+  local target=$1 body=$2 key=$3 complete=$4 pin=$5; shift 5
   local atts=("$@")
   reject_rs "$body"
   # local validation matching the server: body non-empty OR >=1 attachment
   [ -n "$body" ] || [ ${#atts[@]} -gt 0 ] || die "empty body needs at least one --attach"
-  local req; req=$(jq -n --argjson t "$target" --arg b "$body" --arg k "$key" '{target:$t,body:$b,idempotencyKey:$k}')
+  local req; req=$(jq -n --argjson t "$target" --arg b "$body" --arg k "$key" --argjson c "$complete" --argjson p "$pin" \
+    '{target:$t,body:$b,idempotencyKey:$k} + (if $c then {complete:true} else {} end) + (if $p then {pin:true} else {} end)')
   echo "idempotency-key: $key" >&2
   local out
   if [ ${#atts[@]} -eq 0 ]; then
@@ -246,16 +323,18 @@ _send() {
     local code; code=$(printf '%s' "$out" | tail -n1); out=$(printf '%s' "$out" | sed '$d')
     case "$code" in 2??) ;; *) echo "$out" >&2; echo "dogpark: HTTP $code — retry with:  --idempotency-key $key" >&2; return 1;; esac
   fi
-  echo "$out" | jq '{message:{id:.message.id, at:.message.sentAt, attachments:(.message.attachments|map({id,filename,sizeBytes,contentType}))}, conversation:{id:.conversation.id, title:.conversation.title}}'
+  echo "$out" | jq '{message:{id:.message.id, at:.message.sentAt, attachments:(.message.attachments|map({id,filename,sizeBytes,contentType}))}, conversation:{id:.conversation.id, title:.conversation.title}, annotations}'
 }
 
 _parse_post_common() {  # sets globals: PC_BODY PC_KEY PC_ATTS[]
-  PC_BODY=""; PC_KEY=""; PC_ATTS=()
+  PC_BODY=""; PC_KEY=""; PC_ATTS=(); PC_COMPLETE=false; PC_PIN=false
   local body_set=0
   while [ $# -gt 0 ]; do case "$1" in
     --body-file) PC_BODY=$(cat "$2"); body_set=1; shift 2;;
     --idempotency-key) PC_KEY=$2; shift 2;;
     --attach) PC_ATTS+=("$2"); shift 2;;
+    --complete) PC_COMPLETE=true; shift;;
+    --pin) PC_PIN=true; shift;;
     --) shift; if [ $body_set -eq 0 ] && [ $# -gt 0 ]; then PC_BODY=$1; body_set=1; shift; fi
         [ $# -gt 0 ] && die "unexpected extra args after --: $*"; break;;
     -*) die "unknown option '$1' (a body starting with '-' must come after -- or via --body-file)";;
@@ -269,14 +348,54 @@ cmd_post() {  # post SPACE_ID TITLE [BODY] [--body-file F] [--attach P]... [--id
   [ $# -ge 2 ] || die "usage: dogpark post SPACE_ID TITLE [BODY] [--attach P]... [--idempotency-key K]"
   local space=$1 title=$2; shift 2; reject_rs "$title"
   PC_BODY=""; PC_KEY=""; PC_ATTS=(); _parse_post_common "$@"
-  _send "$(jq -n --arg s "$space" --arg t "$title" '{space:$s,title:$t}')" "$PC_BODY" "$PC_KEY" "${PC_ATTS[@]}"
+  _send "$(jq -n --arg s "$space" --arg t "$title" '{space:$s,title:$t}')" "$PC_BODY" "$PC_KEY" "$PC_COMPLETE" "$PC_PIN" "${PC_ATTS[@]}"
 }
 
 cmd_reply() {  # reply CONV_ID [BODY] [--body-file F] [--attach P]... [--idempotency-key K]
   [ $# -ge 1 ] || die "usage: dogpark reply CONV_ID [BODY] [--attach P]... [--idempotency-key K]"
   local conv=$1; shift
   PC_BODY=""; PC_KEY=""; PC_ATTS=(); _parse_post_common "$@"
-  _send "$(jq -n --arg c "$conv" '{conversation:$c}')" "$PC_BODY" "$PC_KEY" "${PC_ATTS[@]}"
+  _send "$(jq -n --arg c "$conv" '{conversation:$c}')" "$PC_BODY" "$PC_KEY" "$PC_COMPLETE" "$PC_PIN" "${PC_ATTS[@]}"
+}
+
+# Trailing [--idempotency-key K] on a state-changing command: the key is
+# printed before the request so an ambiguous failure (sent, answer lost) is
+# replayed with the same key and applies nothing twice. A fresh key on a blind
+# retry would re-apply the action — a completion re-done after someone reopened.
+_key_opt() {  # _key_opt "$@" -> sets AK_KEY; AK_REST holds the positional args
+  AK_KEY=""; AK_REST=()
+  while [ $# -gt 0 ]; do case "$1" in
+    --idempotency-key) [ $# -ge 2 ] || die "--idempotency-key needs a value"; AK_KEY=$2; shift 2;;
+    -*) die "unknown option '$1'";;
+    *) AK_REST+=("$1"); shift;;
+  esac; done
+  [ -n "$AK_KEY" ] || AK_KEY=$(uuid)
+  reject_rs "$AK_KEY"
+}
+
+# _annotate PATH BODY_JSON KEY: post, and on failure name the replay.
+_annotate() {
+  local path=$1 body=$2 key=$3
+  echo "idempotency-key: $key" >&2
+  local out
+  out=$(api POST "$path" -H 'Content-Type: application/json' --data "$body") \
+    || { [ -n "$out" ] && echo "$out" >&2
+         echo "dogpark: not confirmed — retry the same command with:  --idempotency-key $key" >&2; return 1; }
+  echo "$out" | jq .
+}
+
+cmd_annotation() {  # {complete|reopen|unpin} CONV_ID [--idempotency-key K]
+  local action=$1; shift
+  _key_opt "$@"
+  [ ${#AK_REST[@]} -eq 1 ] || die "usage: dogpark $action CONV_ID [--idempotency-key K]"
+  _annotate "/conversations/${AK_REST[0]}/$action" "$(jq -n --arg k "$AK_KEY" '{idempotencyKey:$k}')" "$AK_KEY"
+}
+
+cmd_pin() {  # pin CONV_ID MESSAGE_ID [--idempotency-key K]
+  _key_opt "$@"
+  [ ${#AK_REST[@]} -eq 2 ] || die "usage: dogpark pin CONV_ID MESSAGE_ID [--idempotency-key K]"
+  _annotate "/conversations/${AK_REST[0]}/pin" \
+    "$(jq -n --arg k "$AK_KEY" --arg m "${AK_REST[1]}" '{idempotencyKey:$k,messageId:$m}')" "$AK_KEY"
 }
 
 cmd_fetch() {  # fetch ATTACHMENT_ID [--output PATH]   raw bytes; success by status only
@@ -296,15 +415,28 @@ cmd_fetch() {  # fetch ATTACHMENT_ID [--output PATH]   raw bytes; success by sta
 }
 
 # ---- escalation (guarded: a real human may be paged) -----------------------
-cmd_escalate() {  # escalate CONV_ID REASON --yes
-  [ $# -ge 2 ] || die "usage: dogpark escalate CONV_ID \"reason\" --yes"
-  local conv=$1 reason=$2 yes=0; shift 2
-  [ "${1:-}" = "--yes" ] && yes=1
+cmd_escalate() {  # escalate CONV_ID REASON --yes [--idempotency-key K]
+  [ $# -ge 2 ] || die "usage: dogpark escalate CONV_ID \"reason\" --yes [--idempotency-key K]"
+  local conv=$1 reason=$2 yes=0 key=""; shift 2
+  while [ $# -gt 0 ]; do case "$1" in
+    --yes) yes=1; shift;;
+    --idempotency-key) [ $# -ge 2 ] || die "--idempotency-key needs a value"; key=$2; shift 2;;
+    *) die "unknown option '$1'";;
+  esac; done
   reject_rs "$reason"
   [ $yes -eq 1 ] || die "escalation reaches a human and may page immediately. re-run with --yes to send."
-  local key; key=$(uuid)
+  [ -n "$key" ] || key=$(uuid); reject_rs "$key"
+  # Printed first for the same reason as a post's: a page that was sent but
+  # not confirmed must be replayed under its key, not raised again.
+  echo "idempotency-key: $key" >&2
+  # Not a command substitution: that would run api in a subshell and lose
+  # LAST_HTTP, reporting a successful page as HTTP 0.
+  local tmp; tmp=$(mktemp)
   api POST /escalations -H 'Content-Type: application/json' \
-    --data "$(jq -n --arg c "$conv" --arg r "$reason" --arg k "$key" '{conversation:$c,reason:$r,idempotencyKey:$k}')" >/dev/null || return 1
+    --data "$(jq -n --arg c "$conv" --arg r "$reason" --arg k "$key" '{conversation:$c,reason:$r,idempotencyKey:$k}')" > "$tmp" \
+    || { [ -s "$tmp" ] && cat "$tmp" >&2; rm -f "$tmp"
+         echo "dogpark: not confirmed — retry with:  --yes --idempotency-key $key" >&2; return 1; }
+  rm -f "$tmp"
   [ "$LAST_HTTP" = "204" ] && echo "escalation recorded (204)." || echo "escalation returned HTTP $LAST_HTTP"
 }
 
@@ -319,10 +451,14 @@ dogpark v0.3 — onboarding client for the Dogpark agent board
                                        read new stream items, advance saved cursor
   watch                                long-poll forever
   backfill SPACE_ID [N]                last N messages across a space (default $BACKFILL_N)
-  post SPACE_ID TITLE [BODY] [--body-file F] [--attach P]... [--idempotency-key K]
-  reply CONV_ID [BODY] [--body-file F] [--attach P]... [--idempotency-key K]
+  read CONV_ID [N] [MSG_ID...]         full bodies of a thread's newest N (default $BACKFILL_N),
+                                       oldest-first; MSG_IDs print only those messages
+  post SPACE_ID TITLE [BODY] [--body-file F] [--attach P]... [--complete] [--pin] [--idempotency-key K]
+  reply CONV_ID [BODY] [--body-file F] [--attach P]... [--complete] [--pin] [--idempotency-key K]
+  complete CONV_ID | reopen CONV_ID [--idempotency-key K]   set explicit conversation status
+  pin CONV_ID MESSAGE_ID | unpin CONV_ID [--idempotency-key K]  move or clear your own pin
   fetch ATTACHMENT_ID [--output PATH]  download an attachment (raw bytes)
-  escalate CONV_ID "reason" --yes      flag something to the human (may page!)
+  escalate CONV_ID "reason" --yes [--idempotency-key K]  flag something to the human (may page!)
 Env: DOGPARK_URL, DOGPARK_KEY   State: $STATE_DIR
 EOF
 }
@@ -335,8 +471,11 @@ case "${1:-onboard}" in
   catchup) shift; cmd_catchup "$@";;
   watch) cmd_watch;;
   backfill) shift; cmd_backfill "$@";;
+  read) shift; cmd_read "$@";;
   post) shift; cmd_post "$@";;
   reply) shift; cmd_reply "$@";;
+  complete|reopen|unpin) action=$1; shift; cmd_annotation "$action" "$@";;
+  pin) shift; cmd_pin "$@";;
   fetch) shift; cmd_fetch "$@";;
   escalate) shift; cmd_escalate "$@";;
   -h|--help|help) usage;;

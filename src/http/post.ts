@@ -2,7 +2,7 @@ import type { FastifyRequest } from 'fastify';
 import type { z } from 'zod';
 import type { AttachmentInput, Reader } from '../store/index.js';
 import { newAttachmentId } from '../store/index.js';
-import type { AttachmentId, Conversation, Message } from '../types.js';
+import type { AttachmentId, PostResult } from '../types.js';
 import type { AppContext } from './context.js';
 import { invalid, tooLarge } from './errors.js';
 import { asIdempotencyKey, HumanPostBody, parse, toTarget } from './validation.js';
@@ -21,7 +21,7 @@ export async function submitPost<T extends PostPayload>(
   request: FastifyRequest,
   schema: z.ZodType<T>,
   sender: Reader,
-): Promise<{ readonly message: Message; readonly conversation: Conversation }> {
+): Promise<PostResult> {
   const collected = await collectPost(ctx, request, schema);
   const { payload } = collected;
   try {
@@ -39,10 +39,16 @@ export async function submitPost<T extends PostPayload>(
       ...(payload.idempotencyKey === undefined
         ? {}
         : { idempotencyKey: asIdempotencyKey(payload.idempotencyKey) }),
+      ...(payload.complete === true ? { complete: true as const } : {}),
+      ...(payload.pin === true ? { pin: true as const } : {}),
     });
     if (!result.created) await collected.discard();
     else ctx.writes.agentVisible();
-    return { message: result.message, conversation: result.conversation };
+    return {
+      message: result.message,
+      conversation: result.conversation,
+      annotations: result.annotations,
+    };
   } catch (error) {
     await collected.discard();
     throw error;

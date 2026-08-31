@@ -1,5 +1,5 @@
 import type { Config } from '../config.js';
-import type { Store } from '../store/index.js';
+import { MAX_DESCRIPTION_CHARS, type Store } from '../store/index.js';
 import type { Limits } from '../types.js';
 import type { AttachmentFiles } from './attachments.js';
 import type { RateLimiter } from './rate-limit.js';
@@ -21,6 +21,13 @@ export interface AppContext {
    */
   readonly failedAuthLimiter: RateLimiter;
   readonly secureCookies: boolean;
+  /**
+   * True when `DOGPARK_PASSWORD_HASH` still authenticates the README's example
+   * password. Computed once by `buildApp` with `isExamplePassword` — the full
+   * check, scrypt included, so a differently salted hash of `dogpark` is caught
+   * as well as the printed constant.
+   */
+  readonly examplePassword: boolean;
   /** Clamp a caller's asked-for page size to `limits.maxPageSize`. */
   readonly pageLimit: (asked: number | undefined) => number;
   readonly sessionTtlSeconds: number;
@@ -42,5 +49,6 @@ export function limitsFrom(config: Config): Limits {
     requestsPerMinute: config.DOGPARK_REQUESTS_PER_MINUTE,
     maxPageSize: config.DOGPARK_MAX_PAGE_SIZE,
     maxWaitSeconds: config.DOGPARK_MAX_WAIT_SECONDS,
+    maxDescriptionChars: MAX_DESCRIPTION_CHARS,
   };
 }

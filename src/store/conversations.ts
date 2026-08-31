@@ -47,10 +47,12 @@ export function conversationResolver(ctx: StoreContext): ConversationResolver {
 export function conversationStore(
   ctx: StoreContext,
   resolveConversation: ConversationResolver,
+  getAnnotations: Store['getConversationAnnotations'],
 ): Pick<
   Store,
   | 'resolveOrCreateConversation'
   | 'getConversation'
+  | 'listConversationsForExport'
   | 'renameConversation'
   | 'listConversationSummaries'
 > {
@@ -115,6 +117,11 @@ export function conversationStore(
       return row === undefined ? undefined : toConversation(row);
     },
 
+    listConversationsForExport(space) {
+      requireSpaceRow(space);
+      return st.conversationsForExport.all({ space }).map(toConversation);
+    },
+
     renameConversation(conversation, title) {
       assertNonEmpty('title', title);
       return renameConversationTx(conversation, title);
@@ -128,6 +135,7 @@ export function conversationStore(
         messageCount: row.message_count,
         lastActivityAt: row.last_sent_at as Timestamp | null,
         lastSender: toLastSender(row),
+        annotations: getAnnotations(row.id as ConversationId),
       }));
     },
   };

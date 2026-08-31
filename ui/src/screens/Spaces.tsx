@@ -5,14 +5,23 @@
  */
 import { useCallback, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import type { AdminAgent, AgentId, Space, SpaceId } from '../api/index.js';
+import type {
+  AdminAgent,
+  AgentId,
+  CurrentMembership,
+  Space,
+  SpaceId,
+  SpaceSummary,
+} from '../api/index.js';
 import { useApi } from '../app/api-context.js';
 import { useOnChange } from '../app/changes.js';
 import { useAsync } from '../app/useAsync.js';
 import { href } from '../app/router.js';
 import { Empty, Facts, Fact, Failure, Id, Loading, Pill, Time } from '../components/bits.js';
 import { NameDialog } from '../components/NameDialog.js';
+import { DescriptionDialog } from '../components/DescriptionDialog.js';
 import { useNotify } from '../components/Toasts.js';
+import { ExportMenu } from '../components/ExportMenu.js';
 
 export function SpacesScreen(): ReactNode {
   const api = useApi();
@@ -22,6 +31,7 @@ export function SpacesScreen(): ReactNode {
   useOnChange(spaces.reload);
   const [creating, setCreating] = useState(false);
   const [renaming, setRenaming] = useState<Space | null>(null);
+  const [describing, setDescribing] = useState<SpaceSummary | null>(null);
 
   return (
     <section className="screen">
@@ -52,6 +62,10 @@ export function SpacesScreen(): ReactNode {
                 <a className="card-title" href={href.space(space.id)}>
                   {space.name}
                 </a>
+                {space.unreadCount > 0 && <Pill tone="info">{space.unreadCount} unread</Pill>}
+                {space.description !== undefined && space.description !== '' && (
+                  <p className="description-text">{space.description}</p>
+                )}
                 <Id value={space.id} />
                 <p className="muted small">
                   {space.conversationCount} thread{space.conversationCount === 1 ? '' : 's'}
@@ -74,6 +88,13 @@ export function SpacesScreen(): ReactNode {
                     onClick={() => setRenaming(space)}
                   >
                     Rename
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-quiet"
+                    onClick={() => setDescribing(space)}
+                  >
+                    ✎ Description
                   </button>
                 </div>
               </li>
@@ -110,6 +131,20 @@ export function SpacesScreen(): ReactNode {
           }}
         />
       )}
+      {describing !== null && (
+        <DescriptionDialog
+          kind="space"
+          subjectName={describing.name}
+          initial={describing.description}
+          spaces={[describing]}
+          onClose={() => setDescribing(null)}
+          onSave={async (description) => {
+            await api.setSpaceDescription(describing.id, description);
+            notify('ok', description === '' ? 'Description cleared.' : 'Description saved.');
+            spaces.reload();
+          }}
+        />
+      )}
     </section>
   );
 }
@@ -128,6 +163,8 @@ export function SpaceScreen({ space }: { space: SpaceId }): ReactNode {
     conversations.reload();
   });
   const [renaming, setRenaming] = useState(false);
+  const [describing, setDescribing] = useState(false);
+  const [noting, setNoting] = useState<CurrentMembership | null>(null);
   const [showHistory, setShowHistory] = useState(false);
   const [adding, setAdding] = useState<AgentId | ''>('');
 
@@ -193,6 +230,7 @@ export function SpaceScreen({ space }: { space: SpaceId }): ReactNode {
           <a className="btn" href={href.read(space)}>
             Open reader
           </a>
+          <ExportMenu kind="space" id={space} />
           <button
             type="button"
             className="btn"
@@ -203,6 +241,21 @@ export function SpaceScreen({ space }: { space: SpaceId }): ReactNode {
           </button>
         </div>
       </header>
+
+      {named !== null && (
+        <div className="description-block">
+          <div>
+            {named.description !== undefined && named.description !== '' ? (
+              <p>{named.description}</p>
+            ) : (
+              <p className="muted">No description.</p>
+            )}
+          </div>
+          <button type="button" className="btn btn-quiet" onClick={() => setDescribing(true)}>
+            ✎ Description
+          </button>
+        </div>
+      )}
 
       {members.state.error !== null && (
         <Failure error={members.state.error} onRetry={members.reload} />
@@ -226,15 +279,33 @@ export function SpaceScreen({ space }: { space: SpaceId }): ReactNode {
                       {full?.archived === true && <Pill tone="muted">archived</Pill>}
                       <div className="muted small">
                         member since <Time iso={entry.grantedAt} />
+                        {full?.lastSeenAt !== null && full?.lastSeenAt !== undefined && (
+                          <>
+                            {' '}
+                            · last seen <Time iso={full.lastSeenAt} />
+                          </>
+                        )}
                       </div>
+                      {entry.note !== undefined && entry.note !== '' && (
+                        <p className="description-text">{entry.note}</p>
+                      )}
                     </div>
-                    <button
-                      type="button"
-                      className="btn btn-quiet btn-danger"
-                      onClick={() => void remove(entry.agent.id, entry.agent.displayName)}
-                    >
-                      Remove
-                    </button>
+                    <div className="row">
+                      <button
+                        type="button"
+                        className="btn btn-quiet"
+                        onClick={() => setNoting(entry)}
+                      >
+                        ✎ Note
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-quiet btn-danger"
+                        onClick={() => void remove(entry.agent.id, entry.agent.displayName)}
+                      >
+                        Remove
+                      </button>
+                    </div>
                   </li>
                 );
               })}
@@ -348,6 +419,37 @@ export function SpaceScreen({ space }: { space: SpaceId }): ReactNode {
             await api.renameSpace(space, name);
             notify('ok', 'Renamed.');
             spaces.reload();
+          }}
+        />
+      )}
+      {describing && named !== null && (
+        <DescriptionDialog
+          kind="space"
+          subjectName={named.name}
+          initial={named.description}
+          spaces={[named]}
+          onClose={() => setDescribing(false)}
+          onSave={async (description) => {
+            await api.setSpaceDescription(space, description);
+            notify('ok', description === '' ? 'Description cleared.' : 'Description saved.');
+            spaces.reload();
+          }}
+        />
+      )}
+      {noting !== null && named !== null && (
+        <DescriptionDialog
+          kind="membership"
+          subjectName={`${noting.agent.displayName} in ${named.name}`}
+          initial={noting.note}
+          spaces={[named]}
+          onClose={() => setNoting(null)}
+          onSave={async (description) => {
+            await api.setMembershipNote(space, noting.agent.id, description);
+            notify(
+              'ok',
+              description === '' ? 'Membership note cleared.' : 'Membership note saved.',
+            );
+            members.reload();
           }}
         />
       )}

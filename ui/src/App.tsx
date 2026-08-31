@@ -11,6 +11,7 @@ import { ChangesProvider } from './app/changes.js';
 import type { Session } from './app/api-context.js';
 import { href, navigate, useRoute } from './app/router.js';
 import { ToastHost } from './components/Toasts.js';
+import { ExamplePasswordBanner } from './components/ExamplePasswordBanner.js';
 import { Dialog } from './components/Dialog.js';
 import { Login } from './screens/Login.js';
 import { SpaceScreen, SpacesScreen } from './screens/Spaces.js';
@@ -19,6 +20,7 @@ import { ReaderScreen } from './screens/Reader.js';
 import { ReadLogScreen } from './screens/ReadLog.js';
 import { EscalationsScreen } from './screens/Escalations.js';
 import { SearchScreen } from './screens/Search.js';
+import { CatchUpScreen } from './screens/CatchUp.js';
 import mark from './assets/dogpark-mark.png';
 
 /**
@@ -46,6 +48,7 @@ function guardSession(api: DogparkAdminApi, onLost: () => void): DogparkAdminApi
 }
 
 const NAV: readonly { readonly key: string; readonly label: string; readonly to: string }[] = [
+  { key: 'c', label: 'Catch up', to: '#/catch-up' },
   { key: 's', label: 'Spaces', to: '#/spaces' },
   { key: 'a', label: 'Agents', to: '#/agents' },
   { key: 'r', label: 'Reader', to: '#/read' },
@@ -81,6 +84,7 @@ export function App(): ReactNode {
       if (resumed !== null) {
         setSession({
           displayName: resumed.displayName,
+          examplePassword: resumed.examplePassword,
         });
       }
       setBooting(false);
@@ -127,12 +131,13 @@ export function App(): ReactNode {
 }
 
 function Shell(): ReactNode {
+  const { session } = useApp();
   const route = useRoute();
   const [chord, setChord] = useState(false);
   const [help, setHelp] = useState(false);
 
   useEffect(() => {
-    if (window.location.hash === '') navigate(href.spaces());
+    if (window.location.hash === '') navigate(href.catchUp());
   }, []);
 
   useEffect(() => {
@@ -179,12 +184,15 @@ function Shell(): ReactNode {
   }, [chord, route.name]);
 
   return (
-    <div className="app">
-      <Sidebar route={route.name} chord={chord} onHelp={() => setHelp(true)} />
-      <div className="content">
-        <Screen />
+    <div className="shell">
+      {session.examplePassword && <ExamplePasswordBanner />}
+      <div className="app">
+        <Sidebar route={route.name} chord={chord} onHelp={() => setHelp(true)} />
+        <div className="content">
+          <Screen />
+        </div>
+        {help && <Shortcuts onClose={() => setHelp(false)} />}
       </div>
-      {help && <Shortcuts onClose={() => setHelp(false)} />}
     </div>
   );
 }
@@ -192,6 +200,8 @@ function Shell(): ReactNode {
 function Screen(): ReactNode {
   const route = useRoute();
   switch (route.name) {
+    case 'catch-up':
+      return <CatchUpScreen />;
     case 'spaces':
       return <SpacesScreen />;
     case 'space':
@@ -205,6 +215,8 @@ function Screen(): ReactNode {
           conversation={route.conversation}
           message={route.message}
           asOf={route.asOf}
+          unreadCount={route.unreadCount}
+          unreadTip={route.unreadTip}
         />
       );
     case 'reads':
@@ -227,6 +239,7 @@ function Sidebar({
 }): ReactNode {
   const { session, logout } = useApp();
   const current: Record<string, string> = {
+    'catch-up': 'Catch up',
     spaces: 'Spaces',
     space: 'Spaces',
     agents: 'Agents',
@@ -274,10 +287,10 @@ function Shortcuts({ onClose }: { onClose: () => void }): ReactNode {
     <Dialog title="Keyboard" onClose={onClose}>
       <dl className="facts">
         <dt>
-          <kbd>g</kbd> then <kbd>s</kbd> / <kbd>a</kbd> / <kbd>r</kbd> / <kbd>l</kbd> / <kbd>e</kbd>{' '}
-          / <kbd>f</kbd>
+          <kbd>g</kbd> then <kbd>c</kbd> / <kbd>s</kbd> / <kbd>a</kbd> / <kbd>r</kbd> / <kbd>l</kbd>{' '}
+          / <kbd>e</kbd> / <kbd>f</kbd>
         </dt>
-        <dd>Spaces, agents, reader, read log, escalations, search</dd>
+        <dd>Catch up, spaces, agents, reader, read log, escalations, search</dd>
         <dt>
           <kbd>/</kbd>
         </dt>

@@ -9,7 +9,6 @@ import type {
   Cursor,
   IdempotencyKey,
   Message,
-  MessageId,
   QueryCursor,
   SpaceId,
   StreamItem,
@@ -165,6 +164,173 @@ describe('membership is append-only intervals', () => {
     expect(h.store.listSpacesForAgent(agent).map((s) => s.id)).toEqual([space]);
     h.store.unarchiveAgent(agent);
     expect(h.store.listSpacesForAgent(agent).map((s) => s.id)).toEqual([space]);
+  });
+});
+
+describe('operator descriptions', () => {
+  it('appends normalized values and derives the current value, with empty meaning absent', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+
+    h.store.setSpaceDescription(space, '  A place\n\tfor work  ');
+    expect(h.store.getSpaceDescription(space)).toBe('A place for work');
+    h.store.setSpaceDescription(space, 'replacement');
+    expect(h.store.getSpaceDescription(space)).toBe('replacement');
+    h.store.setSpaceDescription(space, '   ');
+    expect(h.store.getSpaceDescription(space)).toBeUndefined();
+
+    const rows = h.store.database
+      .prepare('SELECT body FROM description WHERE kind = ? AND subject_id = ? ORDER BY seq')
+      .all('space', space) as { body: string }[];
+    expect(rows.map((row) => row.body)).toEqual(['A place for work', 'replacement', '']);
+
+    h.store.setMembershipNote(agent, space, 'specific reason');
+    expect(h.store.getMembershipNote(agent, space)).toBe('specific reason');
+  });
+
+  it('rejects overlong descriptions and notes for closed memberships', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    expectStoreError(() => h.store.setAgentDescription(agent, 'x'.repeat(1001)), 'invalid_request');
+    h.store.revokeMembership(agent, space);
+    const error = expectStoreError(
+      () => h.store.setMembershipNote(agent, space, 'too late'),
+      'invalid_request',
+    );
+    expect(error.message).toContain('open membership');
+  });
+});
+
+describe('human catch-up marks', () => {
+  it('advances marks forward only and lists unread conversations newest first', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const first = post(h, agent, space, 'older', 'one');
+    h.advance(1);
+    const newer = post(h, agent, space, 'newer', 'two');
+    const older = h.store.getConversation(first.conversation) as NonNullable<
+      ReturnType<Store['getConversation']>
+    >;
+
+    expect(h.store.listHumanCatchUp({ limit: 10 }).conversations.map((row) => row.title)).toEqual([
+      'newer',
+      'older',
+    ]);
+    expect(h.store.advanceHumanReadMark(older.id, first.id)).toBe(true);
+    // Already there: forward only means no row changes, and no retreat.
+    expect(h.store.advanceHumanReadMark(older.id, first.id)).toBe(false);
+    // A message from another thread cannot mark this one.
+    expect(() => h.store.advanceHumanReadMark(older.id, newer.id)).toThrow();
+    expect(h.store.listHumanCatchUp({ limit: 10 }).conversations.map((row) => row.title)).toEqual([
+      'newer',
+    ]);
+
+    post(h, agent, space, 'older', 'three');
+    const row = h.store
+      .listHumanCatchUp({ limit: 10 })
+      .conversations.find((item) => item.id === older.id);
+    expect(row).toMatchObject({ unreadCount: 1, latestActivityAt: h.at() });
+  });
+
+  it('includes completed threads only with unread activity, reports pins, and pages', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const quiet = post(h, agent, space, 'quiet', 'done');
+    h.store.completeConversation({ kind: 'human' }, quiet.conversation);
+    h.store.advanceHumanReadMark(quiet.conversation, quiet.id);
+
+    const active = post(h, agent, space, 'active', 'read me');
+    h.store.pinMessage({ kind: 'human' }, active.conversation, active.id);
+    h.store.completeConversation({ kind: 'human' }, active.conversation);
+    const first = h.store.listHumanCatchUp({ limit: 1 });
+    expect(first.conversations).toHaveLength(1);
+    expect(first.conversations[0]).toMatchObject({
+      title: 'active',
+      unreadCount: 1,
+      hasPins: true,
+      status: 'complete',
+    });
+    expect(first.hasMore).toBe(false);
+    expect(h.store.listSpaceSummaries()).toEqual([
+      expect.objectContaining({ id: space, unreadCount: 1 }),
+    ]);
+  });
+});
+
+describe('conversation annotations', () => {
+  it('derives sticky status and one movable pin per actor, including as-of state', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const first = post(h, agent, space, 'decision', 'first');
+    const conversation = first.conversation;
+
+    expect(h.store.getConversationAnnotations(conversation)).toEqual({ status: 'open', pins: [] });
+    h.store.completeConversation({ kind: 'agent', id: agent }, conversation);
+    h.store.pinMessage({ kind: 'agent', id: agent }, conversation, first.id);
+    const tip = h.store.database
+      .prepare('SELECT MAX(seq) AS seq FROM conversation_annotation')
+      .get() as { seq: number };
+    const second = post(h, agent, space, 'decision', 'second');
+    h.store.pinMessage({ kind: 'agent', id: agent }, conversation, second.id);
+
+    expect(h.store.getConversationAnnotations(conversation)).toMatchObject({
+      status: 'complete',
+      pins: [{ message: second.id, actor: { kind: 'agent', id: agent } }],
+    });
+    expect(h.store.getConversationAnnotationsAsOf(conversation, { tip: tip.seq })).toMatchObject({
+      status: 'complete',
+      pins: [{ message: first.id, actor: { kind: 'agent', id: agent } }],
+    });
+    expect(
+      h.store.postMessage({
+        sender: { kind: 'agent', id: agent },
+        target: { conversation },
+        body: 'still complete',
+      }).annotations.status,
+    ).toBe('complete');
+  });
+
+  it('enforces access and pin target, and idempotent no-ops append nothing', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const outsider = h.store.createAgent('outsider').id;
+    const message = post(h, agent, space, 'decision', 'one');
+    const conversation = message.conversation;
+    expectStoreError(
+      () => h.store.completeConversation({ kind: 'agent', id: outsider }, conversation),
+      'not_found',
+    );
+
+    const otherSpace = h.store.createSpace('other').id;
+    h.store.grantMembership(agent, otherSpace);
+    const other = post(h, agent, otherSpace, 'other', 'wrong target');
+    expectStoreError(
+      () => h.store.pinMessage({ kind: 'agent', id: agent }, conversation, other.id),
+      'not_found',
+    );
+
+    expect(h.store.completeConversation({ kind: 'agent', id: agent }, conversation)).toBe(true);
+    expect(h.store.completeConversation({ kind: 'agent', id: agent }, conversation)).toBe(false);
+    expect(h.store.unpinConversation({ kind: 'agent', id: agent }, conversation)).toBe(false);
+    expect(
+      h.store.database.prepare('SELECT COUNT(*) AS n FROM conversation_annotation').get(),
+    ).toEqual({ n: 1 });
+  });
+
+  it('applies complete and pin atomically with a post', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const result = h.store.postMessage({
+      sender: { kind: 'agent', id: agent },
+      target: { space, title: 'summary' },
+      body: 'the answer',
+      complete: true,
+      pin: true,
+    });
+    expect(result.annotations).toMatchObject({
+      status: 'complete',
+      pins: [{ message: result.message.id, actor: { kind: 'agent', id: agent } }],
+    });
   });
 });
 
@@ -676,6 +842,32 @@ describe('idempotency', () => {
     );
   });
 
+  it('refuses an annotation key for an agent hand-named as the sentinel', () => {
+    const h = harness();
+    const space = h.store.createSpace('acme').id;
+    h.store.database
+      .prepare(
+        "INSERT INTO agent (id, display_name, created_at, archived) VALUES (':human', 'impostor', 'then', 0)",
+      )
+      .run();
+    const impostor = ':human' as AgentId;
+    h.store.grantMembership(impostor, space);
+    const posted = h.store.postMessage({
+      sender: { kind: 'human' },
+      target: { space, title: 'notes' },
+      body: 'a thread to annotate',
+    });
+    expectStoreError(
+      () =>
+        h.store.completeConversation(
+          { kind: 'agent', id: impostor },
+          posted.conversation.id,
+          key('reserved'),
+        ),
+      'invalid_request',
+    );
+  });
+
   it('rejects a replayed human key that carries a different request', () => {
     const h = harness();
     const { space } = scene(h);
@@ -1161,11 +1353,12 @@ describe('a read is bounded by the stream tip it recorded', () => {
     ).toEqual(['one']);
   });
 
-  it('shows nothing for a read taken before any sequence was allocated', () => {
+  it('shows nothing for a read taken before the agent joined any space', () => {
     const h = harness();
     // The onboarding order: the agent exists and is polling before the human
     // puts it anywhere, so its first read saw an empty stream and recorded a
-    // tip of 0. The clock never moves, so only the sequence separates them.
+    // tip of 0. A grant is itself a sequenced event, so a tip of 0 is a read
+    // taken when the agent belonged to nothing.
     const agent = h.store.createAgent('alice').id;
     h.store.readStream(agent);
     const read = h.store.readReadLog({ agent }).entries[0]?.id ?? '';
@@ -1174,8 +1367,10 @@ describe('a read is bounded by the stream tip it recorded', () => {
     h.store.grantMembership(agent, space);
     const posted = post(h, agent, space, 'daily', 'after the read');
 
-    // A recorded 0 is a real tip, not the back-fill: nothing existed yet.
-    expect(h.store.readConversationAsOf(read, posted.conversation)?.messages).toEqual([]);
+    // At that read the agent could see no space at all, so the reconstruction
+    // is not-found rather than an empty page: it answers what the agent could
+    // have seen, and the answer here is nothing.
+    expect(h.store.readConversationAsOf(read, posted.conversation)).toBeUndefined();
     expect(h.store.readConversation({ kind: 'human' }, posted.conversation).messages).toHaveLength(
       1,
     );
@@ -1196,6 +1391,127 @@ describe('a read is bounded by the stream tip it recorded', () => {
     expect(
       h.store.readConversationAsOf(read, first.conversation)?.messages.map((m) => m.body),
     ).toEqual(['before the read', 'after the read']);
+
+    // Annotations fall back to the same clock: a completion a millisecond
+    // later is after the read, and the legacy view must not show it.
+    h.advance(1);
+    h.store.completeConversation({ kind: 'agent', id: agent }, first.conversation);
+    expect(h.store.getConversationAnnotations(first.conversation).status).toBe('complete');
+    expect(h.store.readConversationAsOf(read, first.conversation)?.annotations?.status).toBe(
+      'open',
+    );
+  });
+
+  it('renders a ceilinged read under the labels in force at the ceiling', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const beta = h.store.createAgent('beta');
+    h.store.grantMembership(beta.id, space);
+    const posted = post(h, agent, space, 'names', 'hello @beta');
+    h.store.pinMessage({ kind: 'agent', id: beta.id }, posted.conversation, posted.id);
+    const position = h.store.snapshotPosition();
+    h.store.renameAgent(beta.id, 'gamma');
+
+    const live = h.store.readConversation({ kind: 'human' }, posted.conversation);
+    expect(live.messages[0]?.body).toBe('hello @gamma');
+    expect(live.annotations?.pins[0]?.actor.displayName).toBe('gamma');
+    const snapshot = h.store.readConversation(
+      { kind: 'human' },
+      posted.conversation,
+      undefined,
+      undefined,
+      position,
+    );
+    expect(snapshot.messages[0]?.body).toBe('hello @beta');
+    expect(snapshot.annotations?.pins[0]?.actor.displayName).toBe('beta');
+  });
+});
+
+describe('a read only reconstructs a space the agent could see then', () => {
+  it('refuses a conversation that did not yet exist at the read', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    post(h, agent, space, 'before', 'already here');
+    h.store.readStream(agent);
+    const read = h.store.readReadLog({ agent }).entries[0]?.id ?? '';
+    h.advance(1);
+    const later = post(h, agent, space, 'later', 'opened after the read');
+
+    // Exact tip: the thread's first message is above it.
+    expect(h.store.readConversationAsOf(read, later.conversation)).toBeUndefined();
+    // Legacy clock: its first message is after the read's millisecond.
+    h.store.database.prepare('UPDATE read_log SET tip_seq = NULL').run();
+    expect(h.store.readConversationAsOf(read, later.conversation)).toBeUndefined();
+  });
+
+  it('shows nothing from a space the agent was never in', () => {
+    const h = harness();
+    const alice = h.store.createAgent('alice').id;
+    const bob = h.store.createAgent('bob').id;
+    const acme = h.store.createSpace('acme').id;
+    const other = h.store.createSpace('other').id;
+    h.store.grantMembership(alice, acme);
+    h.store.grantMembership(bob, other);
+    // A thread alice was never near, and an ordinary read of her own space to
+    // hang the reconstruction on.
+    const secret = post(h, bob, other, 'plans', 'bob only');
+    post(h, alice, acme, 'daily', 'alice here');
+    h.store.readSpace({ kind: 'agent', id: alice }, acme);
+    const read = h.store.readReadLog({ agent: alice }).entries[0]?.id ?? '';
+
+    // The read is alice's; she held no membership in `other` at that moment,
+    // so she could have seen nothing of it and the reconstruction is not-found.
+    expect(h.store.readConversationAsOf(read, secret.conversation)).toBeUndefined();
+  });
+
+  it('shows nothing when the membership was revoked before the read', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const first = post(h, agent, space, 'daily', 'while a member');
+    h.advance(60);
+    h.store.revokeMembership(agent, space);
+    h.advance(60);
+    // A later read, taken after the agent had left the space. The revocation is
+    // a sequenced event, so it falls at or below the tip this read records.
+    h.store.readStream(agent);
+    const read = h.store.readReadLog({ agent }).entries[0]?.id ?? '';
+
+    expect(h.store.readConversationAsOf(read, first.conversation)).toBeUndefined();
+  });
+
+  it('shows the page when the agent was a member at the read, even if later revoked', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const first = post(h, agent, space, 'daily', 'in the room');
+    h.store.readSpace({ kind: 'agent', id: agent }, space);
+    const read = h.store.readReadLog({ agent }).entries[0]?.id ?? '';
+    // Leaving afterwards does not rewrite what the read could have seen: the
+    // membership interval was open at the tip the read recorded.
+    h.advance(60);
+    h.store.revokeMembership(agent, space);
+
+    expect(
+      h.store.readConversationAsOf(read, first.conversation)?.messages.map((m) => m.body),
+    ).toEqual(['in the room']);
+  });
+
+  it('keeps a legacy row visible when the revocation shares the read millisecond', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const first = post(h, agent, space, 'daily', 'in the room');
+    // Read and revoke in the same millisecond: the clock never moves between
+    // them, so `revoked_at` equals `read_at` to the millisecond.
+    h.store.readSpace({ kind: 'agent', id: agent }, space);
+    const read = h.store.readReadLog({ agent }).entries[0]?.id ?? '';
+    h.store.revokeMembership(agent, space);
+    // A row that recorded no tip falls back to the millisecond clock; the coarse
+    // bound includes a message in the read's own millisecond, so a revocation in
+    // that same millisecond must not hide the conversation the message shows.
+    h.store.database.prepare('UPDATE read_log SET tip_seq = NULL').run();
+
+    expect(
+      h.store.readConversationAsOf(read, first.conversation)?.messages.map((m) => m.body),
+    ).toEqual(['in the room']);
   });
 });
 
@@ -1203,48 +1519,6 @@ describe('the wording of a read is reproducible after renames', () => {
   const reader = (agent: AgentId): Reader => ({ kind: 'agent', id: agent });
   const newestRead = (h: Harness, agent: AgentId): string =>
     h.store.readReadLog({ agent }).entries[0]?.id ?? '';
-
-  it('renders a message as it read at the time, from the label history', () => {
-    const h = harness();
-    const { agent, space } = scene(h);
-    const bob = h.store.createAgent('bob').id;
-    h.store.grantMembership(bob, space);
-    const posted = post(h, agent, space, 'daily', 'ping @bob about the figures');
-
-    const handed = h.store.readSpace(reader(agent), space).messages[0];
-    const first = newestRead(h, agent);
-    expect(handed?.body).toBe('ping @bob about the figures');
-
-    // No clock advance: the read and the renames share a millisecond, which
-    // is why the history is ordered by its own sequence and not by time.
-    h.store.renameAgent(bob, 'robert');
-    h.store.renameConversation(posted.conversation, 'weekly');
-    h.store.renameAgent(agent, 'alicia');
-    h.store.readSpace(reader(agent), space);
-    const between = newestRead(h, agent);
-    h.store.renameAgent(bob, 'bobby');
-    h.store.readSpace(reader(agent), space);
-    const latest = newestRead(h, agent);
-
-    // The newest read: every label current.
-    const now = h.store.renderAsOfRead(posted.id, latest);
-    expect(now?.body).toBe('ping @bobby about the figures');
-    expect(now?.conversationTitle).toBe('weekly');
-    expect(now?.sender.displayName).toBe('alicia');
-
-    // The first read: exactly what was handed over — not the first rename's
-    // value, which a "latest history row" lookup would have produced.
-    const then = h.store.renderAsOfRead(posted.id, first);
-    expect(then?.body).toBe(handed?.body);
-    expect(then?.conversationTitle).toBe(handed?.conversationTitle);
-    expect(then?.sender.displayName).toBe(handed?.sender.displayName);
-    expect(then?.mentions).toEqual([bob]);
-
-    // Between the two renames of bob.
-    expect(h.store.renderAsOfRead(posted.id, between)?.body).toBe('ping @robert about the figures');
-    expect(h.store.renderAsOfRead('nope' as MessageId, between)).toBeUndefined();
-    expect(h.store.renderAsOfRead(posted.id, 'nope')).toBeUndefined();
-  });
 
   it('renders a whole page as it read at the time', () => {
     const h = harness();
@@ -1440,6 +1714,44 @@ describe('escalations', () => {
     const sent = h.store.markEscalationNotification(escalation.id, 'sent');
     expect(sent.attempts).toBe(2);
     expect(sent.notificationState).toBe('sent');
+  });
+
+  it('acknowledges idempotently and counts what is still unacknowledged', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const conversation = h.store.resolveOrCreateConversation(space, 'notes').id;
+    const raise = (n: number): string =>
+      h.store.recordEscalation({
+        agent,
+        conversation,
+        reason: `problem ${n}`,
+        idempotencyKey: key(`ack-e${n}`),
+      }).escalation.id;
+    const [first, second] = [raise(1), raise(2)];
+
+    // Everything starts unacknowledged: acknowledging is a separate axis from
+    // delivery, so a never-delivered escalation still wants a human until one
+    // settles it.
+    expect(h.store.countUnacknowledgedEscalations()).toBe(2);
+    const before = h.store.listEscalations().escalations;
+    expect(before.every((e) => e.acknowledgedAt === null)).toBe(true);
+
+    h.advance(30);
+    const acked = h.store.acknowledgeEscalation(first ?? '');
+    expect(acked?.acknowledgedAt).toBe(h.at());
+    expect(h.store.countUnacknowledgedEscalations()).toBe(1);
+
+    // A second ack is a no-op that still succeeds and keeps the first time.
+    h.advance(30);
+    const again = h.store.acknowledgeEscalation(first ?? '');
+    expect(again?.acknowledgedAt).toBe(acked?.acknowledgedAt);
+    expect(h.store.countUnacknowledgedEscalations()).toBe(1);
+
+    h.store.acknowledgeEscalation(second ?? '');
+    expect(h.store.countUnacknowledgedEscalations()).toBe(0);
+
+    // An unknown id is a miss, not an error: the route turns it into a 404.
+    expect(h.store.acknowledgeEscalation('esc_nope')).toBeUndefined();
   });
 
   it('pages newest first for the inbox and oldest first for the notifier, without a gap', () => {

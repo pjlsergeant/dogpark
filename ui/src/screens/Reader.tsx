@@ -12,6 +12,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type {
   ApiError,
+  ConversationAnnotations,
   ConversationId,
   ConversationSummary,
   MessageId,
@@ -21,12 +22,14 @@ import { useApi } from '../app/api-context.js';
 import { useOnChange } from '../app/changes.js';
 import { toApiError, useAsync } from '../app/useAsync.js';
 import { href, navigate } from '../app/router.js';
-import { absoluteTime, dayHeading, sameDay } from '../app/format.js';
-import { Empty, Failure, Loading, Time } from '../components/bits.js';
+import { absoluteTime, dayHeading, idempotencyKey, sameDay } from '../app/format.js';
+import { Empty, Failure, Loading, Pill, Time } from '../components/bits.js';
 import { MessageView } from '../components/MessageView.js';
 import { Composer } from '../components/Composer.js';
 import { NameDialog } from '../components/NameDialog.js';
 import { loadThread, olderPage } from './thread-pages.js';
+import { countedUnread, loadFirstUnread } from './thread-pages.js';
+import { ExportMenu } from '../components/ExportMenu.js';
 import type { Loaded } from './thread-pages.js';
 
 /**
@@ -41,11 +44,15 @@ export function ReaderScreen({
   conversation,
   message,
   asOf,
+  unreadCount,
+  unreadTip,
 }: {
   space?: SpaceId | undefined;
   conversation?: ConversationId | undefined;
   message?: MessageId | undefined;
   asOf?: string | undefined;
+  unreadCount?: number | undefined;
+  unreadTip?: number | undefined;
 }): ReactNode {
   const api = useApi();
   const spaces = useAsync(() => api.listSpaces(), [api]);
@@ -84,6 +91,8 @@ export function ReaderScreen({
       conversation={conversation}
       message={message}
       asOf={asOf}
+      unreadCount={unreadCount}
+      unreadTip={unreadTip}
       filter={filter}
       onFilter={setFilter}
       spaceNames={(spaces.state.data ?? []).map((s) => [s.id, s.name] as const)}
@@ -99,6 +108,8 @@ function SpaceReader({
   filter,
   onFilter,
   spaceNames,
+  unreadCount,
+  unreadTip,
 }: {
   space: SpaceId;
   conversation?: ConversationId | undefined;
@@ -107,6 +118,8 @@ function SpaceReader({
   filter: string;
   onFilter: (value: string) => void;
   spaceNames: readonly (readonly [SpaceId, string])[];
+  unreadCount?: number | undefined;
+  unreadTip?: number | undefined;
 }): ReactNode {
   const api = useApi();
   const conversations = useAsync(() => api.listConversations(space), [api, space]);
@@ -175,6 +188,12 @@ function SpaceReader({
                 href={href.read(space, thread.id, undefined, asOf)}
               >
                 <span className="thread-title">{thread.title}</span>
+                <span className="thread-annotations">
+                  {thread.annotations.status === 'complete' && <Pill tone="neutral">complete</Pill>}
+                  {thread.annotations.pins.length > 0 && (
+                    <span title="Pinned messages">📌 {thread.annotations.pins.length}</span>
+                  )}
+                </span>
                 <span className="thread-meta">
                   {thread.lastActivityAt !== null && (
                     <>
@@ -215,11 +234,17 @@ function SpaceReader({
           </div>
         ) : (
           <Thread
-            key={conversation}
+            // asOf is part of the key: live and as-of are different views of
+            // the same thread, and a remount is what keeps one view's loaded
+            // messages from flashing (or sticking, on a failed load) under the
+            // other's banner.
+            key={`${conversation}:${asOf ?? ''}`}
             space={space}
             conversation={conversation}
             highlight={message}
             asOf={asOf}
+            unreadCount={unreadCount}
+            unreadTip={unreadTip}
             summary={threads.find((t) => t.id === conversation) ?? null}
             onPosted={() => conversations.reload()}
           />
@@ -240,6 +265,8 @@ function Thread({
   asOf,
   summary,
   onPosted,
+  unreadCount,
+  unreadTip,
 }: {
   space: SpaceId;
   conversation: ConversationId;
@@ -253,6 +280,8 @@ function Thread({
   /** The thread list's row for this thread, once the list has loaded. */
   summary: ConversationSummary | null;
   onPosted: () => void;
+  unreadCount?: number | undefined;
+  unreadTip?: number | undefined;
 }): ReactNode {
   const api = useApi();
   const asOfRead = useAsync(
@@ -263,6 +292,15 @@ function Thread({
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
   const [renaming, setRenaming] = useState(false);
+  /**
+   * Live: seeded from the thread list's row, so the header is right before
+   * the page lands. As-of: nothing until the reconstruction answers — the
+   * row is today's state, and a forensic view must not show it, not even
+   * briefly, and not at all if the reconstruction is refused.
+   */
+  const [annotations, setAnnotations] = useState<ConversationAnnotations | undefined>(
+    asOf === undefined ? (summary?.annotations ?? { status: 'open', pins: [] }) : undefined,
+  );
   /**
    * Every full reload gets a number. A read that was already out when one
    * happened lands into a thread that no longer exists as it knew it, so it
@@ -282,16 +320,116 @@ function Thread({
   const seek = useRef<MessageId | undefined>(undefined);
   /** Counts full loads, so the scroll effect can tell one from an append. */
   const [arrivals, setArrivals] = useState(0);
+  const [unreadTarget, setUnreadTarget] = useState<MessageId | undefined>(undefined);
+  /**
+   * `?unread=N` from a catch-up row is consumed by the first load, as `?m=`
+   * is by `seek`: a Refresh or a post afterwards lands at the live edge, not
+   * back on the message that was the first unread when the row was clicked.
+   */
+  const unreadConsumed = useRef(false);
+  /**
+   * A catch-up landing that ran out of pages before the first unread holds
+   * the read mark: marking the newest message would declare the unshown ones
+   * read. The hold lifts only once every message the row counted — the newest
+   * `unreadCount` at or below its tip — is on screen, walked back to with Load
+   * older. Not on a Refresh, which shows the newest page alone, and not for
+   * anything that arrived after the row: those sit above the tip.
+   */
+  const markHeld = useRef(false);
+  /**
+   * The row's count and tip as they were when the hold was set. The props can
+   * go while the thread stays mounted — the sidebar link to the open thread
+   * carries neither — and a hold judged against missing props would lift.
+   */
+  const held = useRef<{ readonly count: number; readonly tip: number | undefined }>({
+    count: 0,
+    tip: undefined,
+  });
+  const [unreadBeyond, setUnreadBeyond] = useState(false);
+  /**
+   * Annotations arrive from three places — a full load, the newest-page poll,
+   * and an action's own response — and nothing orders their arrival. An
+   * action's response is the newest truth the moment it lands, so it bumps
+   * this epoch; a load or poll that began under an older epoch applies its
+   * annotations to nothing. Polls also carry a serial, so two polls that both
+   * began under the current epoch cannot land in the wrong order.
+   */
+  const annotationEpoch = useRef(0);
+  const pollSerial = useRef(0);
+  const pollApplied = useRef(0);
+  /**
+   * Actions would race each other too: Pin A then Pin B, and nothing says the
+   * server handles them in that order or answers in it. Picking an answer by
+   * client intent cannot fix that — the server may have finished on A. So
+   * actions run one at a time, in the order they were made: the second is
+   * sent only when the first has answered, every answer is the server's state
+   * after that action, and the last answer is its last word. The composer's
+   * posts (which may complete or pin) and its inline Reopen join the queue.
+   * A failed action does not block the ones behind it.
+   */
+  const actionQueue = useRef<Promise<unknown>>(Promise.resolve());
+  const runAction = <T,>(action: () => Promise<T>): Promise<T> => {
+    const run = actionQueue.current.then(action, action);
+    actionQueue.current = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  };
+  const acceptFromAction = (next: ConversationAnnotations): void => {
+    annotationEpoch.current += 1;
+    acceptAnnotations(next);
+  };
+  const marked = useRef<MessageId | undefined>(undefined);
+  /**
+   * One idempotency key per attempt, kept while the attempt is unresolved: a
+   * click that failed without an answer may have been applied, and the next
+   * click on the same control replays it rather than doing it again. If
+   * someone reopened the thread in between, the replay answers `open` — the
+   * truth, shown, not overridden by a second completion.
+   *
+   * Unresolved means the UI has seen no annotation state since. Any state
+   * that lands — an action's answer, a poll, a load — says what is true now,
+   * and a click made against it is a fresh intent: keeping an older key past
+   * that point would turn the click into a replay that applies nothing.
+   */
+  const attemptKeys = useRef(new Map<string, string>());
+  /** Every arrival of annotation state retires unresolved attempts. */
+  const annotationArrivals = useRef(0);
+  const acceptAnnotations = (next: ConversationAnnotations): void => {
+    annotationArrivals.current += 1;
+    attemptKeys.current.clear();
+    setAnnotations(next);
+  };
 
   const load = useCallback(async () => {
     const mine = (generation.current += 1);
+    const epoch = annotationEpoch.current;
     reloading.current = true;
     setBusy(true);
     setError(null);
     try {
-      const thread = await loadThread(api, conversation, seek.current, asOf);
+      const firstUnread =
+        seek.current === undefined && unreadCount !== undefined && !unreadConsumed.current;
+      const result = firstUnread
+        ? await loadFirstUnread(api, conversation, unreadCount, asOf, unreadTip)
+        : { loaded: await loadThread(api, conversation, seek.current, asOf), target: undefined };
+      const thread = result.loaded;
       if (mine !== generation.current) return;
+      // Consumed by a load that landed, so a transient failure's Retry still
+      // keeps the promise the catch-up row made.
+      if (firstUnread) unreadConsumed.current = true;
+      if ('reached' in result && !result.reached) {
+        markHeld.current = true;
+        held.current = { count: unreadCount ?? 0, tip: unreadTip };
+        setUnreadBeyond(true);
+      }
+      if (result.target !== undefined) seek.current = result.target;
+      setUnreadTarget(result.target);
       setLoaded(thread);
+      if (thread.annotations !== undefined && epoch === annotationEpoch.current) {
+        acceptAnnotations(thread.annotations);
+      }
       setArrivals((n) => n + 1);
     } catch (cause) {
       if (mine === generation.current) setError(toApiError(cause));
@@ -301,7 +439,7 @@ function Thread({
         setBusy(false);
       }
     }
-  }, [api, conversation, asOf]);
+  }, [api, conversation, asOf, unreadCount, unreadTip]);
 
   const loadOlder = useCallback(async () => {
     if (loaded === null || loaded.nextCursor === null) return;
@@ -346,15 +484,38 @@ function Thread({
    */
   const pollNewest = useCallback(async () => {
     const mine = generation.current;
+    const epoch = annotationEpoch.current;
+    const serial = (pollSerial.current += 1);
     try {
       const page = await api.readConversation(conversation, { order: 'newest' });
       if (mine !== generation.current) return;
       const newest = [...page.messages].reverse();
+      if (
+        page.annotations !== undefined &&
+        epoch === annotationEpoch.current &&
+        serial > pollApplied.current
+      ) {
+        pollApplied.current = serial;
+        acceptAnnotations(page.annotations);
+      }
       setLoaded((current) => {
         if (current === null) return current;
         const held = new Set(current.messages.map((m) => m.id));
         const added = newest.filter((m) => !held.has(m.id));
-        if (added.length === 0 || added.length === newest.length) return current;
+        if (added.length === 0) return current;
+        // No overlap means more than a page arrived and appending would leave
+        // a hole — unless nothing was held, in which case the newest page is
+        // simply the thread's first page, paging metadata included: what lies
+        // behind it is reachable the ordinary way.
+        if (held.size === 0) {
+          return {
+            ...current,
+            messages: newest,
+            nextCursor: page.nextCursor,
+            hasMore: page.hasMore,
+          };
+        }
+        if (added.length === newest.length) return current;
         return { ...current, messages: [...current.messages, ...added] };
       });
     } catch {
@@ -383,13 +544,29 @@ function Thread({
     return () => globalThis.clearInterval(timer);
   }, [pollNewest, asOf]);
 
-  const messages = loaded?.messages ?? [];
+  /**
+   * As of a past read, the messages call can 404 for a thread the agent could
+   * not see then (the membership check refuses it) — or for a read or thread
+   * that no longer exists. The server deliberately does not distinguish the
+   * two, so the "as X could have seen it" banner is reframed and the pane says
+   * so honestly. A refusal also shows NO thread state: `loaded` can still hold
+   * another view of this conversation (today's messages after "Back to now",
+   * then the browser's Back restoring `?asOf=`), and rendering it under the
+   * refusal copy would present exactly the messages the refusal says cannot
+   * be shown.
+   */
+  const asOfRefused = asOf !== undefined && error !== null && error.code === 'not_found';
+  const shown = asOfRefused ? null : loaded;
+  /** What the header and pins render: nothing for a refused or pending as-of. */
+  const view = asOfRefused ? undefined : annotations;
+  const messages = shown?.messages ?? [];
   const count = messages.length;
-  const onFirstPage = loaded?.pages === 1;
+  const onFirstPage = shown?.pages === 1;
   // The newest message's id, not the count: a full page replaced by a full
   // page — the human posting into a thread longer than one page — changes
   // what is newest without changing how many are shown.
   const newestId = messages.at(-1)?.id;
+  const highlighted = highlight ?? unreadTarget;
   const seen = useRef(0);
 
   useEffect(() => {
@@ -412,6 +589,28 @@ function Thread({
     if (onFirstPage) bottom.current?.scrollIntoView({ block: 'end' });
   }, [arrivals, newestId, onFirstPage]);
 
+  // The human's mark follows the newest message on screen — every thread
+  // view, however it was reached, and never the as-of view, which shows what
+  // an agent saw rather than what the human is reading now. Once per newest
+  // id, so a re-render marks nothing twice; a failure is shown, and the next
+  // full load — Refresh, or Retry on the failure itself — asks again, since
+  // a thread whose mark never moved would sit in catch-up as unread.
+  useEffect(() => {
+    if (asOf !== undefined || newestId === undefined || marked.current === newestId) return;
+    if (markHeld.current) {
+      const { count: wanted, tip } = held.current;
+      if (countedUnread(messages, wanted, tip).length < wanted) return;
+      markHeld.current = false;
+      setUnreadBeyond(false);
+    }
+    marked.current = newestId;
+    void api.advanceReadMark(conversation, newestId).catch((cause: unknown) => {
+      // Forget only this attempt: a newer tip's mark may already be out.
+      if (marked.current === newestId) marked.current = undefined;
+      setError(toApiError(cause));
+    });
+  }, [api, asOf, conversation, newestId, arrivals, count, messages]);
+
   // As of a read, the rendered messages carry the title as it stood then;
   // the thread list is today's, so it is only a fallback while nothing has
   // loaded.
@@ -419,12 +618,47 @@ function Thread({
     (asOf === undefined
       ? (summary?.title ?? messages[0]?.conversationTitle)
       : (messages[0]?.conversationTitle ?? summary?.title)) ?? 'Conversation';
+  const pinned = useMemo(() => {
+    const byMessage = new Map<string, ConversationAnnotations['pins'][number]['actor'][]>();
+    for (const pin of view?.pins ?? [])
+      byMessage.set(pin.message, [...(byMessage.get(pin.message) ?? []), pin.actor]);
+    return byMessage;
+  }, [view]);
+  const humanPin = view?.pins.find((pin) => pin.actor.kind === 'human')?.message;
+  const updateAnnotations = async (
+    attempt: string,
+    action: (key: string) => Promise<ConversationAnnotations>,
+  ) => {
+    // Stored now, so a second click while this one is still out shares the
+    // key and becomes a replay rather than a second application.
+    const key = attemptKeys.current.get(attempt) ?? idempotencyKey();
+    attemptKeys.current.set(attempt, key);
+    // Noted when the request actually goes out — after its turn in the queue,
+    // not at the click — so an action that waited behind another is judged
+    // by what arrived during its own flight.
+    let seen = annotationArrivals.current;
+    try {
+      acceptFromAction(
+        await runAction(() => {
+          seen = annotationArrivals.current;
+          return action(key);
+        }),
+      );
+      onPosted();
+    } catch (cause) {
+      // Keep the key for a replay only if nothing arrived meanwhile; state
+      // that landed during the attempt has already superseded it.
+      if (seen === annotationArrivals.current) attemptKeys.current.set(attempt, key);
+      setError(toApiError(cause));
+    }
+  };
 
   return (
     <>
       <header className="thread-head">
         <div>
           <h1>{heading}</h1>
+          {view?.status === 'complete' && <Pill tone="neutral">complete</Pill>}
           {summary !== null && asOf === undefined && (
             <p className="muted small">
               opened by{' '}
@@ -438,9 +672,27 @@ function Thread({
         </div>
         <div className="row">
           {asOf === undefined && (
-            <button type="button" className="btn btn-quiet" onClick={() => setRenaming(true)}>
-              Rename
-            </button>
+            <>
+              <button
+                type="button"
+                className="btn"
+                onClick={() =>
+                  void updateAnnotations(
+                    annotations?.status === 'complete' ? 'reopen' : 'complete',
+                    (key) =>
+                      annotations?.status === 'complete'
+                        ? api.reopenConversation(conversation, key)
+                        : api.completeConversation(conversation, key),
+                  )
+                }
+              >
+                {annotations?.status === 'complete' ? 'Reopen' : 'Complete'}
+              </button>
+              <button type="button" className="btn btn-quiet" onClick={() => setRenaming(true)}>
+                Rename
+              </button>
+              <ExportMenu kind="conversation" id={conversation} />
+            </>
           )}
           <button type="button" className="btn btn-quiet" onClick={() => void load()}>
             Refresh
@@ -457,11 +709,19 @@ function Thread({
             </>
           ) : asOfRead.state.data === null || asOfRead.state.data === undefined ? (
             'As it was read — loading which read…'
+          ) : asOfRefused ? (
+            <>
+              As read by <strong>{asOfRead.state.data.agent.displayName}</strong> at{' '}
+              <time dateTime={asOfRead.state.data.at}>{absoluteTime(asOfRead.state.data.at)}</time>{' '}
+              — but this thread cannot be shown as it was.{' '}
+              <a href={href.read(space, conversation)}>Back to now</a>
+            </>
           ) : (
             <>
               As <strong>{asOfRead.state.data.agent.displayName}</strong> could have seen it at{' '}
               <time dateTime={asOfRead.state.data.at}>{absoluteTime(asOfRead.state.data.at)}</time>:
-              messages up to that moment, names and titles as they stood then. The thread list
+              messages up to that moment, names and titles as they stood then — save your own
+              display name, the one label not journaled, which shows as it is now. The thread list
               beside it is today's. <a href={href.read(space, conversation)}>Back to now</a>
             </>
           )}
@@ -474,7 +734,7 @@ function Thread({
           label="Title"
           initial={heading}
           submitLabel="Rename"
-          hint="The title is how agents address this thread, so a rename changes where their next message lands."
+          hint={`Agents address this thread by its title, so this changes where their next message lands. Anything still posting to "${heading}" will open a fresh thread by that old name rather than reach this one — how a memoryless agent's diary forks in two.`}
           onClose={() => setRenaming(false)}
           onSubmit={async (next) => {
             await api.renameConversation(conversation, next);
@@ -485,9 +745,50 @@ function Thread({
       )}
 
       <div className="thread-body">
+        {unreadBeyond && (
+          <p className="thread-notice muted small">
+            More unread here than could be loaded at once. The older ones are behind “Load older
+            messages”; your read mark stays where it was until they have been shown.
+          </p>
+        )}
+        {pinned.size > 0 && (
+          <nav className="pinned-summary" aria-label="Pinned messages">
+            <strong>Pinned</strong>
+            {[...pinned.entries()].map(([id, actors]) => {
+              // A pin can point past the loaded pages; then the link says who
+              // pinned rather than what, and scrolling to it loads nothing.
+              const body = messages
+                .find((m) => m.id === id)
+                ?.body.replace(/\s+/g, ' ')
+                .trim();
+              const who = actors
+                .map((actor) => (actor.kind === 'human' ? 'you' : actor.displayName))
+                .join(', ');
+              return (
+                <a key={id} href={`#m-${id}`} title={`pinned by ${who}`}>
+                  {body === undefined
+                    ? `pinned by ${who}`
+                    : body.length > 80
+                      ? `${body.slice(0, 80)}…`
+                      : body}
+                  <span className="muted small"> — {who}</span>
+                </a>
+              );
+            })}
+          </nav>
+        )}
         {busy && loaded === null && <Loading what="messages" />}
-        {error !== null && <Failure error={error} onRetry={() => void load()} />}
-        {loaded !== null && count === 0 && (
+        {asOfRefused ? (
+          <Empty>
+            Nothing here to reconstruct. Either{' '}
+            <strong>{asOfRead.state.data?.agent.displayName ?? 'this agent'}</strong> could not see
+            this thread at that read, or the read or conversation no longer exists — the record does
+            not distinguish the two.
+          </Empty>
+        ) : (
+          error !== null && <Failure error={error} onRetry={() => void load()} />
+        )}
+        {shown !== null && count === 0 && (
           <Empty>
             {asOf === undefined
               ? 'Nothing here yet. Say something.'
@@ -495,7 +796,7 @@ function Thread({
           </Empty>
         )}
 
-        {loaded?.hasMore === true && (
+        {shown?.hasMore === true && (
           <div className="load-more">
             <button type="button" className="btn" onClick={() => void loadOlder()} disabled={busy}>
               {busy ? 'Loading...' : 'Load older messages'}
@@ -509,7 +810,24 @@ function Thread({
           return (
             <div key={each.id}>
               {newDay && <div className="day-separator">{dayHeading(each.sentAt)}</div>}
-              <MessageView message={each} highlighted={each.id === highlight} />
+              <MessageView
+                message={each}
+                highlighted={each.id === highlighted}
+                pinnedBy={pinned.get(each.id) ?? []}
+                humanPinned={humanPin === each.id}
+                onPin={
+                  asOf === undefined
+                    ? () =>
+                        void updateAnnotations(
+                          humanPin === each.id ? 'unpin' : `pin:${each.id}`,
+                          (key) =>
+                            humanPin === each.id
+                              ? api.unpinConversation(conversation, key)
+                              : api.pinMessage(conversation, each.id, key),
+                        )
+                    : undefined
+                }
+              />
             </div>
           );
         })}
@@ -525,6 +843,9 @@ function Thread({
             void load();
             onPosted();
           }}
+          runAnnotationAction={runAction}
+          onAnnotations={acceptFromAction}
+          annotations={annotations}
         />
       )}
     </>

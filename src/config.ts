@@ -4,20 +4,34 @@ import { MAX_PAGE_LIMIT } from './store/limits.js';
 import { assertValidName } from './store/text.js';
 
 /**
- * One address or CIDR range, checked here so a typo is a startup diagnostic
- * naming the value rather than Fastify's `TypeError: invalid IP address`
- * while the app is being built.
+ * The keywords `@fastify/proxy-addr` understands alongside literals — the
+ * Express `trust proxy` vocabulary. Their meaning is the resolver's, not
+ * Dogpark's; we only let them through. Matched lowercase only, deliberately:
+ * one spelling keeps a config value diffable and a typo a startup diagnostic.
+ */
+const PROXY_KEYWORDS = ['loopback', 'linklocal', 'uniquelocal'] as const;
+
+/**
+ * One address, CIDR range, or keyword, checked here so a typo is a startup
+ * diagnostic naming the value rather than Fastify's `TypeError: invalid IP
+ * address` while the app is being built.
  */
 function proxyAddressProblem(entry: string): string | undefined {
+  if ((PROXY_KEYWORDS as readonly string[]).includes(entry)) return undefined;
   const [address, prefix, ...rest] = entry.split('/');
   if (address === undefined || rest.length > 0) return `"${entry}" is not an address or range`;
   const family = isIP(address);
   if (family === 0) return `"${entry}" is not an IPv4 or IPv6 address`;
   if (prefix === undefined) return undefined;
   const bits = family === 4 ? 32 : 128;
-  if (!/^\d{1,3}$/.test(prefix) || Number(prefix) > bits) {
-    return `"${entry}" has a prefix length outside 0-${bits}`;
-  }
+  if (!/^\d{1,3}$/.test(prefix)) return `"${entry}" has a prefix length outside 1-${bits}`;
+  const length = Number(prefix);
+  // `/0` passes `@fastify/proxy-addr`'s own parser only to be rejected at app
+  // build with `TypeError: invalid range on address` — the late failure this
+  // check exists to prevent — and it means every address anyway, which trusting
+  // every peer is exactly what the declaration refuses.
+  if (length === 0) return `"${entry}" is a /0 range, which is every address, and is refused`;
+  if (length > bits) return `"${entry}" has a prefix length outside 1-${bits}`;
   return undefined;
 }
 
@@ -28,6 +42,23 @@ function proxyAddressProblem(entry: string): string | undefined {
 const Schema = z.object({
   DOGPARK_PORT: z.coerce.number().int().positive().default(8080),
   DOGPARK_DATA_DIR: z.string().default('./data'),
+
+  /**
+   * Which interfaces to bind. Default every IPv4 interface (`0.0.0.0`), the only
+   * default that reaches a container. On a source build with no proxy, set
+   * `127.0.0.1` to keep plaintext off the network — the equivalent of a
+   * container's `-p 127.0.0.1:` publish (ADR-0016). An IP literal only: a
+   * hostname would resolve ambiguously, so it is refused here rather than
+   * left to surface as a bind error later.
+   */
+  DOGPARK_HOST: z
+    .string()
+    .default('0.0.0.0')
+    .superRefine((value, ctx) => {
+      if (isIP(value) === 0) {
+        ctx.addIssue({ code: 'custom', message: `"${value}" is not an IPv4 or IPv6 address` });
+      }
+    }),
 
   /** The single human. */
   DOGPARK_PASSWORD_HASH: z.string().min(1),
@@ -49,8 +80,10 @@ const Schema = z.object({
 
   /**
    * What is in front of Dogpark: either `no`, or a comma-separated list of
-   * addresses or CIDR ranges permitted to set `X-Forwarded-*`. A list rather
-   * than a boolean, and no default (ADR-0016).
+   * addresses, CIDR ranges, or the keywords `loopback`, `linklocal`,
+   * `uniquelocal` (`@fastify/proxy-addr`'s vocabulary, mixable with literals)
+   * permitted to set `X-Forwarded-*`. Keywords are matched lowercase only. A
+   * list rather than a boolean, and no default (ADR-0016).
    */
   DOGPARK_TRUST_PROXY: z
     .string()
@@ -65,7 +98,8 @@ const Schema = z.object({
         ctx.addIssue({
           code: 'custom',
           message:
-            'must be "no" or a comma-separated list of proxy addresses or CIDR ranges: ' +
+            'must be "no", or a comma-separated list of proxy addresses, CIDR ranges, or the ' +
+            'keywords loopback, linklocal, uniquelocal: ' +
             problems.join('; '),
         });
       }
@@ -98,6 +132,11 @@ export type Config = z.infer<typeof Schema> & {
   /** False, or the addresses permitted to set `X-Forwarded-*`. */
   readonly trustProxy: false | readonly string[];
   readonly behindProxy: boolean;
+  /**
+   * The interfaces to bind, `DOGPARK_HOST` (default every IPv4 interface). A field
+   * rather than a literal in `server.ts` so the decision is unit-testable.
+   */
+  readonly listenHost: string;
 };
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -109,5 +148,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const declared = parsed.data.DOGPARK_TRUST_PROXY.trim();
   const trustProxy =
     declared === 'no' ? (false as const) : declared.split(',').map((p) => p.trim());
-  return { ...parsed.data, trustProxy, behindProxy: trustProxy !== false };
+  return {
+    ...parsed.data,
+    trustProxy,
+    behindProxy: trustProxy !== false,
+    listenHost: parsed.data.DOGPARK_HOST,
+  };
 }

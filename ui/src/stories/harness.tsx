@@ -41,21 +41,29 @@ const issued = (agent: AdminAgent): IssuedKey => ({
   agent: { id: agent.id, displayName: agent.displayName },
 });
 
-function page(messages: readonly Message[]): MessagePage {
-  return { messages, nextCursor: 'qc_end' as MessagePage['nextCursor'], hasMore: false };
+function page(messages: readonly Message[], id?: ConversationId): MessagePage {
+  return {
+    messages,
+    nextCursor: 'qc_end' as MessagePage['nextCursor'],
+    hasMore: false,
+    annotations: fixture.conversations.find((conversation) => conversation.id === id)?.annotations,
+  };
 }
 
 export function fixtureApi(overrides: Partial<DogparkAdminApi> = {}): DogparkAdminApi {
   const first = fixture.agents[0] as AdminAgent;
   const base: DogparkAdminApi = {
-    login: () => Promise.resolve({ csrfToken: 'csrf_5e1c', displayName: 'pete' }),
-    resume: () => Promise.resolve({ csrfToken: 'csrf_5e1c', displayName: 'pete' }),
+    login: () =>
+      Promise.resolve({ csrfToken: 'csrf_5e1c', displayName: 'pete', examplePassword: false }),
+    resume: () =>
+      Promise.resolve({ csrfToken: 'csrf_5e1c', displayName: 'pete', examplePassword: false }),
     logout: () => Promise.resolve(),
 
     listSpaces: () => Promise.resolve(fixture.spaces),
     awaitChanges: () => new Promise<string>(() => {}),
     createSpace: (name: string) => Promise.resolve({ id: 'sp_new' as SpaceId, name }),
     renameSpace: () => Promise.resolve(),
+    setSpaceDescription: () => Promise.resolve(),
     listMembers: () => Promise.resolve(fixture.members),
     addMember: () => Promise.resolve(),
     removeMember: () => Promise.resolve(),
@@ -64,6 +72,8 @@ export function fixtureApi(overrides: Partial<DogparkAdminApi> = {}): DogparkAdm
     createAgent: (name: string) =>
       Promise.resolve({ ...issued(first), agent: { id: 'ag_new' as AgentId, displayName: name } }),
     renameAgent: () => Promise.resolve(),
+    setAgentDescription: () => Promise.resolve(),
+    setMembershipNote: () => Promise.resolve(),
     issueKey: () => Promise.resolve(issued(first)),
     revokeKey: () => Promise.resolve(),
     archiveAgent: () => Promise.resolve(),
@@ -71,13 +81,27 @@ export function fixtureApi(overrides: Partial<DogparkAdminApi> = {}): DogparkAdm
 
     listConversations: (space: SpaceId) =>
       Promise.resolve(space === fixture.delivery.id ? fixture.conversations : []),
+    listCatchUp: () => Promise.resolve(fixture.catchUp),
+    advanceReadMark: () => Promise.resolve(),
     readConversation: (id: ConversationId, query) => {
       const messages = fixture.messagesByConversation.get(id) ?? [];
-      return Promise.resolve(page(query?.order === 'newest' ? [...messages].reverse() : messages));
+      return Promise.resolve(
+        page(query?.order === 'newest' ? [...messages].reverse() : messages, id),
+      );
     },
     renameConversation: (id: ConversationId, title: string): Promise<Conversation> =>
       Promise.resolve({ id, space: fixture.delivery.id, title }),
-    post: () => Promise.resolve({ message: fixture.wrapUp, conversation: fixture.rotation }),
+    post: () =>
+      Promise.resolve({
+        message: fixture.wrapUp,
+        conversation: fixture.rotation,
+        annotations: { status: 'open', pins: [] },
+      }),
+    completeConversation: () => Promise.resolve({ status: 'complete', pins: [] }),
+    reopenConversation: () => Promise.resolve({ status: 'open', pins: [] }),
+    pinMessage: (_id, message) =>
+      Promise.resolve({ status: 'open', pins: [{ message, actor: fixture.pete }] }),
+    unpinConversation: () => Promise.resolve({ status: 'open', pins: [] }),
 
     listReads: (filter) =>
       Promise.resolve({
@@ -94,12 +118,20 @@ export function fixtureApi(overrides: Partial<DogparkAdminApi> = {}): DogparkAdm
         items: fixture.escalations,
         nextCursor: null,
         hasMore: false,
+        unacknowledged: 2,
         undelivered: 2,
+        webhookConfigured: true,
       }),
+    acknowledgeEscalation: (id) => {
+      const found = fixture.escalations.find((each) => each.id === id) ?? fixture.escalations[0];
+      if (found === undefined) return Promise.reject(new Error('no escalation'));
+      return Promise.resolve({ ...found, acknowledgedAt: found.raisedAt });
+    },
     search: () =>
       Promise.resolve({ items: fixture.searchResults, nextCursor: null, hasMore: false }),
 
     attachmentHref: (id) => `/api/admin/attachments/${id}`,
+    exportUrl: (kind, id, format) => `/api/admin/${kind}s/${id}/export?format=${format}`,
   };
   return { ...base, ...overrides };
 }
@@ -111,7 +143,9 @@ export function fixtureApi(overrides: Partial<DogparkAdminApi> = {}): DogparkAdm
 export const withDogpark: Decorator = (Story, context) => {
   const api = (context.parameters['api'] as DogparkAdminApi | undefined) ?? fixtureApi();
   return (
-    <AppProvider value={{ api, session: { displayName: 'pete' }, logout: () => {} }}>
+    <AppProvider
+      value={{ api, session: { displayName: 'pete', examplePassword: false }, logout: () => {} }}
+    >
       <ToastHost>
         <div className="content" style={{ height: '100%' }}>
           <Story />

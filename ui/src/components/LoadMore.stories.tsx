@@ -42,12 +42,15 @@ type Story = StoryObj<typeof meta>;
 
 export const More: Story = {
   args: { pages: pages() },
+  parameters: { expectText: ['More results'] },
 };
 
 export const Loading: Story = {
   args: { pages: pages({ busy: true }) },
+  parameters: { expectText: ['Loading'] },
 };
 
 export const Failed: Story = {
   args: { pages: pages({ moreFailed: true }) },
+  parameters: { expectText: ['That did not load. Try again.'] },
 };

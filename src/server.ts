@@ -70,9 +70,10 @@ async function main(): Promise<void> {
   }
 
   const config = loadConfig();
-  // Every interface when a proxy is in front, loopback when nothing is — the
-  // one place plaintext is honest (ADR-0016).
-  const binding = { host: config.behindProxy ? '0.0.0.0' : '127.0.0.1' };
+  // `DOGPARK_HOST` decides the interfaces; the default is every one, the only
+  // default that reaches a container. On a source build with no proxy,
+  // `DOGPARK_HOST=127.0.0.1` keeps plaintext off the network (ADR-0016).
+  const binding = { host: config.listenHost };
 
   const store = openStore({
     file: join(config.DOGPARK_DATA_DIR, 'dogpark.sqlite'),
@@ -111,19 +112,33 @@ async function main(): Promise<void> {
       'the admin password changed; existing sessions are revoked',
     );
   }
+  // The full example-password verdict `buildApp` computed (scrypt included),
+  // decorated onto the instance so this warning matches what the session routes
+  // report and the banner shows.
+  if (app.examplePassword) {
+    app.log.warn(
+      "DOGPARK_PASSWORD_HASH is unlocked by the README's example password: anyone who has read it can log in. " +
+        'Set it to a hash of your own password and restart; mint one with hash-password ' +
+        '(see README.md).',
+    );
+  }
   if (config.behindProxy) {
     // A direct caller is refused, but not before its credentials have crossed
     // the network in the clear (ADR-0016).
     app.log.warn(
       { host: binding.host, trustedProxies: config.trustProxy },
-      'listening on every interface because a proxy is declared: publish this port only to ' +
-        'that proxy, or anything that can reach it speaks to Dogpark directly, in plaintext',
+      'a proxy is declared: publish this port only to that proxy, or anything that can ' +
+        'reach it speaks to Dogpark directly, in plaintext',
     );
   } else {
     app.log.warn(
-      'DOGPARK_TRUST_PROXY=no: listening on loopback only and issuing non-Secure ' +
-        "session cookies. Set it to the proxy's address when a TLS-terminating proxy " +
-        'is in front.',
+      { host: binding.host },
+      'DOGPARK_TRUST_PROXY=no: no proxy declared, so X-Forwarded-* is ignored, session ' +
+        'cookies are not Secure, and plaintext is accepted. This binds ' +
+        `${binding.host}; keep plaintext off the network by publishing the port to a ` +
+        "laptop's 127.0.0.1, or set DOGPARK_HOST=127.0.0.1 on a source build with no " +
+        "publish. Set DOGPARK_TRUST_PROXY to the proxy's address when a TLS-terminating " +
+        'proxy is in front.',
     );
   }
 

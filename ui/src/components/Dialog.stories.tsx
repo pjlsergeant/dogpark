@@ -18,6 +18,7 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Plain: Story = {
+  parameters: { expectText: ['Remove dp3 from delivery'] },
   args: {
     title: 'Remove dp3 from delivery',
     children: (
@@ -31,6 +32,7 @@ export const Plain: Story = {
 
 /** The wide one, which is what the once-only key reveal uses. */
 export const Wide: Story = {
+  parameters: { expectText: ['This is the only time this key is shown.'] },
   args: {
     title: 'Key for dp4',
     wide: true,
@@ -51,6 +53,8 @@ export const Wide: Story = {
 
 /** Enough content to push the body past the viewport. */
 export const Long: Story = {
+  // The last shortcut proves the whole overflowing list rendered, not just its head.
+  parameters: { expectText: ['Shortcut 24'] },
   args: {
     title: 'Keyboard',
     children: (

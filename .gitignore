@@ -3,6 +3,9 @@ dist/
 storybook-static/
 *.tsbuildinfo
 
+# Coverage reports from `npm run test:coverage`.
+coverage/
+
 .env
 .env.*
 !.env.example

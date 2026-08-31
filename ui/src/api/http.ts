@@ -4,30 +4,35 @@
  * Session is an `HttpOnly` cookie the app never touches. The CSRF token
  * minted alongside it is held here, in memory, and sent as `X-CSRF-Token` on
  * every state-changing request (docs/http-api.md).
+ *
+ * Responses are decoded through the protocol's own response schemas
+ * (`src/types.ts`). In dev the body is `.parse`d — a mismatch fails loudly,
+ * close to its cause; in prod the schema is only a type, cast onto the body
+ * with no zod on the hot path.
  */
+import { z } from 'zod';
+import {
+  AdminAgentSchema,
+  ChangesResponseSchema,
+  ConversationSchema,
+  ConversationAnnotationsSchema,
+  ConversationSummarySchema,
+  EscalationSchema,
+  EscalationsResponseSchema,
+  HumanCatchUpPageSchema,
+  IssuedKeySchema,
+  MessagePageSchema,
+  PostResultSchema,
+  ReadLogEntrySchema,
+  ReadLogPageSchema,
+  SearchResponseSchema,
+  SessionCredentialsSchema,
+  SpaceSchema,
+  SpaceMembersSchema,
+  SpaceSummarySchema,
+} from '../../../src/types.js';
 import type { DogparkAdminApi } from './api.js';
-import type {
-  AdminAgent,
-  AttachmentId,
-  Conversation,
-  ConversationSummary,
-  Escalation,
-  EscalationFilter,
-  HumanPostRequest,
-  HumanPostResult,
-  IssuedKey,
-  Message,
-  MessagePage,
-  Page,
-  ReadLogEntry,
-  ReadLogFilter,
-  SearchQuery,
-  SearchResult,
-  SessionCredentials,
-  Space,
-  SpaceSummary,
-  SpaceMembers,
-} from './types.js';
+import type { AttachmentId, HumanPostRequest, Page, ReadLogEntry, SearchQuery } from './types.js';
 import { ApiError } from './types.js';
 
 const BASE = '/api/admin';
@@ -42,6 +47,15 @@ interface RequestOptions {
   readonly softFail?: readonly number[] | undefined;
   /** For a request that may be abandoned, such as a long poll on a tab going to the background. */
   readonly signal?: AbortSignal | undefined;
+}
+
+/**
+ * The decode policy in one place: parse in dev, cast in prod. The schema is the
+ * type's source either way, so a route that threads the wrong one is a compile
+ * error whether or not zod runs.
+ */
+function decode<T>(schema: z.ZodType<T>, value: unknown): T {
+  return import.meta.env.DEV ? schema.parse(value) : (value as T);
 }
 
 /** Errors are `{ code, message, retryAfterSeconds? }` — anything else is ours. */
@@ -68,14 +82,12 @@ function toApiError(status: number, body: unknown, fallback: string): ApiError {
   });
 }
 
-/** A `{ <key>, nextCursor, hasMore }` envelope (docs/http-api.md). */
-function toPage<T>(raw: unknown, key: string): Page<T> {
-  const record = raw as Record<string, unknown>;
-  return {
-    items: record[key] as T[],
-    nextCursor: typeof record['nextCursor'] === 'string' ? record['nextCursor'] : null,
-    hasMore: record['hasMore'] === true,
-  };
+/** A `{ <key>, nextCursor, hasMore }` envelope collapses to one generic page. */
+function pageOf<T>(
+  envelope: { readonly nextCursor: string | null; readonly hasMore: boolean },
+  items: readonly T[],
+): Page<T> {
+  return { items, nextCursor: envelope.nextCursor, hasMore: envelope.hasMore };
 }
 
 export function createHttpApi(): DogparkAdminApi {
@@ -140,20 +152,17 @@ export function createHttpApi(): DogparkAdminApi {
 
   return {
     async login(password) {
-      const raw = (await request('POST', '/session', { json: { password } })) as Record<
-        string,
-        unknown
-      > | null;
-      const token = raw !== null && typeof raw['csrfToken'] === 'string' ? raw['csrfToken'] : null;
-      if (token === null) {
+      const raw = await request('POST', '/session', { json: { password } });
+      const record = (raw ?? {}) as Record<string, unknown>;
+      if (typeof record['csrfToken'] !== 'string') {
         throw new ApiError({
           code: 'unknown',
           message: 'The server accepted the password but returned no CSRF token.',
           status: 200,
         });
       }
-      csrfToken = token;
-      return raw as unknown as SessionCredentials;
+      csrfToken = record['csrfToken'];
+      return decode(SessionCredentialsSchema, raw);
     },
 
     /**
@@ -162,13 +171,11 @@ export function createHttpApi(): DogparkAdminApi {
      */
     async resume() {
       try {
-        const raw = (await request('GET', '/session', { softFail: [401] })) as Record<
-          string,
-          unknown
-        > | null;
-        if (raw === null || typeof raw['csrfToken'] !== 'string') return null;
-        csrfToken = raw['csrfToken'];
-        return raw as unknown as SessionCredentials;
+        const raw = await request('GET', '/session', { softFail: [401] });
+        const record = raw as Record<string, unknown> | null;
+        if (record === null || typeof record['csrfToken'] !== 'string') return null;
+        csrfToken = record['csrfToken'];
+        return decode(SessionCredentialsSchema, raw);
       } catch {
         return null;
       }
@@ -180,26 +187,31 @@ export function createHttpApi(): DogparkAdminApi {
     },
 
     async listSpaces() {
-      return (await request('GET', '/spaces')) as SpaceSummary[];
+      return decode(z.array(SpaceSummarySchema), await request('GET', '/spaces'));
     },
     async awaitChanges(after, waitSeconds, signal) {
-      const raw = (await request('GET', '/changes', {
-        query: { after, waitSeconds },
-        signal,
-      })) as { version: string };
+      const raw = decode(
+        ChangesResponseSchema,
+        await request('GET', '/changes', { query: { after, waitSeconds }, signal }),
+      );
       return raw.version;
     },
     async createSpace(name) {
-      return (await request('POST', '/spaces', { json: { name } })) as Space;
+      return decode(SpaceSchema, await request('POST', '/spaces', { json: { name } }));
     },
     async renameSpace(id, name) {
       await request('PATCH', `/spaces/${encodeURIComponent(id)}`, { json: { name } });
     },
+    async setSpaceDescription(id, description) {
+      await request('PUT', `/spaces/${encodeURIComponent(id)}/description`, {
+        json: { description },
+      });
+    },
     async listMembers(id) {
-      return (await request(
-        'GET',
-        `/spaces/${encodeURIComponent(id)}/members`,
-      )) as unknown as SpaceMembers;
+      return decode(
+        SpaceMembersSchema,
+        await request('GET', `/spaces/${encodeURIComponent(id)}/members`),
+      );
     },
     async addMember(space, agent) {
       await request(
@@ -215,18 +227,33 @@ export function createHttpApi(): DogparkAdminApi {
     },
 
     async listAgents() {
-      return (await request('GET', '/agents')) as AdminAgent[];
+      return decode(z.array(AdminAgentSchema), await request('GET', '/agents'));
     },
     async createAgent(name) {
-      return (await request('POST', '/agents', { json: { name } })) as IssuedKey;
+      return decode(IssuedKeySchema, await request('POST', '/agents', { json: { name } }));
     },
     async renameAgent(id, name) {
       await request('PATCH', `/agents/${encodeURIComponent(id)}`, { json: { name } });
     },
+    async setAgentDescription(id, description) {
+      await request('PUT', `/agents/${encodeURIComponent(id)}/description`, {
+        json: { description },
+      });
+    },
+    async setMembershipNote(space, agent, description) {
+      await request(
+        'PUT',
+        `/spaces/${encodeURIComponent(space)}/members/${encodeURIComponent(agent)}/note`,
+        { json: { description } },
+      );
+    },
     async issueKey(id, label) {
-      return (await request('POST', `/agents/${encodeURIComponent(id)}/keys`, {
-        json: label === undefined ? {} : { label },
-      })) as IssuedKey;
+      return decode(
+        IssuedKeySchema,
+        await request('POST', `/agents/${encodeURIComponent(id)}/keys`, {
+          json: label === undefined ? {} : { label },
+        }),
+      );
     },
     async revokeKey(agent, keyId) {
       await request(
@@ -238,34 +265,42 @@ export function createHttpApi(): DogparkAdminApi {
       await request('POST', `/agents/${encodeURIComponent(id)}/archive`);
     },
     async unarchiveAgent(id) {
-      return (await request('POST', `/agents/${encodeURIComponent(id)}/unarchive`)) as IssuedKey;
+      return decode(
+        IssuedKeySchema,
+        await request('POST', `/agents/${encodeURIComponent(id)}/unarchive`),
+      );
     },
 
     async listConversations(space) {
-      return (await request(
-        'GET',
-        `/spaces/${encodeURIComponent(space)}/conversations`,
-      )) as ConversationSummary[];
+      return decode(
+        z.array(ConversationSummarySchema),
+        await request('GET', `/spaces/${encodeURIComponent(space)}/conversations`),
+      );
+    },
+    async listCatchUp(after) {
+      return decode(
+        HumanCatchUpPageSchema,
+        await request('GET', '/catch-up', { query: { after } }),
+      );
+    },
+    async advanceReadMark(conversation, message) {
+      await request('POST', '/read-mark', { json: { conversation, message } });
     },
     async renameConversation(id, title) {
-      return (await request('PATCH', `/conversations/${encodeURIComponent(id)}`, {
-        json: { title },
-      })) as Conversation;
+      return decode(
+        ConversationSchema,
+        await request('PATCH', `/conversations/${encodeURIComponent(id)}`, { json: { title } }),
+      );
     },
     async readConversation(id, query) {
       const path =
         query?.asOf === undefined
           ? `/conversations/${encodeURIComponent(id)}/messages`
           : `/reads/${encodeURIComponent(query.asOf)}/conversations/${encodeURIComponent(id)}/messages`;
-      const raw = (await request('GET', path, {
-        query: { after: query?.after, order: query?.order },
-      })) as Record<string, unknown> | null;
-      const page = toPage<Message>(raw, 'messages');
-      return {
-        messages: page.items,
-        nextCursor: page.nextCursor as MessagePage['nextCursor'],
-        hasMore: page.hasMore,
-      };
+      return decode(
+        MessagePageSchema,
+        await request('GET', path, { query: { after: query?.after, order: query?.order } }),
+      );
     },
     async post(request_: HumanPostRequest) {
       const { files, ...rest } = request_;
@@ -273,42 +308,91 @@ export function createHttpApi(): DogparkAdminApi {
         const form = new FormData();
         form.append('request', JSON.stringify(rest));
         for (const file of files) form.append('files', file, file.name);
-        return (await request('POST', '/messages', { form })) as HumanPostResult;
+        return decode(PostResultSchema, await request('POST', '/messages', { form }));
       }
-      return (await request('POST', '/messages', { json: rest })) as HumanPostResult;
+      return decode(PostResultSchema, await request('POST', '/messages', { json: rest }));
+    },
+    async completeConversation(id, idempotencyKey) {
+      return decode(
+        ConversationAnnotationsSchema,
+        await request('POST', `/conversations/${encodeURIComponent(id)}/complete`, {
+          json: { idempotencyKey },
+        }),
+      );
+    },
+    async reopenConversation(id, idempotencyKey) {
+      return decode(
+        ConversationAnnotationsSchema,
+        await request('POST', `/conversations/${encodeURIComponent(id)}/reopen`, {
+          json: { idempotencyKey },
+        }),
+      );
+    },
+    async pinMessage(id, message, idempotencyKey) {
+      return decode(
+        ConversationAnnotationsSchema,
+        await request('POST', `/conversations/${encodeURIComponent(id)}/pin`, {
+          json: { messageId: message, idempotencyKey },
+        }),
+      );
+    },
+    async unpinConversation(id, idempotencyKey) {
+      return decode(
+        ConversationAnnotationsSchema,
+        await request('POST', `/conversations/${encodeURIComponent(id)}/unpin`, {
+          json: { idempotencyKey },
+        }),
+      );
     },
 
-    async listReads(filter?: ReadLogFilter) {
-      return toPage<ReadLogEntry>(
+    async listReads(filter) {
+      const raw = decode(
+        ReadLogPageSchema,
         await request('GET', '/reads', {
           query: { agent: filter?.agent, after: filter?.after, limit: filter?.limit },
         }),
-        'reads',
       );
+      return pageOf<ReadLogEntry>(raw, raw.reads);
     },
     async getRead(id: string) {
-      return (await request('GET', `/reads/${encodeURIComponent(id)}`)) as ReadLogEntry;
+      return decode(ReadLogEntrySchema, await request('GET', `/reads/${encodeURIComponent(id)}`));
     },
-    async listEscalations(filter?: EscalationFilter) {
-      const raw = await request('GET', '/escalations', {
-        query: { order: filter?.order, after: filter?.after, limit: filter?.limit },
-      });
+    async listEscalations(filter) {
+      const raw = decode(
+        EscalationsResponseSchema,
+        await request('GET', '/escalations', {
+          query: { order: filter?.order, after: filter?.after, limit: filter?.limit },
+        }),
+      );
       return {
-        ...toPage<Escalation>(raw, 'escalations'),
-        undelivered: (raw as { undelivered: number }).undelivered,
+        ...pageOf(raw, raw.escalations),
+        unacknowledged: raw.unacknowledged,
+        undelivered: raw.undelivered,
+        webhookConfigured: raw.webhookConfigured,
       };
     },
+    async acknowledgeEscalation(id) {
+      return decode(
+        EscalationSchema,
+        await request('POST', `/escalations/${encodeURIComponent(id)}/ack`),
+      );
+    },
     async search(query: SearchQuery) {
-      return toPage<SearchResult>(
+      const raw = decode(
+        SearchResponseSchema,
         await request('GET', '/search', {
           query: { q: query.q, space: query.space, order: query.order, after: query.after },
         }),
-        'results',
       );
+      return pageOf(raw, raw.results);
     },
 
     attachmentHref(id: AttachmentId) {
       return `${BASE}/attachments/${encodeURIComponent(id)}`;
+    },
+    exportUrl(kind, id, format) {
+      const collection = kind === 'conversation' ? 'conversations' : 'spaces';
+      return `${BASE}/${collection}/${encodeURIComponent(id)}/export?format=${format}`;
     },
   };
 }

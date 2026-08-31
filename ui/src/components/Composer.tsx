@@ -11,9 +11,9 @@
  *   `identity()` is agent-only -- so this checks for C0 control characters
  *   generally and warns rather than pretending to know.
  */
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import type { ConversationId, SpaceId } from '../api/index.js';
+import type { ConversationAnnotations, ConversationId, SpaceId } from '../api/index.js';
 import { useApi } from '../app/api-context.js';
 import { idempotencyKey, bytes } from '../app/format.js';
 import { Markdown } from '../markdown/Markdown.js';
@@ -33,10 +33,28 @@ export function Composer({
   space,
   conversation,
   onPosted,
+  runAnnotationAction,
+  onAnnotations,
+  annotations,
 }: {
   space: SpaceId;
   conversation?: ConversationId | undefined;
   onPosted: (conversation: ConversationId) => void;
+  /**
+   * A post that completes or pins, and the inline Reopen, change annotations
+   * like the thread's own buttons do, so they run through the thread's action
+   * queue: one such request in flight at a time, in the order they were made,
+   * so the last answer is the server's last word.
+   */
+  runAnnotationAction?: (<T>(action: () => Promise<T>) => Promise<T>) | undefined;
+  onAnnotations?: ((annotations: ConversationAnnotations) => void) | undefined;
+  /**
+   * The thread's current annotation state, a new object on every arrival —
+   * so the composer hears what the thread hears: the completion notice shows
+   * only while the thread is still complete, and an unresolved inline Reopen
+   * is retired the moment newer state lands, as the thread's own attempts are.
+   */
+  annotations?: ConversationAnnotations | undefined;
 }): ReactNode {
   const api = useApi();
   const notify = useNotify();
@@ -44,10 +62,23 @@ export function Composer({
   const [body, setBody] = useState('');
   const [files, setFiles] = useState<readonly File[]>([]);
   const [preview, setPreview] = useState(false);
+  /**
+   * A draft being sent is not editable: the post may wait its turn behind
+   * another action, and edits made meanwhile would be wiped when it lands.
+   */
   const [busy, setBusy] = useState(false);
+  const [complete, setComplete] = useState(false);
+  const [pin, setPin] = useState(false);
+  const [completeNotice, setCompleteNotice] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   /** The draft's key; null until it is first sent, and again once it lands. */
   const draftKey = useRef<string | null>(null);
+  /** The inline Reopen's key, kept across a failed attempt like the draft's. */
+  const reopenKey = useRef<string | null>(null);
+  useEffect(() => {
+    reopenKey.current = null;
+  }, [annotations]);
+  const stillComplete = annotations === undefined || annotations.status === 'complete';
 
   const newThread = conversation === undefined;
   const hasControl = hasControlCharacter(body) || hasControlCharacter(title);
@@ -64,31 +95,61 @@ export function Composer({
   const editBody = edit(setBody);
   const editTitle = edit(setTitle);
   const editFiles = edit(setFiles);
+  // The flags are part of the request the server hashes under the key, so a
+  // retry with a flag flipped is a different request and needs a fresh key.
+  const editComplete = edit(setComplete);
+  const editPin = edit(setPin);
+  const run = runAnnotationAction ?? (<T,>(action: () => Promise<T>): Promise<T> => action());
 
   const send = useCallback(async () => {
     if (!ready || busy) return;
     setBusy(true);
     draftKey.current ??= idempotencyKey();
+    const key = draftKey.current;
     try {
-      const result = await api.post({
-        target: newThread ? { space, title: title.trim() } : { conversation },
-        body,
-        idempotencyKey: draftKey.current,
-        files: files.length > 0 ? files : undefined,
-      });
+      const result = await run(() =>
+        api.post({
+          target: newThread ? { space, title: title.trim() } : { conversation },
+          body,
+          idempotencyKey: key,
+          files: files.length > 0 ? files : undefined,
+          ...(complete ? { complete: true } : {}),
+          ...(pin ? { pin: true } : {}),
+        }),
+      );
       draftKey.current = null;
       setBody('');
       setTitle('');
       setFiles([]);
       if (fileInput.current !== null) fileInput.current.value = '';
       setPreview(false);
+      setComplete(false);
+      setPin(false);
+      setCompleteNotice(result.annotations.status === 'complete' && !complete);
+      onAnnotations?.(result.annotations);
       onPosted(result.conversation.id);
     } catch (cause) {
       notify('bad', cause instanceof Error ? cause.message : String(cause));
     } finally {
       setBusy(false);
     }
-  }, [api, body, busy, conversation, files, newThread, notify, onPosted, ready, space, title]);
+  }, [
+    api,
+    run,
+    body,
+    busy,
+    complete,
+    conversation,
+    files,
+    newThread,
+    notify,
+    onAnnotations,
+    onPosted,
+    pin,
+    ready,
+    space,
+    title,
+  ]);
 
   return (
     <form
@@ -103,6 +164,7 @@ export function Composer({
           className="composer-title"
           placeholder="Subject line: opens a new thread, or appends to one with this exact title"
           value={title}
+          disabled={busy}
           onChange={(event) => editTitle(event.target.value)}
           aria-label="Conversation title"
         />
@@ -117,6 +179,7 @@ export function Composer({
           className="composer-body"
           placeholder="Write something. Markdown. Cmd/Ctrl + Enter to send."
           value={body}
+          disabled={busy}
           rows={3}
           onChange={(event) => editBody(event.target.value)}
           onKeyDown={(event) => {
@@ -138,6 +201,7 @@ export function Composer({
                 type="button"
                 className="btn btn-quiet"
                 onClick={() => editFiles(files.filter((_, i) => i !== index))}
+                disabled={busy}
                 aria-label={`Remove ${file.name}`}
               >
                 &#10005;
@@ -154,11 +218,37 @@ export function Composer({
         </p>
       )}
 
+      {completeNotice && stillComplete && conversation !== undefined && (
+        <p className="composer-notice">
+          This thread is complete; new messages do not reopen it.{' '}
+          <button
+            type="button"
+            className="link-button"
+            onClick={() => {
+              reopenKey.current ??= idempotencyKey();
+              const key = reopenKey.current;
+              void run(() => api.reopenConversation(conversation, key))
+                .then((annotations) => {
+                  reopenKey.current = null;
+                  setCompleteNotice(false);
+                  onAnnotations?.(annotations);
+                })
+                .catch((cause: unknown) => {
+                  notify('bad', cause instanceof Error ? cause.message : String(cause));
+                });
+            }}
+          >
+            Reopen
+          </button>
+        </p>
+      )}
+
       <div className="composer-actions">
         <input
           ref={fileInput}
           id="composer-files"
           type="file"
+          disabled={busy}
           multiple
           className="visually-hidden"
           onChange={(event) => editFiles(Array.from(event.target.files ?? []))}
@@ -176,6 +266,24 @@ export function Composer({
           {preview ? 'Edit' : 'Preview'}
         </button>
         <span className="spacer" />
+        <label className="composer-option">
+          <input
+            type="checkbox"
+            checked={complete}
+            disabled={busy}
+            onChange={(event) => editComplete(event.target.checked)}
+          />{' '}
+          mark complete
+        </label>
+        <label className="composer-option">
+          <input
+            type="checkbox"
+            checked={pin}
+            disabled={busy}
+            onChange={(event) => editPin(event.target.checked)}
+          />{' '}
+          pin this message
+        </label>
         <button type="submit" className="btn btn-primary" disabled={!ready || busy}>
           {busy ? 'Posting...' : newThread ? 'Start thread' : 'Send'}
         </button>

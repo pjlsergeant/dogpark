@@ -4,11 +4,14 @@ import Database from 'better-sqlite3';
 import type { Database as Db } from 'better-sqlite3';
 import type { AttachmentId, Timestamp } from '../types.js';
 import { agentStore } from './agents.js';
+import { annotationStore } from './annotations.js';
 import { conversationResolver, conversationStore } from './conversations.js';
 import { createContext } from './context.js';
+import { descriptionStore } from './descriptions.js';
 import { escalationStore } from './escalations.js';
 import { newId } from './ids.js';
 import { messageStore } from './messages.js';
+import { humanReadMarkStore } from './human-read-marks.js';
 import { migrate } from './migrate.js';
 import { readLogStore } from './read-log.js';
 import type { Store, StoreOptions } from './records.js';
@@ -21,7 +24,7 @@ export { RESERVED_SEQUENCE } from './text.js';
 // The two pieces of key handling the HTTP layer shares with the store.
 export { constantTimeEquals } from './hash.js';
 export { splitKey } from './ids.js';
-export { MAX_PAGE_LIMIT } from './limits.js';
+export { MAX_DESCRIPTION_CHARS, MAX_PAGE_LIMIT } from './limits.js';
 export { migrate, MIGRATIONS } from './migrate.js';
 export type { Migration, MigrateResult } from './migrate.js';
 export type { EscalationCursor, ReadLogCursor, SearchCursor } from './cursors.js';
@@ -56,6 +59,7 @@ export function openStore(options: StoreOptions): Store {
   const schema = migrate(db, undefined, now);
   const ctx = createContext(db, { now, humanDisplayName });
   const resolveConversation = conversationResolver(ctx);
+  const annotations = annotationStore(ctx);
 
   const base = {
     database: db,
@@ -67,12 +71,30 @@ export function openStore(options: StoreOptions): Store {
   };
   const agents = agentStore(ctx);
   const spaces = spaceStore(ctx);
-  const conversations = conversationStore(ctx, resolveConversation);
-  const messages = messageStore(ctx, resolveConversation);
+  const conversations = conversationStore(
+    ctx,
+    resolveConversation,
+    annotations.getConversationAnnotations,
+  );
+  const messages = messageStore(ctx, resolveConversation, annotations);
   const readLog = readLogStore(ctx);
   const escalations = escalationStore(ctx);
   const sessions = sessionStore(ctx);
-  assertDisjoint(base, agents, spaces, conversations, messages, readLog, escalations, sessions);
+  const descriptions = descriptionStore(ctx);
+  const humanReadMarks = humanReadMarkStore(ctx);
+  assertDisjoint(
+    base,
+    agents,
+    spaces,
+    conversations,
+    messages,
+    readLog,
+    escalations,
+    sessions,
+    descriptions,
+    annotations,
+    humanReadMarks,
+  );
 
   return {
     ...base,
@@ -83,6 +105,9 @@ export function openStore(options: StoreOptions): Store {
     ...readLog,
     ...escalations,
     ...sessions,
+    ...descriptions,
+    ...annotations,
+    ...humanReadMarks,
   };
 }
 

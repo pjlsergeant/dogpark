@@ -23,7 +23,9 @@ export function escalationStore(
   | 'recordEscalation'
   | 'listEscalations'
   | 'countUndeliveredEscalations'
+  | 'countUnacknowledgedEscalations'
   | 'markEscalationNotification'
+  | 'acknowledgeEscalation'
 > {
   const { db, st, now, isCurrentMember } = ctx;
 
@@ -39,6 +41,7 @@ export function escalationStore(
       lastAttemptAt: row.last_attempt_at as Timestamp | null,
       nextAttemptAt: row.next_attempt_at as Timestamp | null,
       lastError: row.last_error,
+      acknowledgedAt: row.acknowledged_at as Timestamp | null,
     };
   }
 
@@ -150,6 +153,23 @@ export function escalationStore(
 
     countUndeliveredEscalations() {
       return st.countUndelivered.get()?.n ?? 0;
+    },
+
+    countUnacknowledgedEscalations() {
+      return st.countUnacknowledged.get()?.n ?? 0;
+    },
+
+    acknowledgeEscalation(escalation) {
+      // A miss is undefined, not an error: the caller (the admin route) turns
+      // it into a 404, the same shape a sibling write uses for an unknown id.
+      if (st.getEscalation.get({ id: escalation }) === undefined) return undefined;
+      // Only the first ack writes the time; the statement's own WHERE makes a
+      // repeat a no-op, so this stays idempotent without reading first.
+      st.acknowledgeEscalation.run({ id: escalation, at: now() });
+      const row = st.getEscalation.get({ id: escalation });
+      /* c8 ignore next */
+      if (row === undefined) throw new Error('escalation vanished');
+      return toEscalation(row);
     },
 
     markEscalationNotification(escalation, state, opts) {

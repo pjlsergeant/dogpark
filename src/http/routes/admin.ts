@@ -1,17 +1,32 @@
-import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
+import type { FastifyInstance, FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { AgentRecord } from '../../store/index.js';
-import type { Agent, AttachmentId } from '../../types.js';
+import type {
+  AdminAgent,
+  Agent,
+  AttachmentId,
+  MessageId,
+  QueryCursor,
+  SpaceSummary,
+} from '../../types.js';
 import { authenticateHuman, csrfTokenFor, requireSession, SESSION_COOKIE } from '../auth.js';
 import type { AppContext } from '../context.js';
 import { notFound, unauthenticated } from '../errors.js';
 import { verifyPassword } from '../password.js';
 import { submitPost } from '../post.js';
 import {
+  conversationExportSource,
+  exportBundle,
+  exportJson,
+  exportMarkdown,
+  exportRootName,
+  spaceExportSource,
+} from '../export.js';
+import { contentDisposition } from '../attachments.js';
+import {
   adminAgent,
   bare,
   conversationRow,
   escalationRow,
-  keySummary,
   readLogRow,
   searchRow,
   spaceMembers,
@@ -20,14 +35,20 @@ import {
   asAgentId,
   asConversationId,
   asEscalationCursor,
-  asMessageId,
+  asIdempotencyKey,
   asReadLogCursor,
   asSearchCursor,
   asSpaceId,
   asTimestamp,
   ChangesQuery,
+  CatchUpQuery,
+  DescriptionBody,
   EscalationsQuery,
+  ExportQuery,
   HumanPostBody,
+  HumanAnnotationActionBody,
+  HumanPinBody,
+  HumanReadMarkBody,
   KeyBody,
   NameBody,
   parse,
@@ -49,8 +70,8 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
     return record;
   };
 
-  const withKeys = (record: AgentRecord): unknown =>
-    adminAgent(record, ctx.store.listKeys(record.id));
+  const withKeys = (record: AgentRecord): AdminAgent =>
+    adminAgent(record, ctx.store.listKeys(record.id), ctx.store.getAgentDescription(record.id));
 
   return async function routes(app: FastifyInstance): Promise<void> {
     // -----------------------------------------------------------------------
@@ -82,6 +103,7 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
       return {
         csrfToken: csrfTokenFor(session.token),
         displayName: ctx.config.DOGPARK_DISPLAY_NAME,
+        examplePassword: ctx.examplePassword,
         expiresAt: session.expiresAt,
       };
     });
@@ -98,6 +120,7 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
         return {
           csrfToken: csrfTokenFor(session.token),
           displayName: ctx.config.DOGPARK_DISPLAY_NAME,
+          examplePassword: ctx.examplePassword,
           expiresAt: session.expiresAt,
         };
       });
@@ -114,7 +137,12 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
       // Spaces and membership
       // ---------------------------------------------------------------------
 
-      guarded.get('/spaces', async () => ctx.store.listSpaceSummaries());
+      guarded.get('/spaces', async (): Promise<readonly SpaceSummary[]> =>
+        ctx.store.listSpaceSummaries().map((space) => {
+          const description = ctx.store.getSpaceDescription(space.id);
+          return { ...space, ...(description === undefined ? {} : { description }) };
+        }),
+      );
 
       /**
        * The human's long poll. A version that moves on every mutation the
@@ -162,6 +190,14 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
         return space;
       });
 
+      guarded.put('/spaces/:id/description', async (request, reply) => {
+        const { id } = request.params as { id: string };
+        const { description } = parse(DescriptionBody, request.body, 'request body');
+        ctx.store.setSpaceDescription(asSpaceId(id), description);
+        ctx.writes.adminOnly();
+        return reply.code(204).send();
+      });
+
       // Titles are mutable and references are what get stored (ADR-0014), so
       // a rename moves no message and breaks no mention.
       guarded.patch('/conversations/:id', async (request) => {
@@ -193,6 +229,14 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
         return reply.code(204).send();
       });
 
+      guarded.put('/spaces/:id/members/:agentId/note', async (request, reply) => {
+        const { id, agentId } = request.params as { id: string; agentId: string };
+        const { description } = parse(DescriptionBody, request.body, 'request body');
+        ctx.store.setMembershipNote(asAgentId(agentId), asSpaceId(id), description);
+        ctx.writes.adminOnly();
+        return reply.code(204).send();
+      });
+
       // ---------------------------------------------------------------------
       // Agents and keys
       // ---------------------------------------------------------------------
@@ -221,12 +265,12 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
         return renamed;
       });
 
-      guarded.get('/agents/:id/keys', async (request) => {
-        // A key that cannot be named cannot be revoked, and the plaintext is
-        // shown once — so the list is ids and dates, never material.
+      guarded.put('/agents/:id/description', async (request, reply) => {
         const { id } = request.params as { id: string };
-        const record = agentOr404(id);
-        return ctx.store.listKeys(record.id).map(keySummary);
+        const { description } = parse(DescriptionBody, request.body, 'request body');
+        ctx.store.setAgentDescription(asAgentId(id), description);
+        ctx.writes.adminOnly();
+        return reply.code(204).send();
       });
 
       guarded.post('/agents/:id/keys', async (request, reply) => {
@@ -281,6 +325,24 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
         return ctx.store.listConversationSummaries(asSpaceId(id)).map(conversationRow);
       });
 
+      guarded.get('/catch-up', async (request) => {
+        const query = parse(CatchUpQuery, request.query, 'query');
+        return ctx.store.listHumanCatchUp({
+          ...(query.after === undefined ? {} : { after: query.after as QueryCursor }),
+          limit: ctx.pageLimit(query.limit),
+        });
+      });
+
+      guarded.post('/read-mark', async (request, reply) => {
+        const body = parse(HumanReadMarkBody, request.body, 'request body');
+        const changed = ctx.store.advanceHumanReadMark(
+          asConversationId(body.conversation),
+          body.message as MessageId,
+        );
+        if (changed) ctx.writes.adminOnly();
+        return reply.code(204).send();
+      });
+
       guarded.get('/conversations/:id/messages', async (request) => {
         const { id } = request.params as { id: string };
         const query = parse(RangeQuery, request.query, 'query');
@@ -294,9 +356,82 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
 
       guarded.post('/messages', async (request) => submitPost(ctx, request, HumanPostBody, HUMAN));
 
+      const humanAction = (
+        kind: 'complete' | 'reopen' | 'unpin',
+        run: (
+          conversation: ReturnType<typeof asConversationId>,
+          key?: ReturnType<typeof asIdempotencyKey>,
+        ) => boolean,
+      ) => {
+        guarded.post(`/conversations/:id/${kind}`, async (request) => {
+          const { id } = request.params as { id: string };
+          const body = parse(HumanAnnotationActionBody, request.body ?? {}, 'request body');
+          const changed = run(
+            asConversationId(id),
+            body.idempotencyKey === undefined ? undefined : asIdempotencyKey(body.idempotencyKey),
+          );
+          if (changed) ctx.writes.adminOnly();
+          return ctx.store.getConversationAnnotations(asConversationId(id));
+        });
+      };
+      humanAction('complete', (conversation, key) =>
+        ctx.store.completeConversation(HUMAN, conversation, key),
+      );
+      humanAction('reopen', (conversation, key) =>
+        ctx.store.reopenConversation(HUMAN, conversation, key),
+      );
+      humanAction('unpin', (conversation, key) =>
+        ctx.store.unpinConversation(HUMAN, conversation, key),
+      );
+      guarded.post('/conversations/:id/pin', async (request) => {
+        const { id } = request.params as { id: string };
+        const body = parse(HumanPinBody, request.body, 'request body');
+        const changed = ctx.store.pinMessage(
+          HUMAN,
+          asConversationId(id),
+          body.messageId as MessageId,
+          body.idempotencyKey === undefined ? undefined : asIdempotencyKey(body.idempotencyKey),
+        );
+        if (changed) ctx.writes.adminOnly();
+        return ctx.store.getConversationAnnotations(asConversationId(id));
+      });
+
       guarded.get('/attachments/:id', async (request, reply) => {
         const { id } = request.params as { id: string };
         return sendAttachment(ctx, HUMAN, id as AttachmentId, reply);
+      });
+
+      // -------------------------------------------------------------------
+      // Human exports. They render current labels and deliberately bypass the
+      // agent read log; bundles stream both generated documents and file bytes.
+      // -------------------------------------------------------------------
+
+      const sendExport = async (
+        source: ReturnType<typeof conversationExportSource>,
+        request: { readonly query: unknown },
+        reply: FastifyReply,
+      ) => {
+        const { format } = parse(ExportQuery, request.query, 'query');
+        const root = exportRootName(source);
+        const extension = format === 'markdown' ? 'md' : format === 'json' ? 'json' : 'zip';
+        reply.header('content-disposition', contentDisposition(`${root}.${extension}`));
+        if (format === 'markdown') {
+          return reply.type('text/markdown; charset=utf-8').send(exportMarkdown(ctx, source));
+        }
+        if (format === 'json') {
+          return reply.type('application/json').send(exportJson(ctx, source));
+        }
+        return reply.type('application/zip').send(exportBundle(ctx, source, root));
+      };
+
+      guarded.get('/conversations/:id/export', async (request, reply) => {
+        const { id } = request.params as { id: string };
+        return sendExport(conversationExportSource(ctx, asConversationId(id)), request, reply);
+      });
+
+      guarded.get('/spaces/:id/export', async (request, reply) => {
+        const { id } = request.params as { id: string };
+        return sendExport(spaceExportSource(ctx, asSpaceId(id)), request, reply);
       });
 
       // ---------------------------------------------------------------------
@@ -355,22 +490,12 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
       });
 
       /**
-       * One message with the labels in force when a read-log row was written
-       * (`Store.renderAsOfRead`). A label snapshot only: whether the message
-       * was on that page is not checked here — the row's kind, parameters and
-       * cursor answer that. Either id unknown is `not_found`.
-       */
-      guarded.get('/reads/:id/messages/:messageId', async (request) => {
-        const { id, messageId } = request.params as { id: string; messageId: string };
-        const rendered = ctx.store.renderAsOfRead(asMessageId(messageId), id);
-        if (rendered === undefined) throw notFound('read or message');
-        return rendered;
-      });
-
-      /**
        * The inbox, newest first unless asked otherwise, paged like the read
-       * log. `undelivered` is counted over the whole table, so the badge is
-       * right whatever page is showing.
+       * log. Both counts are over the whole table, so a badge is right whatever
+       * page is showing. `unacknowledged` is the headline — what still wants a
+       * human — and `undelivered` is delivery detail beside it. `webhookConfigured`
+       * lets the UI drop delivery state entirely: without a webhook it is
+       * meaningless noise, since nothing was ever going to be sent.
        */
       guarded.get('/escalations', async (request) => {
         const query = parse(EscalationsQuery, request.query, 'query');
@@ -384,8 +509,23 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
           escalations: page.escalations.map((record) => escalationRow(ctx.store, cache, record)),
           nextCursor: page.nextCursor,
           hasMore: page.hasMore,
+          unacknowledged: ctx.store.countUnacknowledgedEscalations(),
           undelivered: ctx.store.countUndeliveredEscalations(),
+          webhookConfigured: ctx.config.DOGPARK_WEBHOOK_URL !== undefined,
         };
+      });
+
+      /**
+       * Settle an escalation: the human has seen it and it drops out of the
+       * headline count. Idempotent, so a double-click is harmless, and a
+       * change the UI shows, so the badge and the row refresh.
+       */
+      guarded.post('/escalations/:id/ack', async (request) => {
+        const { id } = request.params as { id: string };
+        const record = ctx.store.acknowledgeEscalation(id);
+        if (record === undefined) throw notFound('escalation');
+        ctx.writes.adminOnly();
+        return escalationRow(ctx.store, new Map<string, Agent>(), record);
       });
 
       // The store turns FTS5's own parse failure into `invalid_request` — the

@@ -6,6 +6,7 @@ import Database from 'better-sqlite3';
 import type {
   AgentId,
   AttachmentId,
+  ConversationAnnotations,
   ConversationId,
   MessageId,
   MessagePage,
@@ -36,6 +37,7 @@ import type {
   PostMessageResult,
   Reader,
   ReadStreamArgs,
+  SnapshotPosition,
   Store,
 } from './records.js';
 import { createRenderer } from './render.js';
@@ -70,6 +72,13 @@ function writerOf(sender: { readonly kind: 'agent' | 'human'; readonly id?: Agen
 export function messageStore(
   ctx: StoreContext,
   resolveConversation: ConversationResolver,
+  annotations: Pick<
+    Store,
+    | 'getConversationAnnotations'
+    | 'getConversationAnnotationsAsOf'
+    | 'completeConversation'
+    | 'pinMessage'
+  >,
 ): Pick<
   Store,
   | 'postMessage'
@@ -78,8 +87,8 @@ export function messageStore(
   | 'readSpace'
   | 'searchMessages'
   | 'getAttachment'
-  | 'renderAsOfRead'
   | 'readConversationAsOf'
+  | 'snapshotPosition'
 > {
   const { db, st, now, nextSeq, toConversation, requireAgentRow, isCurrentMember } = ctx;
   const { newRenderCache, mentionName, toMessage, toEvent } = createRenderer(ctx);
@@ -121,6 +130,7 @@ export function messageStore(
       message: toMessage(row, cache),
       conversation: toConversation(conversation),
       created,
+      annotations: annotations.getConversationAnnotations(conversation.id as ConversationId),
     };
   }
 
@@ -160,6 +170,8 @@ export function messageStore(
         sizeBytes: a.sizeBytes,
         contentDigest: a.contentDigest ?? null,
       })),
+      complete: input.complete ?? false,
+      pin: input.pin ?? false,
     });
 
     if (input.idempotencyKey !== undefined) {
@@ -241,6 +253,13 @@ export function messageStore(
         size: attachment.sizeBytes,
         at,
       });
+    }
+
+    if (input.complete === true) {
+      annotations.completeConversation(sender, conversationRow.id as ConversationId);
+    }
+    if (input.pin === true) {
+      annotations.pinMessage(sender, conversationRow.id as ConversationId, id as MessageId);
     }
 
     // Same transaction as the write itself: a key never exists without its
@@ -379,6 +398,7 @@ export function messageStore(
     rows: readonly MessageRow[],
     plan: QueryPlan,
     cache: RenderCache = newRenderCache(),
+    annotationState?: ConversationAnnotations,
   ): MessagePage {
     const hasMore = rows.length > plan.limit;
     const page = rows.slice(0, plan.limit);
@@ -387,6 +407,7 @@ export function messageStore(
       messages: page.map((row) => toMessage(row, cache)),
       nextCursor: encodeQueryCursor(lastSeq),
       hasMore,
+      ...(annotationState === undefined ? {} : { annotations: annotationState }),
     };
   }
 
@@ -410,9 +431,23 @@ export function messageStore(
       limit: number | undefined,
     ): MessagePage | undefined => {
       const position = st.readLabelSeq.get({ id: read });
-      if (position === undefined || st.getConversation.get({ id: conversation }) === undefined) {
+      const conversationRow = st.getConversation.get({ id: conversation });
+      if (position === undefined || conversationRow === undefined) {
         return undefined;
       }
+      // What the agent could have seen at the read, not what the thread now
+      // holds: an agent with no membership in the conversation's space at that
+      // moment could see nothing of it, so the reconstruction is not-found
+      // (the admin route treats undefined as such). Tested against the tip the
+      // row recorded when it has one — including a recorded 0, a read taken
+      // before the agent belonged to anything — and against the read's
+      // millisecond for a legacy row that recorded none.
+      const space = conversationRow.space_id as SpaceId;
+      const member =
+        position.tip_seq !== null
+          ? st.membershipAtSeq.get({ agent: position.agent_id, space, tip: position.tip_seq })
+          : st.membershipAtTime.get({ agent: position.agent_id, space, readAt: position.read_at });
+      if (member === undefined) return undefined;
       // Nothing sent after the read: old labels on a message the agent could
       // not have seen would be a fiction. The row records the stream tip, so
       // the bound is exact — a message existed at the read iff its seq is at
@@ -423,20 +458,32 @@ export function messageStore(
       // ceiling is the millisecond after the read, and a message sent later in
       // that same millisecond is included. A recorded 0 is not that row — it
       // is a read of an empty stream, and its exact ceiling is 0.
+      const ceiling = new Date(Date.parse(position.read_at) + 1).toISOString() as Timestamp;
+      // A conversation the read predates is no more visible than a space the
+      // agent was not in: it comes to exist with its first message, so one
+      // with none at the read is not-found, not an empty page that never was.
+      const existed =
+        position.tip_seq !== null
+          ? st.conversationExistedAtSeq.get({ conversation, tip: position.tip_seq })
+          : st.conversationExistedAtTime.get({ conversation, before: ceiling });
+      if (existed === undefined) return undefined;
       let plan;
+      let cutoff: { tip: number } | { before: Timestamp };
       if (position.tip_seq !== null) {
         plan = planQuery(range, limit, position.tip_seq);
+        cutoff = { tip: position.tip_seq };
       } else {
-        const ceiling = new Date(Date.parse(position.read_at) + 1).toISOString() as Timestamp;
         const asked =
           range?.until === undefined ? undefined : normalizeTimestamp('until', range.until);
         const until = asked === undefined || asked > ceiling ? ceiling : asked;
         plan = planQuery({ ...range, until }, limit);
+        cutoff = { before: ceiling };
       }
       return pageMessages(
         conversationRows(conversation, plan),
         plan,
         newRenderCache(position.label_seq),
+        annotations.getConversationAnnotationsAsOf(conversation, cutoff, position.label_seq),
       );
     },
   );
@@ -447,6 +494,7 @@ export function messageStore(
       conversation: ConversationId,
       range: Range | undefined,
       limit: number | undefined,
+      snapshot: SnapshotPosition | undefined,
     ): MessagePage => {
       const row = st.getConversation.get({ id: conversation });
       if (row === undefined) throw notFound('conversation');
@@ -454,8 +502,24 @@ export function messageStore(
       // history here, including what the stream skipped.
       requireReadAccess(reader, row.space_id as SpaceId, 'conversation');
 
-      const plan = planQuery(range, limit);
-      const page = pageMessages(conversationRows(conversation, plan), plan);
+      // A snapshot read renders under the labels in force at its position too,
+      // so a rename landing mid-export cannot split one document against itself.
+      const plan = planQuery(range, limit, snapshot?.tip);
+      const page = {
+        ...pageMessages(
+          conversationRows(conversation, plan),
+          plan,
+          newRenderCache(snapshot?.labelSeq),
+        ),
+        annotations:
+          snapshot === undefined
+            ? annotations.getConversationAnnotations(conversation)
+            : annotations.getConversationAnnotationsAsOf(
+                conversation,
+                { tip: snapshot.tip },
+                snapshot.labelSeq,
+              ),
+      };
       if (reader.kind === 'agent') {
         recordRead(
           ctx,
@@ -513,8 +577,11 @@ export function messageStore(
       return readStreamTx(agent, args ?? {});
     },
 
-    readConversation(reader, conversation, range, limit) {
-      return readConversationTx(reader, conversation, range, limit);
+    readConversation(reader, conversation, range, limit, snapshot) {
+      return readConversationTx(reader, conversation, range, limit, snapshot);
+    },
+    snapshotPosition() {
+      return { tip: tip(), labelSeq: st.currentLabelSeq.get()?.seq ?? 0 };
     },
 
     readSpace(reader, space, range, limit) {
@@ -595,13 +662,6 @@ export function messageStore(
         message: row.message_id as MessageId,
         space: row.space_id as SpaceId,
       };
-    },
-
-    renderAsOfRead(message, read) {
-      const row = st.messageById.get({ id: message });
-      const position = st.readLabelSeq.get({ id: read });
-      if (row === undefined || position === undefined) return undefined;
-      return toMessage(row, newRenderCache(position.label_seq));
     },
 
     readConversationAsOf(read, conversation, range, limit) {

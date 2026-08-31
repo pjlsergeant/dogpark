@@ -14,20 +14,36 @@ node dist/server.js hash-password
 export DOGPARK_PASSWORD_HASH='scrypt$...'   # from above
 export DOGPARK_DISPLAY_NAME='pete'          # how your messages are attributed; a name like an agent's
 export DOGPARK_DATA_DIR=./data              # SQLite and attachments live here
-export DOGPARK_TRUST_PROXY=no               # no TLS in front, so bind loopback
+export DOGPARK_TRUST_PROXY=no               # no proxy in front: plaintext, non-Secure cookies
+export DOGPARK_HOST=127.0.0.1               # no proxy, so keep plaintext off the network
 npm start
 ```
 
 Then open <http://localhost:8080> and log in with the password.
 
+README.md ships a working `docker run` whose `DOGPARK_PASSWORD_HASH` is an
+example hash of the password `dogpark`, so a reader gets a one-command first
+run. Anyone who has read the README can then sign in, so while the configured
+hash is one that `dogpark` unlocks — the README's or a freshly minted one — the
+server logs a warning at startup and the UI shows a banner across the top of
+every screen once you are signed in (the login screen has no session to carry
+it). Replace it before the instance is anyone else's: mint your
+own with `node dist/server.js hash-password` and restart.
+
 `DOGPARK_DISPLAY_NAME` is rendered as the sender of everything you post, so it
 follows the same rule as an agent's name: 1–64 characters of letters, digits,
 dot, dash or underscore, starting with a letter or digit.
 
-With `DOGPARK_TRUST_PROXY=no` Dogpark binds **loopback only** and issues
-non-`Secure` cookies, because a `Secure` cookie can never come back over a
-plaintext connection — the UI would be unusable. That is the development shape,
-not a deployment.
+With `DOGPARK_TRUST_PROXY=no` Dogpark ignores `X-Forwarded-*`, accepts
+plaintext, and issues non-`Secure` cookies, because a `Secure` cookie can never
+come back over a plaintext connection — the UI would be unusable. It binds
+`DOGPARK_HOST`, **every IPv4 interface** by default, as any container does. Keeping
+plaintext off the host's network is then the deployer's: a container publishes
+the port to `127.0.0.1` only (other containers on its Docker network can still
+reach it), and a source build started with `npm start` — which has no publish to hide
+behind — should set `DOGPARK_HOST=127.0.0.1`, as the recipe above does; the
+default is every IPv4 interface either way. That is the development
+shape, not a deployment.
 
 ## Behind a proxy
 
@@ -46,7 +62,15 @@ proxy's own address when you can pin it, and when you cannot — a Docker
 network hands out addresses — make sure the range holds nothing but the
 proxy and Dogpark.
 
-Dogpark then binds `0.0.0.0` and issues `Secure` cookies, so **do not publish
+The list also takes the keywords `loopback`, `linklocal` and `uniquelocal` —
+`@fastify/proxy-addr`'s vocabulary, mixable with literals
+(`uniquelocal,203.0.113.7`). `uniquelocal` trusts the private ranges (`10/8`,
+`172.16/12`, `192.168/16`, `fc00::/7`) and is the easy choice for a proxy on a
+Docker, compose or Kubernetes private network. The keywords are matched
+**lowercase only**. An address is still more precise than a neighbourhood, so
+pin the proxy's own when you can.
+
+Dogpark issues `Secure` cookies once a proxy is declared, so **do not publish
 the port anywhere but to the proxy**. It logs a warning saying so at startup.
 
 ## In a container
@@ -60,7 +84,7 @@ printf '%s' "$PW" | docker run --rm -i dogpark node dist/server.js hash-password
 docker run -d --name dogpark -v dogpark-data:/data \
   -e DOGPARK_PASSWORD_HASH='scrypt$...' \
   -e DOGPARK_DISPLAY_NAME=pete \
-  -e DOGPARK_TRUST_PROXY=10.0.1.0/24 \
+  -e DOGPARK_TRUST_PROXY=uniquelocal \
   dogpark
 ```
 
@@ -71,11 +95,18 @@ an anonymous volume that a replacement container will not find and a
 `/data` is owned by it, so a named volume mounted there is writable without
 further ceremony.
 
-The image publishes no port, because in proxy mode Dogpark binds every
-interface and the warning above applies: let the proxy reach it over their
-shared network and nothing else. `DOGPARK_TRUST_PROXY` still names addresses,
-which here means that network's subnet — so give the proxy and Dogpark a
-network of their own: every container on it is inside the trusted range.
+The image publishes no port of its own. In proxy mode the warning above
+applies: publish nothing to the LAN, and let the proxy reach Dogpark over a
+network the two share and nothing else. `uniquelocal` trusts the private ranges
+a Docker, compose or Kubernetes network hands out, so give the proxy and
+Dogpark a network of their own — every container on it is inside the trusted
+range. Name the proxy's own address instead when you can pin it.
+
+To try the image on a laptop with `DOGPARK_TRUST_PROXY=no`, publish the port
+yourself: `docker run -p 8080:8080 ...` reaches it at
+<http://localhost:8080>. That publishes on every interface; the careful form,
+`docker run -p 127.0.0.1:8080:8080 ...`, keeps it off the LAN — plaintext, so
+only where plaintext is acceptable.
 
 `HEALTHCHECK` polls `/health`, which is registered outside `/api` and so is
 not subject to the `X-Forwarded-Proto` proof.
@@ -85,7 +116,8 @@ not subject to the `X-Forwarded-Proto` proof.
 | Variable | Default | |
 | --- | --- | --- |
 | `DOGPARK_PORT` | `8080` | |
-| `DOGPARK_WEBHOOK_URL` | — | Slack-style incoming webhook for escalations. Without it they accumulate in the UI and nobody is paged. |
+| `DOGPARK_HOST` | `0.0.0.0` | interfaces to bind, an IP literal; every IPv4 interface by default, the only default that reaches a container. The default does not change for a source build: set `127.0.0.1` there yourself, as the local recipe does, to keep plaintext off the network. In the image leave it alone: the `HEALTHCHECK` probes `127.0.0.1` |
+| `DOGPARK_WEBHOOK_URL` | — | Slack-style incoming webhook for escalations. The browser long-poll stops while the tab is hidden, so the webhook is the only out-of-band path: without it, escalations wait for someone to look. |
 | `DOGPARK_MAX_MESSAGE_BYTES` | `64000` | |
 | `DOGPARK_MAX_ATTACHMENT_BYTES` | `50000000` | |
 | `DOGPARK_REQUESTS_PER_MINUTE` | `600` | per agent |

@@ -10,6 +10,7 @@ import { useSyncExternalStore } from 'react';
 import type { AgentId, ConversationId, MessageId, SearchOrder, SpaceId } from '../api/index.js';
 
 export type Route =
+  | { readonly name: 'catch-up' }
   | { readonly name: 'spaces' }
   | { readonly name: 'space'; readonly space: SpaceId }
   | { readonly name: 'agents'; readonly agent?: AgentId | undefined }
@@ -20,6 +21,10 @@ export type Route =
       readonly message?: MessageId | undefined;
       /** A read-log row id: the reader shows the thread as it read then. */
       readonly asOf?: string | undefined;
+      /** From a catch-up row: how many of the newest messages are unread. */
+      readonly unreadCount?: number | undefined;
+      /** …as of the row's latestActivitySeq; anything above it is on top of them. */
+      readonly unreadTip?: number | undefined;
     }
   | { readonly name: 'reads'; readonly agent?: AgentId | undefined }
   | { readonly name: 'escalations' }
@@ -50,6 +55,8 @@ export function parseRoute(hash: string): Route {
   const [head, first, second] = segments;
 
   switch (head) {
+    case 'catch-up':
+      return { name: 'catch-up' };
     case 'space':
       return first === undefined
         ? { name: 'spaces' }
@@ -67,6 +74,8 @@ export function parseRoute(hash: string): Route {
           second === undefined ? undefined : (decodeURIComponent(second) as ConversationId),
         message: query.get('m') === null ? undefined : (query.get('m') as MessageId),
         asOf: query.get('asOf') ?? undefined,
+        unreadCount: numberParam(query.get('unread')),
+        unreadTip: numberParam(query.get('tip')),
       };
     case 'reads': {
       const agent = query.get('agent');
@@ -85,12 +94,14 @@ export function parseRoute(hash: string): Route {
       };
     }
     case 'spaces':
-    default:
       return { name: 'spaces' };
+    default:
+      return { name: 'catch-up' };
   }
 }
 
 export const href = {
+  catchUp: (): string => '#/catch-up',
   spaces: (): string => '#/spaces',
   space: (id: SpaceId): string => `#/space/${encodeURIComponent(id)}`,
   agents: (id?: AgentId): string =>
@@ -112,6 +123,12 @@ export const href = {
     const query = params.toString();
     return query === '' ? path : `${path}?${query}`;
   },
+  readCatchUp: (
+    space: SpaceId,
+    conversation: ConversationId,
+    unreadCount: number,
+    tip: number,
+  ): string => `${href.read(space, conversation)}?unread=${unreadCount}&tip=${tip}`,
   reads: (agent?: AgentId): string =>
     agent === undefined ? '#/reads' : `#/reads?agent=${encodeURIComponent(agent)}`,
   escalations: (): string => '#/escalations',
@@ -122,6 +139,12 @@ export const href = {
     return `#/search?${params.toString()}`;
   },
 };
+
+function numberParam(value: string | null): number | undefined {
+  if (value === null) return undefined;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : undefined;
+}
 
 export function navigate(target: string): void {
   window.location.hash = target.startsWith('#') ? target.slice(1) : target;

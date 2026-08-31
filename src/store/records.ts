@@ -9,6 +9,7 @@ import type {
   Attachment,
   AttachmentId,
   Conversation,
+  ConversationAnnotations,
   ConversationId,
   Cursor,
   IdempotencyKey,
@@ -23,6 +24,8 @@ import type {
   SpaceId,
   StreamPage,
   Timestamp,
+  QueryCursor,
+  ConversationStatus,
 } from '../types.js';
 import type { EscalationCursor, ReadLogCursor, SearchCursor } from './cursors.js';
 import type { MigrateResult } from './migrate.js';
@@ -68,6 +71,25 @@ export interface SpaceSummary extends Space {
   readonly messageCount: number;
   /** When the last message in any of its threads landed. Null for a space nobody has posted in. */
   readonly lastActivityAt: Timestamp | null;
+  readonly unreadCount: number;
+}
+
+export interface HumanCatchUpConversation {
+  readonly id: ConversationId;
+  readonly space: Space;
+  readonly title: string;
+  readonly unreadCount: number;
+  readonly latestActivitySeq: number;
+  readonly latestActivityAt: Timestamp;
+  readonly lastSender: Sender;
+  readonly status: ConversationStatus;
+  readonly hasPins: boolean;
+}
+
+export interface HumanCatchUpPage {
+  readonly conversations: readonly HumanCatchUpConversation[];
+  readonly nextCursor: QueryCursor | null;
+  readonly hasMore: boolean;
 }
 
 export interface MembershipInterval {
@@ -104,6 +126,8 @@ export interface PostMessageInput {
   readonly attachments?: readonly AttachmentInput[] | undefined;
   /** Scoped per writer: each agent, and the human (schema.sql). */
   readonly idempotencyKey?: IdempotencyKey | undefined;
+  readonly complete?: true | undefined;
+  readonly pin?: true | undefined;
 }
 
 export interface PostMessageResult {
@@ -111,6 +135,7 @@ export interface PostMessageResult {
   readonly conversation: Conversation;
   /** False when an idempotency key replayed an earlier write. */
   readonly created: boolean;
+  readonly annotations: ConversationAnnotations;
 }
 
 export interface ReadStreamArgs {
@@ -131,6 +156,8 @@ export interface EscalationRecord {
   readonly lastAttemptAt: Timestamp | null;
   readonly nextAttemptAt: Timestamp | null;
   readonly lastError: string | null;
+  /** When the human settled it; null while it still waits for one. */
+  readonly acknowledgedAt: Timestamp | null;
 }
 
 export interface RecordEscalationInput {
@@ -190,6 +217,7 @@ export interface ConversationSummary extends Conversation {
    * `lastActivityAt`.
    */
   readonly lastSender: Sender | null;
+  readonly annotations: ConversationAnnotations;
 }
 
 /**
@@ -319,6 +347,16 @@ export interface StoreOptions {
   readonly now?: (() => Date) | undefined;
 }
 
+/**
+ * A position in the store's two orderings: the stream tip (an inclusive bound
+ * on messages and annotations) and the label-history position that renders
+ * labels as they stood then. The same pair a read-log row records.
+ */
+export interface SnapshotPosition {
+  readonly tip: number;
+  readonly labelSeq: number;
+}
+
 export interface Store {
   close(): void;
   /** Escape hatch for the HTTP layer's health check. Not for queries. */
@@ -365,6 +403,12 @@ export interface Store {
     readonly agent?: AgentId | undefined;
     readonly space?: SpaceId | undefined;
   }): readonly MembershipInterval[];
+  setSpaceDescription(space: SpaceId, body: string): void;
+  getSpaceDescription(space: SpaceId): string | undefined;
+  setAgentDescription(agent: AgentId, body: string): void;
+  getAgentDescription(agent: AgentId): string | undefined;
+  setMembershipNote(agent: AgentId, space: SpaceId, body: string): void;
+  getMembershipNote(agent: AgentId, space: SpaceId): string | undefined;
 
   // Conversations
   /** Test fixtures only: production opens threads through `postMessage`. */
@@ -374,6 +418,8 @@ export interface Store {
     createdBy?: Reader | undefined,
   ): Conversation;
   getConversation(conversation: ConversationId): Conversation | undefined;
+  /** Whole-space export order: the sequence of each conversation's first message. */
+  listConversationsForExport(space: SpaceId): readonly Conversation[];
   renameConversation(conversation: ConversationId, title: string): Conversation;
   /**
    * The thread list: every conversation in a space with its message count,
@@ -381,6 +427,47 @@ export interface Store {
    * surface's — no call enumerates a space's conversations for an agent.
    */
   listConversationSummaries(space: SpaceId): readonly ConversationSummary[];
+  /**
+   * Move the human's mark on a conversation up to a message it displayed.
+   * Forward only: a message behind the mark is a no-op, not a retreat.
+   */
+  advanceHumanReadMark(conversation: ConversationId, message: MessageId): boolean;
+  listHumanCatchUp(options?: {
+    readonly after?: QueryCursor | undefined;
+    readonly limit?: number | undefined;
+  }): HumanCatchUpPage;
+  getConversationAnnotations(conversation: ConversationId): ConversationAnnotations;
+  /**
+   * Annotation state as a past read could have seen it: at a recorded tip
+   * seq, or — for a legacy row that recorded none — strictly before the same
+   * millisecond ceiling the message reconstruction falls back to.
+   */
+  getConversationAnnotationsAsOf(
+    conversation: ConversationId,
+    cutoff: { readonly tip: number } | { readonly before: Timestamp },
+    labelSeq?: number,
+  ): ConversationAnnotations;
+  completeConversation(
+    actor: Reader,
+    conversation: ConversationId,
+    idempotencyKey?: IdempotencyKey,
+  ): boolean;
+  reopenConversation(
+    actor: Reader,
+    conversation: ConversationId,
+    idempotencyKey?: IdempotencyKey,
+  ): boolean;
+  pinMessage(
+    actor: Reader,
+    conversation: ConversationId,
+    message: MessageId,
+    idempotencyKey?: IdempotencyKey,
+  ): boolean;
+  unpinConversation(
+    actor: Reader,
+    conversation: ConversationId,
+    idempotencyKey?: IdempotencyKey,
+  ): boolean;
 
   // Messages
   postMessage(input: PostMessageInput): PostMessageResult;
@@ -391,12 +478,23 @@ export interface Store {
    * newest-first, so `messages[0]` is the newest message on it. `hasMore`
    * means "more in the direction you are travelling" — older ones, backwards.
    */
+  /**
+   * `snapshot` pins a read to a position taken earlier — the export reads
+   * every conversation under the tip it saw when it began, so three walks
+   * over one thread agree. The clock could not say that: two writes share a
+   * millisecond, and `until` is exclusive. Labels render as they stood at the
+   * position's label seq, and the page's annotations are as of it, exactly as
+   * a read-log row reconstructs.
+   */
   readConversation(
     reader: Reader,
     conversation: ConversationId,
     range?: Range | undefined,
     limit?: number | undefined,
+    snapshot?: SnapshotPosition | undefined,
   ): MessagePage;
+  /** Where the store stands now, for a caller about to take a snapshot read. */
+  snapshotPosition(): SnapshotPosition;
   readSpace(
     reader: Reader,
     space: SpaceId,
@@ -420,21 +518,6 @@ export interface Store {
     attachment: AttachmentId,
   ): (Attachment & { readonly message: MessageId; readonly space: SpaceId }) | undefined;
   /**
-   * One message rendered with the labels in force when a given read-log row
-   * was written: the sender's name, the conversation's title and the
-   * mentioned names as they stood then, from the label history (migration
-   * 0002). Ordered by the history's own sequence rather than by clock, so a
-   * read and a rename in the same millisecond still come out in the order
-   * they happened.
-   *
-   * A label snapshot, not proof of inclusion: this does not check that the
-   * message was on that read's page. Whether it was is a question about the
-   * row's kind, parameters and cursor, which the row records; this answers
-   * the other half — given that it was, what wording went out. Undefined if
-   * either id is unknown.
-   */
-  renderAsOfRead(message: MessageId, read: string): Message | undefined;
-  /**
    * A page of a conversation as it read at a given read-log row — the same
    * query as `readConversation` for the human, rendered with the labels in
    * force then, and bounded at the read's own moment: nothing sent after the
@@ -443,8 +526,12 @@ export interface Store {
    * including a recorded tip of 0, a read of a stream nothing had been written
    * to yet. A row that recorded no tip falls back to the read's millisecond,
    * and a message sent later in that same millisecond is shown.
-   * Not a read: nothing is logged. Undefined if the read or the conversation
-   * is unknown.
+   *
+   * Bounded by membership too: if the read's agent held no membership in the
+   * conversation's space at that moment, the agent could have seen nothing of
+   * it, so this is undefined — the honest contract is what the agent could
+   * have seen, not what the thread now holds. Not a read: nothing is logged.
+   * Undefined if the read or the conversation is unknown.
    */
   readConversationAsOf(
     read: string,
@@ -456,8 +543,10 @@ export interface Store {
   // Escalations
   recordEscalation(input: RecordEscalationInput): EscalationOutcome;
   listEscalations(filter?: EscalationFilter): EscalationPage;
-  /** Rows not yet `sent`: what the inbox badge counts, whatever page it shows. */
+  /** Rows the webhook has not delivered: delivery detail, not the headline. */
   countUndeliveredEscalations(): number;
+  /** Rows nobody has settled: what the inbox badge counts, whatever page it shows. */
+  countUnacknowledgedEscalations(): number;
   markEscalationNotification(
     escalation: string,
     state: NotificationState,
@@ -466,6 +555,12 @@ export interface Store {
       readonly nextAttemptAt?: Timestamp | undefined;
     },
   ): EscalationRecord;
+  /**
+   * Settle an escalation. Idempotent: a second ack keeps the first one's time
+   * and still succeeds. Returns the settled record, or undefined for an id
+   * that names no escalation.
+   */
+  acknowledgeEscalation(escalation: string): EscalationRecord | undefined;
 
   // The read log
   /**

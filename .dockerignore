@@ -20,6 +20,14 @@ data
 .env.*
 .npmrc
 
+# Local development state, never part of a build: agent worktrees and session
+# state under `.claude/`, and the devlog `COPY . .` would otherwise sweep in.
+.claude/
+.byre-devlog/
+
+# Coverage reports, produced by `test:coverage` and of no use in an image.
+coverage/
+
 .DS_Store
 core
 core.*

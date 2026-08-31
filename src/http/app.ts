@@ -8,12 +8,22 @@ import { attachmentRoot, createAttachmentFiles } from './attachments.js';
 import type { AppContext } from './context.js';
 import { limitsFrom } from './context.js';
 import { invalid, toWireError } from './errors.js';
-import { assertUsablePasswordHash } from './password.js';
+import { assertUsablePasswordHash, isExamplePassword } from './password.js';
 import { createRateLimiter } from './rate-limit.js';
 import { adminRoutes } from './routes/admin.js';
 import { agentRoutes } from './routes/agent.js';
 import { WriteSignals } from './signal.js';
 import { staticRoutes } from './static.js';
+
+declare module 'fastify' {
+  interface FastifyInstance {
+    /**
+     * The example-password verdict `buildApp` computed, exposed so `server.ts`
+     * can log its startup warning without a second scrypt of its own.
+     */
+    readonly examplePassword: boolean;
+  }
+}
 
 export interface AppOptions {
   readonly store: Store;
@@ -54,8 +64,15 @@ const DEFAULT_CSP = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'
 export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   const { store, config } = options;
   // A hash nobody could ever match is a misconfiguration, and misconfiguration
-  // is a refusal to start rather than a login that always fails.
+  // is a refusal to start rather than a login that always fails. Asserted
+  // before `isExamplePassword` runs scrypt on it, so an unparseable hash is
+  // refused rather than fed to the key derivation.
   assertUsablePasswordHash(config.DOGPARK_PASSWORD_HASH);
+
+  // The full check: one scrypt catches a differently salted hash of `dogpark`,
+  // not only the printed constant. Done here so every caller of
+  // `buildApp` — the tests included — gets the same answer the server does.
+  const examplePassword = await isExamplePassword(config.DOGPARK_PASSWORD_HASH);
 
   const limits = limitsFrom(config);
   const ctx: AppContext = {
@@ -67,9 +84,11 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     agentLimiter: createRateLimiter(limits.requestsPerMinute),
     loginLimiter: createRateLimiter(LOGINS_PER_MINUTE),
     failedAuthLimiter: createRateLimiter(FAILED_AUTHS_PER_MINUTE),
-    // Only under a declared TLS proxy: on loopback a Secure cookie would never
-    // come back, locking the human out of a development instance (ADR-0016).
+    // Only under a declared TLS proxy: over plaintext a Secure cookie would
+    // never come back, locking the human out of a development instance
+    // (ADR-0016).
     secureCookies: config.behindProxy,
+    examplePassword,
     pageLimit: (asked) => Math.min(asked ?? limits.maxPageSize, limits.maxPageSize),
     sessionTtlSeconds: SESSION_TTL_SECONDS,
     now: () => new Date(),
@@ -83,6 +102,10 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     bodyLimit: config.DOGPARK_MAX_MESSAGE_BYTES + 64 * 1024,
     ...(options.logger === undefined ? {} : { logger: options.logger }),
   });
+
+  // So `server.ts` can warn on the same verdict the session routes report,
+  // without recomputing it.
+  app.decorate('examplePassword', examplePassword);
 
   app.setErrorHandler((error, request, reply) => {
     const wire = toWireError(error);
@@ -171,8 +194,10 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
 
   /**
    * A declared proxy must prove TLS on every API request. Silence is refused
-   * rather than waved through, because proxy mode binds 0.0.0.0 and a direct
-   * caller can simply omit the header (ADR-0016).
+   * rather than waved through: the process binds `DOGPARK_HOST` (default every
+   * IPv4 interface), independent of the proxy declaration, so a direct caller
+   * can reach it whatever it is bound to and simply omit the header — its
+   * absence cannot be read as consent (ADR-0016).
    *
    * Scoped to the `/api` plugin rather than tested against the raw URL: the
    * router decodes percent-escapes before matching, so `/%61pi/...` reaches

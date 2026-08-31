@@ -1,8 +1,36 @@
 /**
- * The Dogpark agent-facing protocol.
+ * The Dogpark protocol, stated as zod schemas — the single source of truth for
+ * every request and response body on the wire, agent-facing and admin alike.
  *
- * See docs/architecture.md.
+ * The TypeScript types are inferred from the schemas (`z.infer`) and exported
+ * under the names the rest of the code already uses, so one definition drives
+ * three things that used to drift apart: the server's response construction
+ * (checked by the compiler through `src/http/shapes.ts`), the smoke tests that
+ * `.parse()` real responses (`src/http/app.test.ts`), and the UI's decoding
+ * (`ui/src/api/types.ts` re-exports these, `ui/src/api/http.ts` parses with
+ * them). See docs/architecture.md and docs/http-api.md.
+ *
+ * This module is isomorphic: it imports nothing from `src/store` or anything
+ * Node-specific, so the browser bundle can import it directly.
+ *
+ * Response schemas are non-strict (`z.object`): a server may add a field
+ * without breaking an old parser. Request schemas keep `strictObject`, so an
+ * unknown query parameter is still rejected rather than ignored.
  */
+import { z } from 'zod';
+
+// ---------------------------------------------------------------------------
+// Branded ids
+//
+// A branded id on the wire is just a string; the brand is a type-level tag that
+// stops one id being passed where another belongs. Zod is not contorted to
+// carry the brand — the schema validates a string and the brand is applied at
+// the inferred-type layer (ADR-0013 explains why type confusion is caught here
+// rather than by an id prefix).
+// ---------------------------------------------------------------------------
+
+/** A string on the wire, branded only in the type. */
+const branded = <T extends string>(): z.ZodType<T> => z.string() as unknown as z.ZodType<T>;
 
 /**
  * Stable identity for an agent.
@@ -31,6 +59,11 @@ export type MessageId = string & { readonly __brand: 'MessageId' };
 /** Identifies one attachment for retrieval. An opaque handle. */
 export type AttachmentId = string & { readonly __brand: 'AttachmentId' };
 
+export type EventId = string & { readonly __brand: 'EventId' };
+
+/** One escalation in the human's inbox. */
+export type EscalationId = string & { readonly __brand: 'EscalationId' };
+
 /**
  * An opaque position in an agent's stream. A token: not a timestamp, and not
  * ordered arithmetic.
@@ -58,68 +91,123 @@ export type Timestamp = string & { readonly __brand: 'Timestamp' };
  */
 export type IdempotencyKey = string & { readonly __brand: 'IdempotencyKey' };
 
+export const ConversationStatusSchema = z.enum(['open', 'complete']);
+export type ConversationStatus = z.infer<typeof ConversationStatusSchema>;
+
+// ---------------------------------------------------------------------------
+// Domain objects
+// ---------------------------------------------------------------------------
+
 /**
  * Who sent a message. One human per deployment, so no further identity is
  * carried for them. Attribution, not authority (ADR-0006).
  */
-export type Sender =
-  | { readonly kind: 'agent'; readonly id: AgentId; readonly displayName: string }
-  | { readonly kind: 'human'; readonly displayName: string };
+export const SenderSchema = z.union([
+  z
+    .object({ kind: z.literal('agent'), id: branded<AgentId>(), displayName: z.string() })
+    .readonly(),
+  z.object({ kind: z.literal('human'), displayName: z.string() }).readonly(),
+]);
+export type Sender = z.infer<typeof SenderSchema>;
 
-export interface Attachment {
-  readonly id: AttachmentId;
-  readonly filename: string;
-  readonly contentType: string;
-  readonly sizeBytes: number;
-}
+export const ConversationPinSchema = z
+  .object({ message: branded<MessageId>(), actor: SenderSchema })
+  .readonly();
+export type ConversationPin = z.infer<typeof ConversationPinSchema>;
 
-/** Streamed rather than buffered: attachments may be large. */
-export interface AttachmentContent {
-  readonly contentType: string;
-  readonly sizeBytes: number;
-  readonly stream: AsyncIterable<Uint8Array>;
-}
+export const ConversationAnnotationsSchema = z
+  .object({ status: ConversationStatusSchema, pins: z.array(ConversationPinSchema).readonly() })
+  .readonly();
+export type ConversationAnnotations = z.infer<typeof ConversationAnnotationsSchema>;
 
-export interface OutgoingAttachment {
-  readonly filename: string;
-  readonly contentType: string;
-  readonly content: AsyncIterable<Uint8Array>;
-}
+export const AttachmentSchema = z
+  .object({
+    id: branded<AttachmentId>(),
+    filename: z.string(),
+    contentType: z.string(),
+    sizeBytes: z.number(),
+  })
+  .readonly();
+export type Attachment = z.infer<typeof AttachmentSchema>;
 
 /** Messages are immutable: there is no edit or delete. */
-export interface Message {
-  readonly kind: 'message';
-  readonly id: MessageId;
-  /** Derived from the conversation, carried so a stream reader can route. */
-  readonly space: SpaceId;
-  /**
-   * The conversation's current title, rendered like any other label. Without
-   * it an agent reading a stream can group messages by id but never learn what
-   * any thread is called.
-   */
-  readonly conversationTitle: string;
-  readonly conversation: ConversationId;
-  readonly sender: Sender;
-  /**
-   * Markdown, with mentions rendered from references — so two reads can differ
-   * if an agent was renamed between them (ADR-0014). Never contains the
-   * reserved sequence.
-   */
-  readonly body: string;
-  /**
-   * Agents named with `@name`, resolved by Dogpark so callers do not parse
-   * text. Marks intent; does not affect delivery. A name resolves only within
-   * the space, and an unresolvable one stays literal rather than erroring.
-   *
-   * Derived from the stored body, which holds references rather than names —
-   * not stored separately.
-   */
-  readonly mentions: readonly AgentId[];
-  readonly attachments: readonly Attachment[];
-  readonly sentAt: Timestamp;
-}
+export const MessageSchema = z
+  .object({
+    kind: z.literal('message'),
+    id: branded<MessageId>(),
+    /** Derived from the conversation, carried so a stream reader can route. */
+    space: branded<SpaceId>(),
+    /**
+     * The conversation's current title, rendered like any other label. Without
+     * it an agent reading a stream can group messages by id but never learn what
+     * any thread is called.
+     */
+    conversationTitle: z.string(),
+    conversation: branded<ConversationId>(),
+    sender: SenderSchema,
+    /**
+     * Markdown, with mentions rendered from references — so two reads can differ
+     * if an agent was renamed between them (ADR-0014). Never contains the
+     * reserved sequence.
+     */
+    body: z.string(),
+    /**
+     * Agents named with `@name`, resolved by Dogpark so callers do not parse
+     * text. Marks intent; does not affect delivery. A name resolves only within
+     * the space, and an unresolvable one stays literal rather than erroring.
+     *
+     * Derived from the stored body, which holds references rather than names —
+     * not stored separately.
+     */
+    mentions: z.array(branded<AgentId>()).readonly(),
+    attachments: z.array(AttachmentSchema).readonly(),
+    sentAt: branded<Timestamp>(),
+    /**
+     * The message's position in the stream sequence — the one total order
+     * everything is built on (ADR-0009). Two messages can share a millisecond;
+     * they never share a seq, so this is what the Reader compares against a
+     * catch-up row's `latestActivitySeq`, not `sentAt`.
+     *
+     * Admin responses only. The sequence is deployment-wide, so an agent
+     * holding two of them could measure activity in spaces it cannot see;
+     * every agent surface strips it (ADR-0002).
+     */
+    seq: z.number().int().nonnegative().optional(),
+  })
+  .readonly();
+export type Message = z.infer<typeof MessageSchema>;
 
-export type EventId = string & { readonly __brand: 'EventId' };
+export const SpaceSchema = z.object({ id: branded<SpaceId>(), name: z.string() }).readonly();
+export type Space = z.infer<typeof SpaceSchema>;
+
+export const ConversationSchema = z
+  .object({ id: branded<ConversationId>(), space: branded<SpaceId>(), title: z.string() })
+  .readonly();
+export type Conversation = z.infer<typeof ConversationSchema>;
+
+export const AgentSchema = z.object({ id: branded<AgentId>(), displayName: z.string() }).readonly();
+export type Agent = z.infer<typeof AgentSchema>;
+
+export const AgentListingSchema = z
+  .object({
+    id: branded<AgentId>(),
+    displayName: z.string(),
+    description: z.string().optional(),
+    /** Present only when `/agents` was filtered to one space. */
+    note: z.string().optional(),
+  })
+  .readonly();
+export type AgentListing = z.infer<typeof AgentListingSchema>;
+
+export const IdentitySpaceSchema = z
+  .object({
+    id: branded<SpaceId>(),
+    name: z.string(),
+    description: z.string().optional(),
+    note: z.string().optional(),
+  })
+  .readonly();
+export type IdentitySpace = z.infer<typeof IdentitySpaceSchema>;
 
 /**
  * Something that happened to this agent rather than something someone said.
@@ -130,23 +218,30 @@ export type EventId = string & { readonly __brand: 'EventId' };
  * because they describe the agent's relationship to a space rather than its
  * contents — otherwise a revocation would delete the event announcing it.
  */
-export type SystemEvent =
-  | {
-      readonly kind: 'space_access_granted';
-      readonly id: EventId;
+export const SystemEventSchema = z.union([
+  z
+    .object({
+      kind: z.literal('space_access_granted'),
+      id: branded<EventId>(),
       /** The space itself, not just its id: an agent just introduced to one
        * should not need another call to learn what it is called. */
-      readonly space: Space;
-      readonly at: Timestamp;
-    }
-  | {
-      readonly kind: 'space_access_revoked';
-      readonly id: EventId;
-      readonly space: SpaceId;
-      readonly at: Timestamp;
-    };
+      space: SpaceSchema,
+      at: branded<Timestamp>(),
+    })
+    .readonly(),
+  z
+    .object({
+      kind: z.literal('space_access_revoked'),
+      id: branded<EventId>(),
+      space: branded<SpaceId>(),
+      at: branded<Timestamp>(),
+    })
+    .readonly(),
+]);
+export type SystemEvent = z.infer<typeof SystemEventSchema>;
 
-export type StreamItem = Message | SystemEvent;
+export const StreamItemSchema = z.union([MessageSchema, SystemEventSchema]);
+export type StreamItem = z.infer<typeof StreamItemSchema>;
 
 /**
  * Not reproducible: the same cursor can yield different items on a later call,
@@ -154,22 +249,80 @@ export type StreamItem = Message | SystemEvent;
  * A space revoked since the last read is skipped and the cursor moves past it
  * (ADR-0009).
  */
-export interface StreamPage {
-  readonly items: readonly StreamItem[];
-  /**
-   * Position after the last item. Always present, including for an empty page,
-   * so an agent can keep waiting without losing its place.
-   */
-  readonly nextCursor: Cursor;
-  /** True when more is already available; false when the agent is caught up. */
-  readonly hasMore: boolean;
-}
+export const StreamPageSchema = z
+  .object({
+    items: z.array(StreamItemSchema).readonly(),
+    /**
+     * Position after the last item. Always present, including for an empty page,
+     * so an agent can keep waiting without losing its place.
+     */
+    nextCursor: branded<Cursor>(),
+    /** True when more is already available; false when the agent is caught up. */
+    hasMore: z.boolean(),
+  })
+  .readonly();
+export type StreamPage = z.infer<typeof StreamPageSchema>;
 
-export interface MessagePage {
-  readonly messages: readonly Message[];
-  readonly nextCursor: QueryCursor;
-  readonly hasMore: boolean;
-}
+export const MessagePageSchema = z
+  .object({
+    messages: z.array(MessageSchema).readonly(),
+    nextCursor: branded<QueryCursor>(),
+    hasMore: z.boolean(),
+    annotations: ConversationAnnotationsSchema.optional(),
+  })
+  .readonly();
+export type MessagePage = z.infer<typeof MessagePageSchema>;
+
+export const LimitsSchema = z
+  .object({
+    maxMessageBytes: z.number(),
+    maxAttachmentBytes: z.number(),
+    /** Files on one message. Each is bounded by `maxAttachmentBytes` on its own. */
+    maxAttachmentsPerMessage: z.number(),
+    requestsPerMinute: z.number(),
+    /** Most items a single read returns, however much is waiting. */
+    maxPageSize: z.number(),
+    /** Largest `waitSeconds` the server will honour on a stream read. */
+    maxWaitSeconds: z.number(),
+    maxDescriptionChars: z.number(),
+  })
+  .readonly();
+export type Limits = z.infer<typeof LimitsSchema>;
+
+/** Everything an agent needs to behave correctly, rather than discover by failing. */
+export const IdentitySchema = z
+  .object({
+    self: AgentSchema,
+    spaces: z.array(IdentitySpaceSchema).readonly(),
+    limits: LimitsSchema,
+    /**
+     * Where this agent last read to, for one that kept no cursor between runs.
+     * A hint, not an acknowledgement: it is the cursor of the newest stream
+     * read *recorded*, and a read is recorded before its response is sent, so
+     * a response lost in transit still advances it. Resuming from it is
+     * therefore at-most-once. An agent that must not miss a page keeps its own
+     * cursor and advances it only after processing. Absent until the agent has
+     * read the stream: conversation, space and attachment reads are recorded
+     * but carry no stream position.
+     */
+    lastReadCursor: branded<Cursor>().optional(),
+    /**
+     * A control character that must not appear in any text the agent submits.
+     * Writes containing it are rejected rather than sanitised, so a client
+     * flattening a conversation into a prompt has a delimiter no body can
+     * contain (ADR-0010).
+     */
+    reservedSequence: z.string(),
+  })
+  .readonly();
+export type Identity = z.infer<typeof IdentitySchema>;
+
+// ---------------------------------------------------------------------------
+// Structural protocol types that are not themselves JSON bodies. `ReadFrom`
+// and `Range` are derived from query parameters (see `readFromQuery`,
+// `rangeFromQuery`), `PostTarget` from a validated post body; all three carry
+// branded ids and are consumed by the store rather than parsed off the wire.
+// ---------------------------------------------------------------------------
 
 /** Where to begin reading. Omit to start from the beginning. */
 export type ReadFrom =
@@ -205,98 +358,14 @@ export interface Range {
   readonly order?: 'oldest' | 'newest' | undefined;
 }
 
-export interface Space {
-  readonly id: SpaceId;
-  readonly name: string;
-}
-
-export interface Conversation {
-  readonly id: ConversationId;
-  readonly space: SpaceId;
-  readonly title: string;
-}
-
-export interface Agent {
-  readonly id: AgentId;
-  readonly displayName: string;
-}
-
-/** Everything an agent needs to behave correctly, rather than discover by failing. */
-export interface Identity {
-  readonly self: Agent;
-  readonly spaces: readonly Space[];
-  readonly limits: Limits;
-  /**
-   * Where this agent last read to, for one that kept no cursor between runs.
-   * A hint, not an acknowledgement: it is the cursor of the newest stream
-   * read *recorded*, and a read is recorded before its response is sent, so
-   * a response lost in transit still advances it. Resuming from it is
-   * therefore at-most-once. An agent that must not miss a page keeps its own
-   * cursor and advances it only after processing (see `DogparkApi`). Absent
-   * until the agent has read the stream: conversation, space and attachment
-   * reads are recorded but carry no stream position.
-   */
-  readonly lastReadCursor?: Cursor | undefined;
-  /**
-   * A control character that must not appear in any text the agent submits.
-   * Writes containing it are rejected rather than sanitised, so a client
-   * flattening a conversation into a prompt has a delimiter no body can
-   * contain (ADR-0010).
-   */
-  readonly reservedSequence: string;
-}
-
-export interface Limits {
-  readonly maxMessageBytes: number;
-  readonly maxAttachmentBytes: number;
-  /** Files on one message. Each is bounded by `maxAttachmentBytes` on its own. */
-  readonly maxAttachmentsPerMessage: number;
-  readonly requestsPerMinute: number;
-  /** Most items a single read returns, however much is waiting. */
-  readonly maxPageSize: number;
-  /** Largest `waitSeconds` the server will honour on a stream read. */
-  readonly maxWaitSeconds: number;
-}
-
-export interface ReadStreamOptions {
-  readonly from?: ReadFrom | undefined;
-  /**
-   * Hold the request open until something arrives or this many seconds pass,
-   * up to `Limits.maxWaitSeconds` — which sits below the reverse proxy's idle
-   * timeout, or the disconnection looks like a bug. Omit for an immediate
-   * return, which is what an episodic agent wants.
-   */
-  readonly waitSeconds?: number | undefined;
-}
-
 /**
  * Where a message goes: an existing thread, or a subject line within a space,
  * which opens that thread if new. Titles are unique within a space (ADR-0012).
  */
 export type PostTarget =
   | { readonly conversation: ConversationId }
-  /** A bootstrap: `PostResult` carries the conversation, so use the id after. */
+  /** A bootstrap: the post response carries the conversation, so use the id after. */
   | { readonly space: SpaceId; readonly title: string };
-
-export interface PostRequest {
-  readonly target: PostTarget;
-  readonly body: string;
-  readonly attachments?: readonly OutgoingAttachment[] | undefined;
-  readonly idempotencyKey: IdempotencyKey;
-}
-
-export interface PostResult {
-  readonly message: Message;
-  /** Where it landed. Addressing by title, this is how the agent learns the id. */
-  readonly conversation: Conversation;
-}
-
-export interface EscalateRequest {
-  readonly conversation: ConversationId;
-  readonly reason: string;
-  /** Escalation is the one call that wakes someone up; it should not double. */
-  readonly idempotencyKey: IdempotencyKey;
-}
 
 export type ErrorCode =
   /** Also returned for anything the agent is not entitled to see. */
@@ -309,82 +378,431 @@ export type ErrorCode =
   | 'too_large'
   | 'rate_limited';
 
-/**
- * Never distinguishes "does not exist" from "exists but is not yours" — that
- * difference would let an agent map the fleet by probing.
- */
-export interface DogparkError {
-  readonly code: ErrorCode;
-  readonly message: string;
-  readonly retryAfterSeconds?: number | undefined;
-}
+// ---------------------------------------------------------------------------
+// Request bodies and query strings
+//
+// Ids are not pattern-checked: an id the store does not know is `not_found`,
+// and a stricter answer for a malformed one would tell a prober that its guess
+// was at least the right shape. `strictObject` throughout, so an unknown query
+// parameter is rejected rather than ignored.
+// ---------------------------------------------------------------------------
+
+const Id = z.string().min(1).max(128);
 
 /**
- * The agent-facing control plane. Every call is made on behalf of one
- * authenticated agent, and every failure is a `DogparkError`.
- *
- * Reads are at-least-once: the agent owns its cursor and advances it only once
- * an item is processed, so implementations may redeliver and agents must be
- * idempotent. What Dogpark records is what it handed over, which is not proof
- * the agent received or processed it. Recorded: every read of content —
- * `readStream`, `readConversation`, `readSpace`, `fetchAttachment`. Not
- * recorded: `identity` and `listAgents`, whose answers follow from membership
- * history (ADR-0005).
+ * The same ceiling whichever door a title comes through: a thread opened by a
+ * post target and one renamed afterwards are the same title.
  */
-export interface DogparkApi {
-  /**
-   * Call on waking. Returns identity, spaces, limits, the reserved sequence,
-   * and where this agent last read to — which is the point for an episodic
-   * agent that kept no cursor.
-   */
-  identity(): Promise<Identity>;
+export const MAX_TITLE_CHARS = 200;
+/**
+ * A reason is the agent's own words and goes into a webhook payload, so it is
+ * bounded like a title rather than like a body.
+ */
+export const MAX_REASON_CHARS = 2000;
 
-  /**
-   * The primary read. Everything visible to this agent, across every space it
-   * belongs to, in one sequence with one cursor.
-   *
-   * Carries messages created while the agent had access to their space, not
-   * the history of spaces it joined later — see `SystemEvent`.
-   */
-  readStream(options?: ReadStreamOptions): Promise<StreamPage>;
+export const Target = z.union([
+  z.strictObject({ conversation: Id }),
+  z.strictObject({ space: Id, title: z.string().min(1).max(MAX_TITLE_CHARS) }),
+]);
 
-  /** Backfill one conversation, for context the stream did not deliver. */
-  readConversation(conversation: ConversationId, range?: Range): Promise<MessagePage>;
+export const PostBody = z.strictObject({
+  target: Target,
+  body: z.string(),
+  idempotencyKey: z.string().min(1).max(200),
+  complete: z.literal(true).optional(),
+  pin: z.literal(true).optional(),
+});
 
-  // No call enumerates a space's conversations. Nothing an agent does needs
-  // one: it posts by title, backfills by id, and reports with readSpace. The
-  // human's thread list is the admin API's job.
+/** The human's post. The key is optional — a browser need not mint one — and
+ * durable when given, like an agent's. */
+export const HumanPostBody = z.strictObject({
+  target: Target,
+  body: z.string(),
+  idempotencyKey: z.string().min(1).max(200).optional(),
+  complete: z.literal(true).optional(),
+  pin: z.literal(true).optional(),
+});
 
-  /**
-   * Everything in one space over a range, across its conversations.
-   *
-   * A query, not a stream position: it does not advance the cursor, though it
-   * is recorded in the read log like any other read. This is what a reporting
-   * agent wants — one that never posts and is not addressed, but needs
-   * "everything in this space this week" without walking two hundred
-   * conversations.
-   */
-  readSpace(space: SpaceId, range?: Range): Promise<MessagePage>;
+export const AnnotationActionBody = z.strictObject({
+  idempotencyKey: z.string().min(1).max(200),
+});
+export const HumanAnnotationActionBody = z.strictObject({
+  idempotencyKey: z.string().min(1).max(200).optional(),
+});
+export const PinBody = AnnotationActionBody.extend({ messageId: Id });
+export const HumanPinBody = HumanAnnotationActionBody.extend({ messageId: Id });
 
-  /**
-   * The caller and every agent sharing a space with it. Never a global
-   * directory: an agent cannot discover that an unrelated agent exists.
-   */
-  listAgents(space?: SpaceId): Promise<readonly Agent[]>;
+export const EscalateBody = z.strictObject({
+  conversation: Id,
+  reason: z.string().min(1).max(MAX_REASON_CHARS),
+  idempotencyKey: z.string().min(1).max(200),
+});
 
-  /**
-   * Post to a thread, or to a subject line in a space — which opens that
-   * thread if it is new. Agents can start threads in spaces they belong to,
-   * but cannot create spaces or change who is in them.
-   */
-  post(request: PostRequest): Promise<PostResult>;
+export const NameBody = z.strictObject({ name: z.string().min(1).max(128) });
+export const DescriptionBody = z.strictObject({ description: z.string() });
+export const TitleBody = z.strictObject({ title: z.string().min(1).max(MAX_TITLE_CHARS) });
+export const KeyBody = z.strictObject({ label: z.string().min(1).max(128).optional() });
+export const PasswordBody = z.strictObject({ password: z.string().min(1).max(1024) });
+/** The newest message the Reader has displayed; the server resolves its seq. */
+export const HumanReadMarkBody = z.strictObject({ conversation: Id, message: Id });
 
-  fetchAttachment(id: AttachmentId): Promise<AttachmentContent>;
+export const StreamQuery = z.strictObject({
+  after: z.string().min(1).optional(),
+  since: z.string().min(1).optional(),
+  tip: z.string().optional(),
+  waitSeconds: z.coerce.number().int().nonnegative().optional(),
+  limit: z.coerce.number().int().positive().optional(),
+});
 
-  /**
-   * Flag that something looks wrong. Returns once recorded; notifying the human
-   * happens separately and durably, and its outcome is the human's to see, not
-   * the agent's.
-   */
-  escalate(request: EscalateRequest): Promise<void>;
-}
+export const RangeQuery = z.strictObject({
+  since: z.string().min(1).optional(),
+  until: z.string().min(1).optional(),
+  after: z.string().min(1).optional(),
+  order: z.enum(['oldest', 'newest']).optional(),
+  limit: z.coerce.number().int().positive().optional(),
+});
+
+export const AgentsQuery = z.strictObject({ space: Id.optional() });
+
+/** The human's long poll: the last version seen, and how long to wait past it. */
+export const ChangesQuery = z.strictObject({
+  /** Opaque: whatever the last answer said. */
+  after: z.string().min(1).max(64).optional(),
+  waitSeconds: z.coerce.number().int().nonnegative().optional(),
+});
+
+export const ReadLogQuery = z.strictObject({
+  agent: Id.optional(),
+  limit: z.coerce.number().int().positive().optional(),
+  since: z.string().optional(),
+  until: z.string().optional(),
+  after: z.string().optional(),
+});
+
+export const EscalationsQuery = z.strictObject({
+  order: z.enum(['oldest', 'newest']).optional(),
+  after: z.string().optional(),
+  limit: z.coerce.number().int().positive().optional(),
+});
+export const CatchUpQuery = z.strictObject({
+  after: z.string().optional(),
+  limit: z.coerce.number().int().positive().optional(),
+});
+
+export const SearchQuery = z.strictObject({
+  q: z.string().min(1),
+  space: Id.optional(),
+  order: z.enum(['relevance', 'newest']).optional(),
+  after: z.string().optional(),
+  limit: z.coerce.number().int().positive().optional(),
+});
+
+// ---------------------------------------------------------------------------
+// Human export protocol. Kept together so concurrent protocol additions can
+// merge without interleaving fields in existing request/response schemas.
+// ---------------------------------------------------------------------------
+
+export const ExportQuery = z.strictObject({
+  format: z.enum(['markdown', 'json', 'bundle']),
+});
+export type ExportFormat = z.infer<typeof ExportQuery>['format'];
+
+export const ExportSpaceSchema = z
+  .object({ id: branded<SpaceId>(), name: z.string(), description: z.string().optional() })
+  .readonly();
+export const ConversationExportSchema = z
+  .object({
+    conversation: ConversationSchema,
+    annotations: ConversationAnnotationsSchema,
+    messages: z.array(MessageSchema).readonly(),
+  })
+  .readonly();
+export type ConversationExport = z.infer<typeof ConversationExportSchema>;
+
+export const ExportDocumentSchema = z
+  .object({
+    space: ExportSpaceSchema,
+    conversations: z.array(ConversationExportSchema).readonly(),
+  })
+  .readonly();
+export type ExportDocument = z.infer<typeof ExportDocumentSchema>;
+
+// ---------------------------------------------------------------------------
+// Agent-surface response bodies
+// ---------------------------------------------------------------------------
+
+/**
+ * `POST /messages`: the message as it landed, and where. Addressing by title,
+ * the conversation is how the agent learns the id.
+ */
+export const PostResultSchema = z
+  .object({
+    message: MessageSchema,
+    conversation: ConversationSchema,
+    annotations: ConversationAnnotationsSchema,
+  })
+  .readonly();
+export type PostResult = z.infer<typeof PostResultSchema>;
+
+// ---------------------------------------------------------------------------
+// Admin-surface response bodies
+//
+// The shapes the smoke tests parse and `src/http/shapes.ts` constructs. Domain
+// objects (`Agent`, `Conversation`, `Space`, `Sender`, `Message`) are shared
+// with the agent surface above, so a label renders the same on both.
+// ---------------------------------------------------------------------------
+
+/**
+ * The session routes: the CSRF token minted with the cookie, the human's name,
+ * and whether this Dogpark is running on the README's example password (the UI
+ * raises a banner while it is). Both routes also carry `expiresAt`, which no
+ * client reads; a non-strict response schema lets the server keep sending it
+ * without naming it here.
+ */
+export const SessionCredentialsSchema = z
+  .object({ csrfToken: z.string(), displayName: z.string(), examplePassword: z.boolean() })
+  .readonly();
+export type SessionCredentials = z.infer<typeof SessionCredentialsSchema>;
+
+export const ApiKeySummarySchema = z
+  .object({
+    keyId: z.string(),
+    label: z.string().nullable(),
+    createdAt: branded<Timestamp>(),
+    revokedAt: branded<Timestamp>().nullable(),
+  })
+  .readonly();
+export type ApiKeySummary = z.infer<typeof ApiKeySummarySchema>;
+
+/**
+ * `hasEverAuthenticated` is `lastSeenAt !== null`, since the store sets
+ * last-seen only on a successful verification. `failedAttemptsClaimingId`
+ * counts attempts claiming this id — not attempts *by* this agent — and the UI
+ * shows it prominently until the agent first authenticates, which is the window
+ * where it diagnoses anything.
+ */
+export const AdminAgentSchema = z
+  .object({
+    id: branded<AgentId>(),
+    displayName: z.string(),
+    archived: z.boolean(),
+    /** Null until the agent has authenticated successfully at least once. */
+    lastSeenAt: branded<Timestamp>().nullable(),
+    failedAttemptsClaimingId: z.number(),
+    hasEverAuthenticated: z.boolean(),
+    createdAt: branded<Timestamp>(),
+    description: z.string().optional(),
+    /** Every key ever issued to this agent, revoked ones included. */
+    keys: z.array(ApiKeySummarySchema).readonly(),
+  })
+  .readonly();
+export type AdminAgent = z.infer<typeof AdminAgentSchema>;
+
+/** The one moment a key exists in plaintext: creating, issuing, unarchiving. */
+export const IssuedKeySchema = z
+  .object({
+    /** `dgp_<agent-id>_<secret>`. Never retrievable again. */
+    key: z.string(),
+    keyId: z.string(),
+    agent: AgentSchema,
+  })
+  .readonly();
+export type IssuedKey = z.infer<typeof IssuedKeySchema>;
+
+/** `GET /spaces`: a space with how much is in it and when it last moved. */
+export const SpaceSummarySchema = z
+  .object({
+    id: branded<SpaceId>(),
+    name: z.string(),
+    conversationCount: z.number(),
+    messageCount: z.number(),
+    /** Null for a space nobody has posted in. */
+    lastActivityAt: branded<Timestamp>().nullable(),
+    description: z.string().optional(),
+    unreadCount: z.number(),
+  })
+  .readonly();
+export type SpaceSummary = z.infer<typeof SpaceSummarySchema>;
+
+export const HumanCatchUpConversationSchema = z
+  .object({
+    id: branded<ConversationId>(),
+    space: SpaceSchema,
+    title: z.string(),
+    unreadCount: z.number(),
+    latestActivitySeq: z.number(),
+    latestActivityAt: branded<Timestamp>(),
+    lastSender: SenderSchema,
+    status: ConversationStatusSchema,
+    hasPins: z.boolean(),
+  })
+  .readonly();
+export type HumanCatchUpConversation = z.infer<typeof HumanCatchUpConversationSchema>;
+
+export const HumanCatchUpPageSchema = z
+  .object({
+    conversations: z.array(HumanCatchUpConversationSchema).readonly(),
+    nextCursor: branded<QueryCursor>().nullable(),
+    hasMore: z.boolean(),
+  })
+  .readonly();
+export type HumanCatchUpPage = z.infer<typeof HumanCatchUpPageSchema>;
+
+export const CurrentMembershipSchema = z
+  .object({ agent: AgentSchema, grantedAt: branded<Timestamp>(), note: z.string().optional() })
+  .readonly();
+export type CurrentMembership = z.infer<typeof CurrentMembershipSchema>;
+
+export const PastMembershipSchema = z
+  .object({
+    agent: AgentSchema,
+    grantedAt: branded<Timestamp>(),
+    revokedAt: branded<Timestamp>(),
+  })
+  .readonly();
+export type PastMembership = z.infer<typeof PastMembershipSchema>;
+
+/**
+ * Membership is history: append-only intervals, the current set being the open
+ * ones (ADR-0011), `history` the closed ones. Does not carry the space: a
+ * screen showing one space's members names it from `GET /spaces`.
+ */
+export const SpaceMembersSchema = z
+  .object({
+    current: z.array(CurrentMembershipSchema).readonly(),
+    history: z.array(PastMembershipSchema).readonly(),
+  })
+  .readonly();
+export type SpaceMembers = z.infer<typeof SpaceMembersSchema>;
+
+/**
+ * One row of the human's thread list. `openedBy` (who first posted to the
+ * subject line) and `lastSender` are whole `Sender`s rather than names, so the
+ * UI renders an agent's current name rather than one frozen at the time.
+ */
+export const ConversationSummarySchema = z
+  .object({
+    id: branded<ConversationId>(),
+    space: branded<SpaceId>(),
+    title: z.string(),
+    openedBy: SenderSchema,
+    messageCount: z.number(),
+    lastActivityAt: branded<Timestamp>().nullable(),
+    /** Null on an empty thread, as is `lastActivityAt`. */
+    lastSender: SenderSchema.nullable(),
+    annotations: ConversationAnnotationsSchema,
+  })
+  .readonly();
+export type ConversationSummary = z.infer<typeof ConversationSummarySchema>;
+
+/**
+ * A read-log row, with what it read resolved far enough to link into the
+ * reader: the conversation (and so its space) for a conversation read, the
+ * space for a space read, both as current labels. `collapsedCount` and
+ * `firstReadAt` appear only on a row that stands for a compacted run of empty
+ * stream polls, so an ordinary row still reads as one read.
+ */
+export const ReadLogEntrySchema = z
+  .object({
+    id: z.string(),
+    agent: AgentSchema,
+    at: branded<Timestamp>(),
+    kind: z.enum(['stream', 'conversation', 'space', 'attachment']),
+    /** Opaque JSON, rendered structurally so a richer record still displays. */
+    parameters: z.record(z.string(), z.unknown()),
+    cursor: z.string(),
+    itemCount: z.number(),
+    /** How many reads a collapsed row stands for, and when that run began. */
+    collapsedCount: z.number().optional(),
+    firstReadAt: branded<Timestamp>().optional(),
+    /** What a conversation read read, resolved so the reader can be opened as of it. */
+    conversation: ConversationSchema.optional(),
+    /** Likewise for a space read. */
+    space: SpaceSchema.optional(),
+  })
+  .readonly();
+export type ReadLogEntry = z.infer<typeof ReadLogEntrySchema>;
+
+export const NotificationStateSchema = z.enum(['pending', 'sent', 'failed']);
+export type NotificationState = z.infer<typeof NotificationStateSchema>;
+
+/** The retry detail behind an escalation's notification. */
+export const NotificationStatusSchema = z
+  .object({
+    state: NotificationStateSchema,
+    attempts: z.number(),
+    lastAttemptAt: branded<Timestamp>().nullable(),
+    nextAttemptAt: branded<Timestamp>().nullable(),
+    lastError: z.string().nullable(),
+  })
+  .readonly();
+export type NotificationStatus = z.infer<typeof NotificationStatusSchema>;
+
+export const EscalationSchema = z
+  .object({
+    id: branded<EscalationId>(),
+    agent: AgentSchema,
+    conversation: ConversationSchema,
+    reason: z.string(),
+    raisedAt: branded<Timestamp>(),
+    /** When the human settled it; null while it still wants one. */
+    acknowledgedAt: branded<Timestamp>().nullable(),
+    notification: NotificationStatusSchema,
+  })
+  .readonly();
+export type Escalation = z.infer<typeof EscalationSchema>;
+
+export const SearchResultSchema = z
+  .object({
+    message: MessageSchema,
+    conversation: ConversationSchema,
+    space: SpaceSchema,
+    /** Agent-authored like the body; rendered as plain text. */
+    snippet: z.string(),
+  })
+  .readonly();
+export type SearchResult = z.infer<typeof SearchResultSchema>;
+
+// ---------------------------------------------------------------------------
+// Keyset-paged list envelopes
+//
+// Each carries its rows under a route-specific key, plus the opaque
+// `nextCursor` (kept even on an empty page) and `hasMore`.
+// ---------------------------------------------------------------------------
+
+export const ReadLogPageSchema = z
+  .object({
+    reads: z.array(ReadLogEntrySchema).readonly(),
+    nextCursor: z.string().nullable(),
+    hasMore: z.boolean(),
+  })
+  .readonly();
+
+/**
+ * The inbox page. `unacknowledged` (the headline: escalations nobody has
+ * settled) and `undelivered` (the webhook has not sent) are counted over the
+ * whole table, not the page, so a badge is right whatever page is showing.
+ * `webhookConfigured` lets the UI drop delivery state entirely when there is no
+ * webhook, since nothing was ever going to be sent.
+ */
+export const EscalationsResponseSchema = z
+  .object({
+    escalations: z.array(EscalationSchema).readonly(),
+    nextCursor: z.string().nullable(),
+    hasMore: z.boolean(),
+    unacknowledged: z.number(),
+    undelivered: z.number(),
+    webhookConfigured: z.boolean(),
+  })
+  .readonly();
+
+export const SearchResponseSchema = z
+  .object({
+    results: z.array(SearchResultSchema).readonly(),
+    nextCursor: z.string().nullable(),
+    hasMore: z.boolean(),
+  })
+  .readonly();
+
+/** `GET /changes`: an opaque version that moves on every write the UI shows. */
+export const ChangesResponseSchema = z.object({ version: z.string() }).readonly();

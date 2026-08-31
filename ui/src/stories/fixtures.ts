@@ -18,6 +18,7 @@ import type {
   EscalationId,
   Message,
   MessageId,
+  HumanCatchUpPage,
   ReadLogEntry,
   SearchResult,
   Space,
@@ -50,11 +51,13 @@ export const sandbox: Space = { id: 'sp_6e30a7d51fc8' as SpaceId, name: 'sandbox
 export const spaces: readonly SpaceSummary[] = [
   {
     ...delivery,
+    description: 'Production delivery work and operational coordination.',
     conversationCount: 3,
     messageCount: 12,
+    unreadCount: 4,
     lastActivityAt: at('2026-08-30T16:41:00.000Z'),
   },
-  { ...sandbox, conversationCount: 0, messageCount: 0, lastActivityAt: null },
+  { ...sandbox, conversationCount: 0, messageCount: 0, unreadCount: 0, lastActivityAt: null },
 ];
 
 export const rotation: Conversation = {
@@ -73,6 +76,35 @@ export const flaky: Conversation = {
   id: 'cv_d5e83a06f19b' as ConversationId,
   space: delivery.id,
   title: 'store.test.ts times out under load',
+};
+
+export const catchUp: HumanCatchUpPage = {
+  conversations: [
+    {
+      id: rotation.id,
+      space: delivery,
+      title: rotation.title,
+      unreadCount: 2,
+      latestActivitySeq: 42,
+      latestActivityAt: at('2026-08-30T16:41:00.000Z'),
+      lastSender: { kind: 'agent', id: dp2.id, displayName: dp2.displayName },
+      status: 'open',
+      hasPins: true,
+    },
+    {
+      id: backups.id,
+      space: delivery,
+      title: backups.title,
+      unreadCount: 2,
+      latestActivitySeq: 37,
+      latestActivityAt: at('2026-08-29T10:04:00.000Z'),
+      lastSender: pete,
+      status: 'complete',
+      hasPins: false,
+    },
+  ],
+  nextCursor: null,
+  hasMore: false,
 };
 
 /** Headings, lists, a fenced block, links and a mention, in one body. */
@@ -126,6 +158,7 @@ const plan: Attachment = {
   sizeBytes: 2210,
 };
 
+let nextSeq = 100;
 function message(fields: {
   id: string;
   conversation: Conversation;
@@ -137,6 +170,8 @@ function message(fields: {
 }): Message {
   return {
     kind: 'message',
+    // Declared in stream order, so the running counter is a faithful seq.
+    seq: (nextSeq += 1),
     id: fields.id as MessageId,
     space: fields.conversation.space,
     conversationTitle: fields.conversation.title,
@@ -151,7 +186,11 @@ function message(fields: {
 
 export const members: SpaceMembers = {
   current: [
-    { agent: dp1, grantedAt: at('2026-06-02T09:04:00.000Z') },
+    {
+      agent: dp1,
+      grantedAt: at('2026-06-02T09:04:00.000Z'),
+      note: 'Owns deployments and coordinates releases in this space.',
+    },
     { agent: dp2, grantedAt: at('2026-06-02T09:05:00.000Z') },
     { agent: dp3, grantedAt: at('2026-07-14T18:30:00.000Z') },
     { agent: dp4, grantedAt: at('2026-08-28T13:09:00.000Z') },
@@ -288,6 +327,14 @@ export const conversations: readonly ConversationSummary[] = [
     messageCount: rotationMessages.length,
     lastActivityAt: at('2026-08-30T16:41:00.000Z'),
     lastSender: sender(dp2),
+    annotations: {
+      status: 'open',
+      pins: [
+        { message: wrapUp.id, actor: sender(dp1) },
+        { message: wrapUp.id, actor: sender(dp2) },
+        { message: fromPete.id, actor: pete },
+      ],
+    },
   },
   {
     ...flaky,
@@ -295,6 +342,7 @@ export const conversations: readonly ConversationSummary[] = [
     messageCount: flakyMessages.length,
     lastActivityAt: at('2026-08-30T12:44:00.000Z'),
     lastSender: sender(dp4),
+    annotations: { status: 'open', pins: [{ message: flakyMessages[2]!.id, actor: sender(dp4) }] },
   },
   {
     ...backups,
@@ -302,12 +350,14 @@ export const conversations: readonly ConversationSummary[] = [
     messageCount: backupMessages.length,
     lastActivityAt: at('2026-08-29T10:04:00.000Z'),
     lastSender: pete,
+    annotations: { status: 'complete', pins: [] },
   },
 ];
 
 export const agents: readonly AdminAgent[] = [
   {
     ...dp1,
+    description: 'Release coordinator and deployment owner.',
     archived: false,
     lastSeenAt: at('2026-08-30T16:44:00.000Z'),
     failedAttemptsClaimingId: 0,
@@ -402,6 +452,7 @@ export const escalations: readonly Escalation[] = [
     reason:
       'Two of us disagree about whether to change an interface the server owns, and I do not think an agent should decide that. `store.test.ts` stays flaky until someone picks.',
     raisedAt: at('2026-08-30T12:46:00.000Z'),
+    acknowledgedAt: null,
     notification: {
       state: 'failed',
       attempts: 5,
@@ -416,6 +467,7 @@ export const escalations: readonly Escalation[] = [
     conversation: rotation,
     reason: 'The rollback SQL in this thread would drop a role that production also uses.',
     raisedAt: at('2026-08-30T16:10:00.000Z'),
+    acknowledgedAt: at('2026-08-30T16:22:00.000Z'),
     notification: {
       state: 'sent',
       attempts: 1,
@@ -430,6 +482,7 @@ export const escalations: readonly Escalation[] = [
     conversation: backups,
     reason: 'Backup window overran into the maintenance window twice this week.',
     raisedAt: at('2026-08-30T07:02:00.000Z'),
+    acknowledgedAt: null,
     notification: {
       state: 'pending',
       attempts: 0,

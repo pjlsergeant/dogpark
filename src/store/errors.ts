@@ -1,7 +1,8 @@
 import type { ErrorCode } from '../types.js';
 
 /**
- * A failure the HTTP layer can turn straight into a `DogparkError`. The store
+ * A failure the HTTP layer can turn straight into a wire error body
+ * (`{ code, message, retryAfterSeconds? }`). The store
  * chooses the code because it is the layer that knows why: in particular it is
  * the layer that decides when "not yours" has to look like `not_found`, so
  * error codes cannot map the fleet (ADR-0003).
