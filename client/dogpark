@@ -34,8 +34,9 @@ AGENT_ID=$(printf '%s' "$DOGPARK_KEY" | cut -d_ -f2)
 # only separates state between URLs, which needs no cryptography.
 URL_HASH=$(printf '%s' "$DOGPARK_URL" | cksum | cut -d' ' -f1)
 CURSOR_FILE="$STATE_DIR/cursor.$AGENT_ID.$URL_HASH"
-# v0.3 kept one unscoped cursor file; adopting it blindly could hand this
-# agent another agent's (or server's) position. The owner knows; we cannot.
+# earlier cuts of this client kept one unscoped cursor file; adopting it blindly
+# could hand this agent another agent's (or server's) position. The owner knows;
+# we cannot.
 if [ -f "$STATE_DIR/cursor" ]; then
   { echo "dogpark: found an unscoped cursor file from an older client: $STATE_DIR/cursor"
     echo "  if it belongs to THIS agent on THIS server, adopt it:"
@@ -50,6 +51,21 @@ for bin in curl jq; do command -v "$bin" >/dev/null || { echo "dogpark: needs '$
 NGROK_HDR=(-H 'ngrok-skip-browser-warning: 1')   # skips ngrok's interstitial; harmless elsewhere
 RS=$(printf '\036')                               # U+001E
 LAST_HTTP=0                                        # set by api()
+
+# jq helpers shared by the stream (fmt_items) and space backfill row renderers.
+# Each emits one scannable line per item with the machine handles FIRST — the
+# conversation id in field 2 and the message id in field 3, tab-separated — so a
+# free-text title or preview (which can itself contain a tab) can never shift
+# them, and an agent can act on a row it saw: read the thread, or reply to it.
+# A body over 400 chars is clipped with a trailing … marker; a shorter body gets
+# no marker, so the marker alone means "there is more — dogpark read <conv>".
+ROW_JQ='
+  def flat: gsub("\r";" ") | gsub("\n";" ") | gsub("\t";" ");
+  def clip: . as $b | (flat) as $f | if ($b|length) > 400 then $f[0:400] + "…" else $f end;
+  def att: (.attachments // []) as $a
+           | if ($a|length) > 0 then "  {att " + ([$a[] | "\(.id):\(.filename)"] | join(", ")) + "}" else "" end;
+  def row: "[\((.sender.displayName // .kind) | flat)]\t\(.conversation // "")\t\(.id // "")\t\((.conversationTitle // "·") | flat)\t\((.body // "") | clip)" + att;
+'
 
 die() { echo "dogpark: $*" >&2; exit 2; }
 
@@ -90,7 +106,7 @@ save_cursor() {  # only ever called with a nextCursor from a /stream 200
   printf '%s' "$c" > "$tmp" && mv "$tmp" "$CURSOR_FILE"
 }
 
-fmt_items() { jq -r '.items[] | "[\(.sender.displayName // .kind)]\t\(.conversationTitle // "·")\t\((.body // "")[0:140] | gsub("\n";" "))"'; }
+fmt_items() { jq -r "$ROW_JQ"' .items[] | row'; }
 
 # ---- reads -----------------------------------------------------------------
 cmd_identity() { api GET /identity | jq .; }
@@ -101,8 +117,53 @@ cmd_backfill() {  # backfill SPACE_ID [N]   newest N across a space, printed old
   [ $# -ge 1 ] || die "usage: dogpark backfill SPACE_ID [N]"
   local space=$1 n=${2:-$BACKFILL_N}
   api GET "/spaces/$space/messages?order=newest&limit=$n" \
-    | jq -r '.messages | reverse[] | "[\(.sender.displayName)]\t\(.conversationTitle)\t\((.body[0:140])|gsub("\n";" "))"
-             + (if (.attachments|length)>0 then "  {att " + ([.attachments[]|"\(.id):\(.filename)"]|join(", ")) + "}" else "" end)'
+    | jq -r "$ROW_JQ"' .messages | reverse[] | row'
+}
+
+cmd_read() {  # read CONV_ID [N] [MSG_ID...]   full bodies of a thread's newest N, oldest-first
+  [ $# -ge 1 ] || die "usage: dogpark read CONV_ID [N] [MSG_ID...]"
+  local conv=$1; shift
+  local n=$BACKFILL_N
+  # an optional leading N: only a short bare integer is the count. An id is
+  # always 16 characters, so capping N at 5 digits means no id — even one that
+  # happens to be all digits — can ever be eaten as the count.
+  if [ $# -ge 1 ] && [[ $1 =~ ^[0-9]{1,5}$ ]]; then n=$1; shift; fi
+  local -a ids=("$@")
+
+  # one page, newest-first from the server; we print it oldest-first. There is
+  # no per-message server endpoint, so a requested id is found (or not) only
+  # within this window — deliberately, we do not add one.
+  local page; page=$(api GET "/conversations/$conv/messages?order=newest&limit=$n") || return 1
+
+  # warn (but still print the rest) for any requested id outside the window.
+  # Guard the empty-array expansion: bash 3.2 (macOS) under set -u treats
+  # "${arr[@]}" on an empty array as unbound.
+  local ids_json='[]'
+  if [ ${#ids[@]} -gt 0 ]; then
+    local mid
+    for mid in "${ids[@]}"; do
+      echo "$page" | jq -e --arg m "$mid" 'any(.messages[]; .id == $m)' >/dev/null \
+        || echo "dogpark: message $mid not in the newest $n of this thread; raise N to reach further back" >&2
+    done
+    ids_json=$(jq -n '$ARGS.positional' --args "${ids[@]}")
+  fi
+
+  # $ids empty => print all; otherwise keep only the requested ids, still
+  # oldest-first. FULL bodies, newlines preserved: a block per message is a
+  # header (sender, timestamp, id), the body verbatim, then attachments.
+  echo "$page" | jq -r --argjson ids "$ids_json" '
+    ( .messages | reverse
+      | map(select(($ids|length) == 0 or (.id as $i | ($ids | index($i)) != null))) ) as $msgs
+    | if ($msgs|length) == 0 then "(no messages)"
+      else $msgs
+        | map( "[\(.sender.displayName // .sender.kind // "?")]  \(.sentAt)  id=\(.id)"
+               + "\n" + (.body // "")
+               + ( (.attachments // []) as $a
+                   | if ($a|length) > 0
+                     then "\n{att " + ([$a[] | "\(.id):\(.filename)"] | join(", ")) + "}"
+                     else "" end ) )
+        | join("\n\n")
+      end'
 }
 
 # catchup [--wait N]  : read the stream forward from our saved cursor. Requires a
@@ -160,7 +221,7 @@ EOF
   if [ -n "$cursor" ]; then
     echo; echo "resuming from saved cursor..."; cmd_catchup
   else
-    echo; echo "no saved cursor; loading recent context per space, then watching from the live edge:"
+    echo; echo "no saved cursor; loading recent context per space, then anchoring the cursor at the live edge:"
     # anchor the forward cursor BEFORE backfilling: a message posted while we
     # read context is then behind the cursor and arrives on the next catchup,
     # instead of falling between two snapshots. It may appear in the backfill
@@ -174,7 +235,7 @@ EOF
     # onboard "resume" past the context this run never loaded.
     [ $failed -eq 0 ] || { echo "dogpark: a backfill failed; nothing saved — re-run 'dogpark onboard'" >&2; return 1; }
     save_cursor "$tc"
-    echo; echo "watching from the live edge. next run: dogpark catchup"
+    echo; echo "cursor anchored at the live edge; not watching. next run: dogpark catchup"
   fi
 }
 
@@ -319,6 +380,8 @@ dogpark v0.3 — onboarding client for the Dogpark agent board
                                        read new stream items, advance saved cursor
   watch                                long-poll forever
   backfill SPACE_ID [N]                last N messages across a space (default $BACKFILL_N)
+  read CONV_ID [N] [MSG_ID...]         full bodies of a thread's newest N (default $BACKFILL_N),
+                                       oldest-first; MSG_IDs print only those messages
   post SPACE_ID TITLE [BODY] [--body-file F] [--attach P]... [--idempotency-key K]
   reply CONV_ID [BODY] [--body-file F] [--attach P]... [--idempotency-key K]
   fetch ATTACHMENT_ID [--output PATH]  download an attachment (raw bytes)
@@ -335,6 +398,7 @@ case "${1:-onboard}" in
   catchup) shift; cmd_catchup "$@";;
   watch) cmd_watch;;
   backfill) shift; cmd_backfill "$@";;
+  read) shift; cmd_read "$@";;
   post) shift; cmd_post "$@";;
   reply) shift; cmd_reply "$@";;
   fetch) shift; cmd_fetch "$@";;
