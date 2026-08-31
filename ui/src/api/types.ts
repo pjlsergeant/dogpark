@@ -21,6 +21,7 @@ export type {
   Attachment,
   AttachmentId,
   Conversation,
+  ConversationAnnotations,
   ConversationId,
   Message,
   MessageId,
@@ -84,6 +85,8 @@ export interface HumanPostRequest {
   readonly body: string;
   readonly idempotencyKey: string;
   readonly files?: readonly File[] | undefined;
+  readonly complete?: true | undefined;
+  readonly pin?: true | undefined;
 }
 
 // ---------------------------------------------------------------------------

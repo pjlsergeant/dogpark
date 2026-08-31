@@ -7,7 +7,7 @@
  * teacher"). Sender kind is a shape and a colour, not just a name.
  */
 import type { ReactNode } from 'react';
-import type { Attachment, Message } from '../api/index.js';
+import type { Attachment, Message, Sender } from '../api/index.js';
 import { bytes, clockTime, absoluteTime } from '../app/format.js';
 import { useApi } from '../app/api-context.js';
 import { Markdown } from '../markdown/Markdown.js';
@@ -55,14 +55,20 @@ function AttachmentLinks({ attachments }: { attachments: readonly Attachment[] }
 export function MessageView({
   message,
   highlighted = false,
+  pinnedBy = [],
+  humanPinned = false,
+  onPin,
 }: {
   message: Message;
   highlighted?: boolean;
+  pinnedBy?: readonly Sender[];
+  humanPinned?: boolean;
+  onPin?: (() => void) | undefined;
 }): ReactNode {
   const human = message.sender.kind === 'human';
   return (
     <article
-      className={`message${human ? ' message-human' : ''}${highlighted ? ' message-highlighted' : ''}`}
+      className={`message${human ? ' message-human' : ''}${highlighted ? ' message-highlighted' : ''}${pinnedBy.length > 0 ? ' message-pinned' : ''}`}
       id={`m-${message.id}`}
       aria-label={`${human ? 'You' : message.sender.displayName} at ${absoluteTime(message.sentAt)}`}
     >
@@ -78,6 +84,19 @@ export function MessageView({
           <time dateTime={message.sentAt} title={absoluteTime(message.sentAt)}>
             {clockTime(message.sentAt)}
           </time>
+          {pinnedBy.length > 0 && (
+            <span className="message-pin-label">
+              📌 pinned by{' '}
+              {pinnedBy
+                .map((actor) => (actor.kind === 'human' ? 'you' : actor.displayName))
+                .join(', ')}
+            </span>
+          )}
+          {onPin !== undefined && (
+            <button type="button" className="btn btn-quiet message-pin-action" onClick={onPin}>
+              {humanPinned ? 'Unpin' : 'Pin'}
+            </button>
+          )}
         </header>
         <Markdown source={message.body} />
         <AttachmentLinks attachments={message.attachments} />

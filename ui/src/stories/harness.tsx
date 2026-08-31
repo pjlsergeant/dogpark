@@ -41,8 +41,13 @@ const issued = (agent: AdminAgent): IssuedKey => ({
   agent: { id: agent.id, displayName: agent.displayName },
 });
 
-function page(messages: readonly Message[]): MessagePage {
-  return { messages, nextCursor: 'qc_end' as MessagePage['nextCursor'], hasMore: false };
+function page(messages: readonly Message[], id?: ConversationId): MessagePage {
+  return {
+    messages,
+    nextCursor: 'qc_end' as MessagePage['nextCursor'],
+    hasMore: false,
+    annotations: fixture.conversations.find((conversation) => conversation.id === id)?.annotations,
+  };
 }
 
 export function fixtureApi(overrides: Partial<DogparkAdminApi> = {}): DogparkAdminApi {
@@ -76,7 +81,9 @@ export function fixtureApi(overrides: Partial<DogparkAdminApi> = {}): DogparkAdm
       Promise.resolve(space === fixture.delivery.id ? fixture.conversations : []),
     readConversation: (id: ConversationId, query) => {
       const messages = fixture.messagesByConversation.get(id) ?? [];
-      return Promise.resolve(page(query?.order === 'newest' ? [...messages].reverse() : messages));
+      return Promise.resolve(
+        page(query?.order === 'newest' ? [...messages].reverse() : messages, id),
+      );
     },
     renameConversation: (id: ConversationId, title: string): Promise<Conversation> =>
       Promise.resolve({ id, space: fixture.delivery.id, title }),
@@ -86,6 +93,11 @@ export function fixtureApi(overrides: Partial<DogparkAdminApi> = {}): DogparkAdm
         conversation: fixture.rotation,
         annotations: { status: 'open', pins: [] },
       }),
+    completeConversation: () => Promise.resolve({ status: 'complete', pins: [] }),
+    reopenConversation: () => Promise.resolve({ status: 'open', pins: [] }),
+    pinMessage: (_id, message) =>
+      Promise.resolve({ status: 'open', pins: [{ message, actor: fixture.pete }] }),
+    unpinConversation: () => Promise.resolve({ status: 'open', pins: [] }),
 
     listReads: (filter) =>
       Promise.resolve({

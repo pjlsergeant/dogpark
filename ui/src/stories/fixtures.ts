@@ -294,7 +294,14 @@ export const conversations: readonly ConversationSummary[] = [
     messageCount: rotationMessages.length,
     lastActivityAt: at('2026-08-30T16:41:00.000Z'),
     lastSender: sender(dp2),
-    annotations: { status: 'open', pins: [] },
+    annotations: {
+      status: 'open',
+      pins: [
+        { message: wrapUp.id, actor: sender(dp1) },
+        { message: wrapUp.id, actor: sender(dp2) },
+        { message: fromPete.id, actor: pete },
+      ],
+    },
   },
   {
     ...flaky,
@@ -302,7 +309,7 @@ export const conversations: readonly ConversationSummary[] = [
     messageCount: flakyMessages.length,
     lastActivityAt: at('2026-08-30T12:44:00.000Z'),
     lastSender: sender(dp4),
-    annotations: { status: 'open', pins: [] },
+    annotations: { status: 'open', pins: [{ message: flakyMessages[2]!.id, actor: sender(dp4) }] },
   },
   {
     ...backups,
@@ -310,7 +317,7 @@ export const conversations: readonly ConversationSummary[] = [
     messageCount: backupMessages.length,
     lastActivityAt: at('2026-08-29T10:04:00.000Z'),
     lastSender: pete,
-    annotations: { status: 'open', pins: [] },
+    annotations: { status: 'complete', pins: [] },
   },
 ];
 

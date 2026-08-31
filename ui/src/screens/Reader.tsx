@@ -22,7 +22,7 @@ import { useOnChange } from '../app/changes.js';
 import { toApiError, useAsync } from '../app/useAsync.js';
 import { href, navigate } from '../app/router.js';
 import { absoluteTime, dayHeading, sameDay } from '../app/format.js';
-import { Empty, Failure, Loading, Time } from '../components/bits.js';
+import { Empty, Failure, Loading, Pill, Time } from '../components/bits.js';
 import { MessageView } from '../components/MessageView.js';
 import { Composer } from '../components/Composer.js';
 import { NameDialog } from '../components/NameDialog.js';
@@ -175,6 +175,12 @@ function SpaceReader({
                 href={href.read(space, thread.id, undefined, asOf)}
               >
                 <span className="thread-title">{thread.title}</span>
+                <span className="thread-annotations">
+                  {thread.annotations.status === 'complete' && <Pill tone="neutral">complete</Pill>}
+                  {thread.annotations.pins.length > 0 && (
+                    <span title="Pinned messages">📌 {thread.annotations.pins.length}</span>
+                  )}
+                </span>
                 <span className="thread-meta">
                   {thread.lastActivityAt !== null && (
                     <>
@@ -267,6 +273,9 @@ function Thread({
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
   const [renaming, setRenaming] = useState(false);
+  const [annotations, setAnnotations] = useState(
+    summary?.annotations ?? { status: 'open' as const, pins: [] },
+  );
   /**
    * Every full reload gets a number. A read that was already out when one
    * happened lands into a thread that no longer exists as it knew it, so it
@@ -296,6 +305,7 @@ function Thread({
       const thread = await loadThread(api, conversation, seek.current, asOf);
       if (mine !== generation.current) return;
       setLoaded(thread);
+      if (thread.annotations !== undefined) setAnnotations(thread.annotations);
       setArrivals((n) => n + 1);
     } catch (cause) {
       if (mine === generation.current) setError(toApiError(cause));
@@ -354,6 +364,7 @@ function Thread({
       const page = await api.readConversation(conversation, { order: 'newest' });
       if (mine !== generation.current) return;
       const newest = [...page.messages].reverse();
+      if (page.annotations !== undefined) setAnnotations(page.annotations);
       setLoaded((current) => {
         if (current === null) return current;
         const held = new Set(current.messages.map((m) => m.id));
@@ -436,12 +447,28 @@ function Thread({
     (asOf === undefined
       ? (summary?.title ?? messages[0]?.conversationTitle)
       : (messages[0]?.conversationTitle ?? summary?.title)) ?? 'Conversation';
+  const pinned = useMemo(() => {
+    const byMessage = new Map<string, (typeof annotations.pins)[number]['actor'][]>();
+    for (const pin of annotations.pins)
+      byMessage.set(pin.message, [...(byMessage.get(pin.message) ?? []), pin.actor]);
+    return byMessage;
+  }, [annotations]);
+  const humanPin = annotations.pins.find((pin) => pin.actor.kind === 'human')?.message;
+  const updateAnnotations = async (action: () => Promise<typeof annotations>) => {
+    try {
+      setAnnotations(await action());
+      onPosted();
+    } catch (cause) {
+      setError(toApiError(cause));
+    }
+  };
 
   return (
     <>
       <header className="thread-head">
         <div>
           <h1>{heading}</h1>
+          {annotations.status === 'complete' && <Pill tone="neutral">complete</Pill>}
           {summary !== null && asOf === undefined && (
             <p className="muted small">
               opened by{' '}
@@ -455,9 +482,24 @@ function Thread({
         </div>
         <div className="row">
           {asOf === undefined && (
-            <button type="button" className="btn btn-quiet" onClick={() => setRenaming(true)}>
-              Rename
-            </button>
+            <>
+              <button
+                type="button"
+                className="btn"
+                onClick={() =>
+                  void updateAnnotations(() =>
+                    annotations.status === 'complete'
+                      ? api.reopenConversation(conversation)
+                      : api.completeConversation(conversation),
+                  )
+                }
+              >
+                {annotations.status === 'complete' ? 'Reopen' : 'Complete'}
+              </button>
+              <button type="button" className="btn btn-quiet" onClick={() => setRenaming(true)}>
+                Rename
+              </button>
+            </>
           )}
           <button type="button" className="btn btn-quiet" onClick={() => void load()}>
             Refresh
@@ -510,6 +552,32 @@ function Thread({
       )}
 
       <div className="thread-body">
+        {pinned.size > 0 && (
+          <nav className="pinned-summary" aria-label="Pinned messages">
+            <strong>Pinned</strong>
+            {[...pinned.entries()].map(([id, actors]) => {
+              // A pin can point past the loaded pages; then the link says who
+              // pinned rather than what, and scrolling to it loads nothing.
+              const body = messages
+                .find((m) => m.id === id)
+                ?.body.replace(/\s+/g, ' ')
+                .trim();
+              const who = actors
+                .map((actor) => (actor.kind === 'human' ? 'you' : actor.displayName))
+                .join(', ');
+              return (
+                <a key={id} href={`#m-${id}`} title={`pinned by ${who}`}>
+                  {body === undefined
+                    ? `pinned by ${who}`
+                    : body.length > 80
+                      ? `${body.slice(0, 80)}…`
+                      : body}
+                  <span className="muted small"> — {who}</span>
+                </a>
+              );
+            })}
+          </nav>
+        )}
         {busy && loaded === null && <Loading what="messages" />}
         {asOfRefused ? (
           <Empty>
@@ -543,7 +611,22 @@ function Thread({
           return (
             <div key={each.id}>
               {newDay && <div className="day-separator">{dayHeading(each.sentAt)}</div>}
-              <MessageView message={each} highlighted={each.id === highlight} />
+              <MessageView
+                message={each}
+                highlighted={each.id === highlight}
+                pinnedBy={pinned.get(each.id) ?? []}
+                humanPinned={humanPin === each.id}
+                onPin={
+                  asOf === undefined
+                    ? () =>
+                        void updateAnnotations(() =>
+                          humanPin === each.id
+                            ? api.unpinConversation(conversation)
+                            : api.pinMessage(conversation, each.id),
+                        )
+                    : undefined
+                }
+              />
             </div>
           );
         })}
@@ -559,6 +642,7 @@ function Thread({
             void load();
             onPosted();
           }}
+          onAnnotations={setAnnotations}
         />
       )}
     </>

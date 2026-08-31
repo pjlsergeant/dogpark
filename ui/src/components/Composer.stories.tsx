@@ -29,6 +29,31 @@ export const InAThread: Story = {
   },
 };
 
+export const CompletionAndPinOptions: Story = {
+  args: { conversation: fixture.rotation.id },
+  parameters: { expectText: ['mark complete', 'pin this message'] },
+};
+
+export const CompleteThreadNotice: Story = {
+  args: { conversation: fixture.rotation.id },
+  parameters: {
+    expectText: ['This thread is complete; new messages do not reopen it.'],
+    api: fixtureApi({
+      post: () =>
+        Promise.resolve({
+          message: fixture.wrapUp,
+          conversation: fixture.rotation,
+          annotations: { status: 'complete', pins: [] },
+        }),
+    }),
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.type(canvas.getByLabelText('Message'), 'One more note.');
+    await userEvent.click(canvas.getByRole('button', { name: 'Send' }));
+  },
+};
+
 /** A new thread needs a subject line as well, so Send waits on both. */
 export const NewThread: Story = { parameters: { expectText: ['Start thread'] } };
 

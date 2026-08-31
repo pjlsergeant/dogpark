@@ -28,6 +28,22 @@ export const AThread: Story = {
   parameters: { expectText: [fixture.rotation.title, 'Do not touch production'] },
 };
 
+/** Pins from several actors converge on the wrap-up and remain individually attributed. */
+export const OpenWithPins: Story = {
+  args: { space: fixture.delivery.id, conversation: fixture.rotation.id },
+  parameters: { expectText: ['Pinned', 'pinned by dp1, dp2'] },
+};
+
+export const CompleteThread: Story = {
+  args: { space: fixture.delivery.id, conversation: fixture.backups.id },
+  parameters: { expectText: ['complete', 'Reopen'] },
+};
+
+export const ListingWithAnnotations: Story = {
+  args: { space: fixture.delivery.id },
+  parameters: { expectText: ['complete', '📌'] },
+};
+
 /** Arriving from a search result, landing on the message it named. */
 export const HighlightedMessage: Story = {
   args: {

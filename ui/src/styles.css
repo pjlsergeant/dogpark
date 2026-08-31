@@ -778,6 +778,13 @@ kbd.lit {
   overflow-wrap: anywhere;
 }
 
+.thread-annotations {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 0.75rem;
+}
+
 .thread-meta {
   font-size: 0.78rem;
   color: var(--ink-muted);
@@ -857,6 +864,28 @@ kbd.lit {
 .message-highlighted {
   background: var(--warn-soft);
   outline: 1px solid var(--warn);
+}
+
+.message-pinned {
+  box-shadow: inset 3px 0 var(--accent);
+  background: var(--accent-soft);
+}
+.message-pin-label {
+  color: var(--ink-muted);
+  font-size: 0.75rem;
+}
+.message-pin-action {
+  margin-left: auto;
+}
+.pinned-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
 }
 
 .avatar {
@@ -1013,6 +1042,28 @@ kbd.lit {
   color: var(--bad);
   font-size: 0.85rem;
   margin: 0;
+}
+
+.composer-notice {
+  color: var(--ink-muted);
+  font-size: 0.85rem;
+  margin: 0;
+}
+.composer-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+.link-button {
+  border: 0;
+  padding: 0;
+  background: none;
+  color: var(--accent);
+  text-decoration: underline;
+  cursor: pointer;
+  font: inherit;
 }
 
 /* ------------------------------------------------------------- escalations */
