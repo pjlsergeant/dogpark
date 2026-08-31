@@ -1486,6 +1486,20 @@ describe('the HTTP surface', () => {
         });
         expect(spaceMarkdown.body).not.toMatch(/^# Status: fine/m);
         expect(spaceMarkdown.body).toContain('\\# Status: fine');
+        // Nor a list item or a rule: the markers that work at column 0.
+        for (const [description, escaped] of [
+          ['- TODO', '\\- TODO'],
+          ['1. on-call', '1\\. on-call'],
+          ['---', '\\---'],
+        ] as const) {
+          h.store.setSpaceDescription(space, description);
+          const again = await h.app.inject({
+            method: 'GET',
+            url: `/api/admin/spaces/${space}/export?format=markdown`,
+            headers: { cookie: session.cookie },
+          });
+          expect(again.body).toContain(`\n${escaped}\n`);
+        }
 
         // A filename is display text inside generated markdown, never structure.
         const markdown = await h.app.inject({

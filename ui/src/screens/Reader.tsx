@@ -308,6 +308,12 @@ function Thread({
   const [arrivals, setArrivals] = useState(0);
   const [unreadTarget, setUnreadTarget] = useState<MessageId | undefined>(undefined);
   /**
+   * `?unread=N` from a catch-up row is consumed by the first load, as `?m=`
+   * is by `seek`: a Refresh or a post afterwards lands at the live edge, not
+   * back on the message that was the first unread when the row was clicked.
+   */
+  const unreadConsumed = useRef(false);
+  /**
    * Annotations arrive from three places — a full load, the newest-page poll,
    * and an action's own response — and nothing orders their arrival. An
    * action's response is the newest truth the moment it lands, so it bumps
@@ -370,16 +376,16 @@ function Thread({
     setBusy(true);
     setError(null);
     try {
-      const result =
-        seek.current === undefined && unreadCount !== undefined
-          ? await loadFirstUnread(api, conversation, unreadCount, asOf)
-          : { loaded: await loadThread(api, conversation, seek.current, asOf), target: undefined };
+      const firstUnread =
+        seek.current === undefined && unreadCount !== undefined && !unreadConsumed.current;
+      unreadConsumed.current = true;
+      const result = firstUnread
+        ? await loadFirstUnread(api, conversation, unreadCount, asOf)
+        : { loaded: await loadThread(api, conversation, seek.current, asOf), target: undefined };
       const thread = result.loaded;
       if (mine !== generation.current) return;
-      if (result.target !== undefined) {
-        seek.current = result.target;
-        setUnreadTarget(result.target);
-      }
+      if (result.target !== undefined) seek.current = result.target;
+      setUnreadTarget(result.target);
       setLoaded(thread);
       if (thread.annotations !== undefined && epoch === annotationEpoch.current) {
         acceptAnnotations(thread.annotations);
@@ -575,7 +581,10 @@ function Thread({
     attempt: string,
     action: (key: string) => Promise<ConversationAnnotations>,
   ) => {
+    // Stored now, so a second click while this one is still out shares the
+    // key and becomes a replay rather than a second application.
     const key = attemptKeys.current.get(attempt) ?? idempotencyKey();
+    attemptKeys.current.set(attempt, key);
     const seen = annotationArrivals.current;
     try {
       acceptFromAction(await runAction(() => action(key)));

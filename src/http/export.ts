@@ -83,6 +83,17 @@ export function markdownText(value: string): string {
   return value.replace(/[\r\n\v\f\u2028\u2029]+/g, ' ').replace(/[\\`*_[\]()<>#|~]/g, '\\$&');
 }
 
+/**
+ * `markdownText` for a value that opens its own line, where a leading list
+ * marker (`- `, `+ `, `1. `, `1) `) or a run of hyphens would still be
+ * structure. The first such character is escaped; `*` and `_` already are.
+ */
+export function markdownLine(value: string): string {
+  return markdownText(value)
+    .replace(/^(\d+)([.)])/, '$1\\$2')
+    .replace(/^([-+])/, '\\$1');
+}
+
 /** The id is the trusted directory; this is display text reduced to one basename. */
 export function safeAttachmentBasename(filename: string): string {
   const leaf = basename(filename.replaceAll('\\', '/'));
@@ -158,7 +169,7 @@ async function* markdownChunks(
     // Plain operator text, not markdown: on its own line it could otherwise
     // open a heading, a list or a fence.
     if (source.space.description !== undefined) {
-      yield `${markdownText(source.space.description)}\n\n`;
+      yield `${markdownLine(source.space.description)}\n\n`;
     }
   }
   for (const conversation of source.conversations) {

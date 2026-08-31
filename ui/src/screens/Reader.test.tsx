@@ -69,6 +69,18 @@ describe('Reader catch-up marks', () => {
     );
   });
 
+  test('a Refresh after arriving from catch-up lands at the live edge, not the old first unread', async () => {
+    renderCatchUpThread({ advanceReadMark: () => Promise.resolve() });
+    const firstUnread = (await screen.findAllByText(/Do not touch production/)).find(
+      (node) => node.closest('article') !== null,
+    )!;
+    expect(firstUnread.closest('article')?.className).toContain('highlight');
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await waitFor(() =>
+      expect(firstUnread.closest('article')?.className ?? '').not.toContain('highlight'),
+    );
+  });
+
   test('marks the newest displayed message on an ordinary thread view too', async () => {
     const advanceReadMark = vi.fn(() => Promise.resolve());
     renderReader({ advanceReadMark });
@@ -540,6 +552,31 @@ describe('Reader annotations', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Complete' }));
     await waitFor(() => expect(keys).toHaveLength(2));
     expect(keys[1]).not.toBe(keys[0]);
+  });
+
+  test('a second click while the first is still out shares its key', async () => {
+    const keys: string[] = [];
+    let first: ((annotations: ConversationAnnotations) => void) | undefined;
+    renderReader({
+      completeConversation: (_id: string, key: string) => {
+        keys.push(key);
+        return keys.length === 1
+          ? new Promise<ConversationAnnotations>((resolve) => {
+              first = resolve;
+            })
+          : Promise.resolve({ status: 'complete' as const, pins: [] as const });
+      },
+    });
+    const complete = await screen.findByRole('button', { name: 'Complete' });
+    await userEvent.click(complete);
+    await waitFor(() => expect(first).toBeDefined());
+    await userEvent.click(complete);
+    await act(async () => {
+      first!({ status: 'complete', pins: [] });
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(keys).toHaveLength(2));
+    expect(keys[1]).toBe(keys[0]);
   });
 
   test("a failed attempt's key is not restored when state arrived during the attempt", async () => {
