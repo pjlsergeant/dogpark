@@ -78,7 +78,9 @@ describe('ADR index', () => {
         let source = sources.get(file);
         if (source === undefined) {
           try {
-            source = readFileSync(join(ROOT, file), 'utf8');
+            // Line comments are stripped so a commented-out test cannot
+            // satisfy the guard.
+            source = readFileSync(join(ROOT, file), 'utf8').replace(/^\s*\/\/.*$/gm, '');
           } catch {
             problems.push(`${adr}: arm file ${file} does not exist`);
             continue;
