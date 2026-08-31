@@ -98,20 +98,27 @@ export async function loadThread(
  *
  * `unreadCount` was counted when the catch-up row was made; messages that
  * arrived since sit on top of them, so counting back from the tip alone would
- * land late and let the mark pass messages never shown. `since` is the row's
- * latest activity: anything newer is extra to count past.
+ * land late and let the mark pass messages never shown. `tip` is the row's
+ * latestActivitySeq: anything above it is extra to count past — by seq, since
+ * two messages can share a millisecond and never share a seq.
+ *
+ * `reached` is false when the page budget ran out first. The caller must not
+ * treat that as a landing: the first unread is still beyond what is shown.
  */
 export async function loadFirstUnread(
   api: ThreadReader,
   conversation: ConversationId,
   unreadCount: number,
   asOf?: string,
-  since?: string,
-): Promise<{ readonly loaded: Loaded; readonly target: MessageId | undefined }> {
+  tip?: number,
+): Promise<{
+  readonly loaded: Loaded;
+  readonly target: MessageId | undefined;
+  readonly reached: boolean;
+}> {
   let loaded = await loadThread(api, conversation, undefined, asOf);
   const wanted = (): number =>
-    unreadCount +
-    (since === undefined ? 0 : loaded.messages.filter((m) => m.sentAt > since).length);
+    unreadCount + (tip === undefined ? 0 : loaded.messages.filter((m) => m.seq > tip).length);
   while (
     loaded.messages.length < wanted() &&
     loaded.hasMore &&
@@ -120,8 +127,12 @@ export async function loadFirstUnread(
   ) {
     loaded = await olderPage(api, conversation, loaded, asOf);
   }
+  const reached = loaded.messages.length >= wanted() || !loaded.hasMore;
   return {
     loaded,
-    target: loaded.messages.at(-Math.min(wanted(), loaded.messages.length))?.id,
+    target: reached
+      ? loaded.messages.at(-Math.min(wanted(), loaded.messages.length))?.id
+      : undefined,
+    reached,
   };
 }

@@ -108,6 +108,49 @@ describe('Reader catch-up marks', () => {
     await waitFor(() => expect(firstUnread.closest('article')?.className).toContain('highlight'));
   });
 
+  test('a landing that runs out of pages before the first unread holds the mark', async () => {
+    // Sixty single-message pages, sixty unread: the walk stops at the page cap
+    // with older unread still beyond it. Marking the newest displayed would
+    // declare those read, so the mark holds and the thread says why.
+    const total = 60;
+    const all = Array.from({ length: total }, (_, i) => ({
+      ...fixture.wrapUp,
+      id: `m_deep_${i + 1}` as MessageId,
+      seq: i + 1,
+      body: `deep message ${i + 1}`,
+    }));
+    const advanceReadMark = vi.fn(() => Promise.resolve());
+    const api = fixtureApi({
+      advanceReadMark,
+      readConversation: (_id: ConversationId, query?: { after?: string | undefined }) => {
+        const end = query?.after === undefined ? total : Number(query.after);
+        const start = Math.max(0, end - 1);
+        return Promise.resolve({
+          messages: all.slice(start, end).reverse(),
+          nextCursor: String(start) as MessagePage['nextCursor'],
+          hasMore: start > 0,
+        });
+      },
+    });
+    render(
+      <AppProvider value={{ api, session: { displayName: 'pete' }, logout: () => {} }}>
+        <ToastHost>
+          <ReaderScreen
+            space={fixture.delivery.id}
+            conversation={fixture.rotation.id}
+            unreadCount={total}
+            unreadTip={total}
+          />
+        </ToastHost>
+      </AppProvider>,
+    );
+    await screen.findByText(/More unread here than could be loaded/);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(advanceReadMark).not.toHaveBeenCalled();
+  });
+
   test('marks the newest displayed message on an ordinary thread view too', async () => {
     const advanceReadMark = vi.fn(() => Promise.resolve());
     renderReader({ advanceReadMark });
@@ -132,7 +175,12 @@ describe('Reader catch-up marks', () => {
 
   test("an older mark's failure does not forget a newer mark already sent", async () => {
     const older = [...fixture.rotationMessages].reverse();
-    const arrived = { ...fixture.wrapUp, id: 'm_arrived' as MessageId, body: 'Just arrived.' };
+    const arrived = {
+      ...fixture.wrapUp,
+      id: 'm_arrived' as MessageId,
+      seq: 100_000,
+      body: 'Just arrived.',
+    };
     const page = (messages: typeof older): MessagePage => ({
       messages,
       nextCursor: 'qc_end' as MessagePage['nextCursor'],

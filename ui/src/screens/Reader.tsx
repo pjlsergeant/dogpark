@@ -45,14 +45,14 @@ export function ReaderScreen({
   message,
   asOf,
   unreadCount,
-  unreadSince,
+  unreadTip,
 }: {
   space?: SpaceId | undefined;
   conversation?: ConversationId | undefined;
   message?: MessageId | undefined;
   asOf?: string | undefined;
   unreadCount?: number | undefined;
-  unreadSince?: string | undefined;
+  unreadTip?: number | undefined;
 }): ReactNode {
   const api = useApi();
   const spaces = useAsync(() => api.listSpaces(), [api]);
@@ -92,7 +92,7 @@ export function ReaderScreen({
       message={message}
       asOf={asOf}
       unreadCount={unreadCount}
-      unreadSince={unreadSince}
+      unreadTip={unreadTip}
       filter={filter}
       onFilter={setFilter}
       spaceNames={(spaces.state.data ?? []).map((s) => [s.id, s.name] as const)}
@@ -109,7 +109,7 @@ function SpaceReader({
   onFilter,
   spaceNames,
   unreadCount,
-  unreadSince,
+  unreadTip,
 }: {
   space: SpaceId;
   conversation?: ConversationId | undefined;
@@ -119,7 +119,7 @@ function SpaceReader({
   onFilter: (value: string) => void;
   spaceNames: readonly (readonly [SpaceId, string])[];
   unreadCount?: number | undefined;
-  unreadSince?: string | undefined;
+  unreadTip?: number | undefined;
 }): ReactNode {
   const api = useApi();
   const conversations = useAsync(() => api.listConversations(space), [api, space]);
@@ -244,7 +244,7 @@ function SpaceReader({
             highlight={message}
             asOf={asOf}
             unreadCount={unreadCount}
-            unreadSince={unreadSince}
+            unreadTip={unreadTip}
             summary={threads.find((t) => t.id === conversation) ?? null}
             onPosted={() => conversations.reload()}
           />
@@ -266,7 +266,7 @@ function Thread({
   summary,
   onPosted,
   unreadCount,
-  unreadSince,
+  unreadTip,
 }: {
   space: SpaceId;
   conversation: ConversationId;
@@ -281,7 +281,7 @@ function Thread({
   summary: ConversationSummary | null;
   onPosted: () => void;
   unreadCount?: number | undefined;
-  unreadSince?: string | undefined;
+  unreadTip?: number | undefined;
 }): ReactNode {
   const api = useApi();
   const asOfRead = useAsync(
@@ -327,6 +327,8 @@ function Thread({
    * back on the message that was the first unread when the row was clicked.
    */
   const unreadConsumed = useRef(false);
+  const markHeld = useRef(false);
+  const [unreadBeyond, setUnreadBeyond] = useState(false);
   /**
    * Annotations arrive from three places — a full load, the newest-page poll,
    * and an action's own response — and nothing orders their arrival. An
@@ -393,13 +395,21 @@ function Thread({
       const firstUnread =
         seek.current === undefined && unreadCount !== undefined && !unreadConsumed.current;
       const result = firstUnread
-        ? await loadFirstUnread(api, conversation, unreadCount, asOf, unreadSince)
-        : { loaded: await loadThread(api, conversation, seek.current, asOf), target: undefined };
+        ? await loadFirstUnread(api, conversation, unreadCount, asOf, unreadTip)
+        : {
+            loaded: await loadThread(api, conversation, seek.current, asOf),
+            target: undefined,
+            reached: true,
+          };
       const thread = result.loaded;
       if (mine !== generation.current) return;
       // Consumed by a load that landed, so a transient failure's Retry still
       // keeps the promise the catch-up row made.
       if (firstUnread) unreadConsumed.current = true;
+      // A landing that fell short of the first unread must not mark what it
+      // never showed: the mark holds until a full load that does not.
+      markHeld.current = !result.reached;
+      setUnreadBeyond(!result.reached);
       if (result.target !== undefined) seek.current = result.target;
       setUnreadTarget(result.target);
       setLoaded(thread);
@@ -415,7 +425,7 @@ function Thread({
         setBusy(false);
       }
     }
-  }, [api, conversation, asOf, unreadCount, unreadSince]);
+  }, [api, conversation, asOf, unreadCount, unreadTip]);
 
   const loadOlder = useCallback(async () => {
     if (loaded === null || loaded.nextCursor === null) return;
@@ -573,6 +583,7 @@ function Thread({
   // a thread whose mark never moved would sit in catch-up as unread.
   useEffect(() => {
     if (asOf !== undefined || newestId === undefined || marked.current === newestId) return;
+    if (markHeld.current) return;
     marked.current = newestId;
     void api.advanceReadMark(conversation, newestId).catch((cause: unknown) => {
       // Forget only this attempt: a newer tip's mark may already be out.
@@ -715,6 +726,12 @@ function Thread({
       )}
 
       <div className="thread-body">
+        {unreadBeyond && (
+          <p className="thread-notice muted small">
+            More unread here than could be loaded at once; the older messages are behind “Load older
+            messages”, and your read mark stays where it was until you Refresh.
+          </p>
+        )}
         {pinned.size > 0 && (
           <nav className="pinned-summary" aria-label="Pinned messages">
             <strong>Pinned</strong>

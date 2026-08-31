@@ -8,6 +8,7 @@ const conversation = 'conv000000000000' as ConversationId;
 function message(n: number): Message {
   return {
     kind: 'message',
+    seq: n,
     id: `m${n}` as MessageId,
     space: 'space00000000000' as Message['space'],
     conversation,
@@ -102,14 +103,29 @@ describe('assembling a thread from newest-first pages', () => {
 describe('loadFirstUnread', () => {
   it('counts messages that arrived since the catch-up row on top of its unread count', async () => {
     // Twelve messages, pages of five. The row said three unread as of message
-    // ten; eleven and twelve arrived since. The first unread is message eight,
-    // which is on the second page.
+    // ten (its latestActivitySeq); eleven and twelve arrived since. The first
+    // unread is message eight, on the second page. By seq, not by clock: two
+    // messages in one millisecond are told apart, a timestamp could not.
     const reader = fakeThread(12, 5);
-    const since = message(10).sentAt;
-    const { loaded, target } = await loadFirstUnread(reader, conversation, 3, undefined, since);
+    const { loaded, target, reached } = await loadFirstUnread(
+      reader,
+      conversation,
+      3,
+      undefined,
+      10,
+    );
     expect(target).toBe('m8');
+    expect(reached).toBe(true);
     expect(loaded.messages.map((m) => m.id)).toContain('m8');
     // Without the hint, the same count lands late, on message ten.
     expect((await loadFirstUnread(fakeThread(12, 5), conversation, 3)).target).toBe('m10');
+  });
+
+  it('says so when the page budget runs out before the first unread', async () => {
+    // Sixty single-message pages and sixty unread: the walk stops at the cap
+    // with the first unread still beyond it, and must not pretend otherwise.
+    const { target, reached } = await loadFirstUnread(fakeThread(60, 1), conversation, 60);
+    expect(reached).toBe(false);
+    expect(target).toBeUndefined();
   });
 });

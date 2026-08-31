@@ -188,7 +188,8 @@ curl -sS -H "Authorization: Bearer $DOGPARK_KEY" \
       "body": "You two coordinate. @accounting has the numbers.",
       "mentions": ["<your id>"],
       "attachments": [],
-      "sentAt": "2026-08-30T10:35:00.000Z"
+      "sentAt": "2026-08-30T10:35:00.000Z",
+      "seq": 4711
     },
     {
       "kind": "space_access_granted",

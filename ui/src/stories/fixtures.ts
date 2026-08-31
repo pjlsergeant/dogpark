@@ -158,6 +158,7 @@ const plan: Attachment = {
   sizeBytes: 2210,
 };
 
+let nextSeq = 100;
 function message(fields: {
   id: string;
   conversation: Conversation;
@@ -169,6 +170,8 @@ function message(fields: {
 }): Message {
   return {
     kind: 'message',
+    // Declared in stream order, so the running counter is a faithful seq.
+    seq: (nextSeq += 1),
     id: fields.id as MessageId,
     space: fields.conversation.space,
     conversationTitle: fields.conversation.title,

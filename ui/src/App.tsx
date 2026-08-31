@@ -210,7 +210,7 @@ function Screen(): ReactNode {
           message={route.message}
           asOf={route.asOf}
           unreadCount={route.unreadCount}
-          unreadSince={route.unreadSince}
+          unreadTip={route.unreadTip}
         />
       );
     case 'reads':

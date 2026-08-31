@@ -162,6 +162,13 @@ export const MessageSchema = z
     mentions: z.array(branded<AgentId>()).readonly(),
     attachments: z.array(AttachmentSchema).readonly(),
     sentAt: branded<Timestamp>(),
+    /**
+     * The message's position in the stream sequence — the one total order
+     * everything is built on (ADR-0009). Two messages can share a millisecond;
+     * they never share a seq, so this is what to compare against a catch-up
+     * row's `latestActivitySeq` or a cursor, not `sentAt`.
+     */
+    seq: z.number().int().nonnegative(),
   })
   .readonly();
 export type Message = z.infer<typeof MessageSchema>;

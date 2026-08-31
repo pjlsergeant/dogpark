@@ -60,7 +60,12 @@ export function CatchUpScreen(): ReactNode {
               <span className="muted small">{row.space.name}</span>
               <a
                 className="card-title"
-                href={href.readCatchUp(row.space.id, row.id, row.unreadCount, row.latestActivityAt)}
+                href={href.readCatchUp(
+                  row.space.id,
+                  row.id,
+                  row.unreadCount,
+                  row.latestActivitySeq,
+                )}
               >
                 {row.title}
               </a>
