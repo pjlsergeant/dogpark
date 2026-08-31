@@ -20,7 +20,10 @@ const config: StorybookConfig = {
   addons: ['@storybook/addon-docs'],
   core: { disableTelemetry: true },
   async viteFinal(storybookConfig) {
-    const loaded = await loadConfigFromFile({ command: 'serve', mode: 'development' }, UI_VITE_CONFIG);
+    const loaded = await loadConfigFromFile(
+      { command: 'serve', mode: 'development' },
+      UI_VITE_CONFIG,
+    );
     if (loaded === null) return storybookConfig;
     const { resolve, define, css, assetsInclude } = loaded.config;
     return mergeConfig(storybookConfig, { resolve, define, css, assetsInclude });

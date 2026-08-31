@@ -45,7 +45,10 @@ export const Previewing: Story = {
   args: { conversation: fixture.rotation.id },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await userEvent.type(canvas.getByLabelText('Message'), '## Rotation done\n\n- replica reconnected');
+    await userEvent.type(
+      canvas.getByLabelText('Message'),
+      '## Rotation done\n\n- replica reconnected',
+    );
     await userEvent.click(canvas.getByRole('button', { name: 'Preview' }));
   },
 };
@@ -67,7 +70,9 @@ export const ControlCharacter: Story = {
 export const PostFailed: Story = {
   args: { conversation: fixture.rotation.id },
   parameters: {
-    api: fixtureApi({ post: () => Promise.reject(apiError('too_large', 'Message exceeds 64 kB.')) }),
+    api: fixtureApi({
+      post: () => Promise.reject(apiError('too_large', 'Message exceeds 64 kB.')),
+    }),
   },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);

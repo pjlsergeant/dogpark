@@ -41,9 +41,7 @@ export const Nothing: Story = {
 };
 
 export const Failed: Story = {
-  render: () => (
-    <Failure error={apiError('not_found', 'No such space.')} onRetry={fn()} />
-  ),
+  render: () => <Failure error={apiError('not_found', 'No such space.')} onRetry={fn()} />,
 };
 
 /** Rate limiting is the one failure that says when to come back. */
