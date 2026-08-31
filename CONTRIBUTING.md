@@ -27,6 +27,11 @@ say precisely where it fails. An objection that clears that bar gets
 engaged on the merits; one that doesn't was already answered by the reason
 its entry carries. Reviewers re-raising these get a citation, not a debate.
 
+> Transcribed from the development record on 2026-08-31 and **pending the
+> maintainer's line-by-line review**. Until this note is removed, treat the
+> entries as strong defaults rather than final rulings — a written rule must
+> not wear an authority it doesn't have.
+
 - **The schema-level membership test stays raw SQL.** `store.test.ts`
   ("refuses a second open interval at the schema level") inserts a
   membership row past the API on purpose: it proves the partial unique

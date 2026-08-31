@@ -1,16 +1,18 @@
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { loadConfig } from './config.js';
 import { buildApp } from './http/app.js';
 import { hashPassword } from './http/password.js';
+import { CLIENT_PATH, GUIDE_PATH } from './http/static.js';
 import { openStore } from './store/index.js';
 
 // Growth guards: they check that every new surface answered the documentation
 // question, not that the answer is true.
 
-const DOCS = join(import.meta.dirname, '..', 'docs');
+const ROOT = join(import.meta.dirname, '..');
+const DOCS = join(ROOT, 'docs');
 const running = readFileSync(join(DOCS, 'running.md'), 'utf8');
 const httpApi = readFileSync(join(DOCS, 'http-api.md'), 'utf8');
 
@@ -19,12 +21,17 @@ interface Route {
   readonly path: string;
 }
 
+// printRoutes is a debug rendering, not a stable interface, so the parser
+// fails loudly: a line that looks like a tree row but does not parse is an
+// error, and the caller asserts sentinel routes to catch a format change
+// that stops lines looking like tree rows at all.
 function parseRouteTree(tree: string): Route[] {
   const routes: Route[] = [];
   const paths: string[] = [];
   for (const line of tree.split('\n')) {
+    if (line.trim() === '') continue;
     const m = /^((?:[│ ] {3})*)(?:├── |└── )(\S+)(?: \(([A-Z, ]+)\))?$/.exec(line);
-    if (!m) continue;
+    if (!m) throw new Error(`unparseable printRoutes line: ${JSON.stringify(line)}`);
     const depth = (m[1] ?? '').length / 4;
     const segment = m[2] ?? '';
     const parent = depth === 0 ? '' : (paths[depth - 1] ?? '');
@@ -71,14 +78,17 @@ describe('ADR index', () => {
         let source = sources.get(file);
         if (source === undefined) {
           try {
-            source = readFileSync(join(import.meta.dirname, '..', file), 'utf8');
+            source = readFileSync(join(ROOT, file), 'utf8');
           } catch {
             problems.push(`${adr}: arm file ${file} does not exist`);
             continue;
           }
           sources.set(file, source);
         }
-        if (!source.includes(test)) problems.push(`${adr}: no test named "${test}" in ${file}`);
+        // A registered test, not a name that merely survives in a comment or
+        // a skipped `it.skip(`.
+        if (!source.includes(`it('${test}'`) && !source.includes(`test('${test}'`))
+          problems.push(`${adr}: no registered test named "${test}" in ${file}`);
       }
     }
     expect(rows.length).toBeGreaterThanOrEqual(16);
@@ -94,8 +104,10 @@ describe('docs drift guards', () => {
     expect(vars.filter((name) => !running.includes(name))).toEqual([]);
   });
 
-  it('every registered route appears in http-api.md with its method', async () => {
+  it('every registered route appears in http-api.md with its method, in its own section', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'dogpark-docs-'));
+    writeFileSync(join(dir, 'guide.md'), 'guard fixture');
+    writeFileSync(join(dir, 'client.sh'), 'guard fixture');
     const config = loadConfig({
       DOGPARK_PASSWORD_HASH: hashPassword('docs-guard'),
       DOGPARK_TRUST_PROXY: 'no',
@@ -105,11 +117,32 @@ describe('docs drift guards', () => {
       file: join(dir, 'dogpark.sqlite'),
       humanDisplayName: config.DOGPARK_DISPLAY_NAME,
     });
-    const app = await buildApp({ store, config });
+    // guidePath and clientPath make their conditional routes real; uiRoot is
+    // left off (CI runs tests before build:ui), so the SPA's static serving
+    // is the one surface this guard does not see.
+    const app = await buildApp({
+      store,
+      config,
+      guidePath: join(dir, 'guide.md'),
+      clientPath: join(dir, 'client.sh'),
+    });
     try {
       const routes = parseRouteTree(app.printRoutes({ commonPrefix: false }));
-      expect(routes.length).toBeGreaterThan(25);
-      const docLines = httpApi.split('\n');
+      const parsed = new Set(routes.map(({ method, path }) => `${method} ${path}`));
+      // Sentinels: one shallow, one deeply nested. If printRoutes changes
+      // format enough that routes stop parsing, these vanish first.
+      expect(parsed).toContain('GET /api/agent/stream');
+      expect(parsed).toContain('GET /api/admin/reads/:id/messages/:messageId');
+
+      const adminAt = httpApi.indexOf('## Admin API');
+      expect(adminAt).toBeGreaterThan(0);
+      const sections = {
+        agent: httpApi.slice(0, adminAt).split('\n'),
+        admin: httpApi.slice(adminAt).split('\n'),
+      };
+      const served = readFileSync(join(DOCS, 'agent-guide.md'), 'utf8');
+      const readme = readFileSync(join(ROOT, 'README.md'), 'utf8');
+
       const missing: string[] = [];
       for (const { method, path } of routes) {
         if (path === '/') continue; // the SPA, not API surface
@@ -117,13 +150,19 @@ describe('docs drift guards', () => {
           if (!httpApi.includes('GET /health')) missing.push(`${method} ${path}`);
           continue;
         }
-        const scoped = /^\/api\/(?:agent|admin)(\/.*)$/.exec(path);
+        if (path === GUIDE_PATH || path === CLIENT_PATH) {
+          if (!served.includes(path) || !readme.includes(path))
+            missing.push(`${method} ${path} (must appear in agent-guide.md and README.md)`);
+          continue;
+        }
+        const scoped = /^\/api\/(agent|admin)(\/.*)$/.exec(path);
         if (!scoped) {
           missing.push(`${method} ${path} (outside the documented prefixes)`);
           continue;
         }
-        const suffix = scoped[1] ?? '';
-        const documented = docLines.some(
+        const lines = sections[scoped[1] as 'agent' | 'admin'];
+        const suffix = scoped[2] ?? '';
+        const documented = lines.some(
           (line) => line.includes(`\`${suffix}\``) && line.includes(`| ${method} |`),
         );
         if (!documented) missing.push(`${method} ${path}`);
