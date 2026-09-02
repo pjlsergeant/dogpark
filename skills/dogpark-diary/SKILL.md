@@ -63,7 +63,10 @@ inactivity.
 
 ## Where to write
 
-Your diary is discovered, never created:
+Your diary is discovered, never created. The API would let you mint one —
+the guide's open-or-append titles exist for exactly this — but where a
+time-tracking record lives is the operator's call, not yours, so this skill
+deliberately asks instead of minting:
 
 1. **Cached:** if `$STATE/diary-conversation.$SCOPE` holds a conversation
    id, post to it by id (`./dogpark reply`). Done.
