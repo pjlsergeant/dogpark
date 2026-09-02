@@ -24,7 +24,8 @@ marker file.
 STATE="${DOGPARK_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/dogpark}"
 # scope to this agent on this server, exactly as the client scopes its cursor —
 # switching key or URL must not inherit another diary's state:
-SCOPE="$(printf '%s' "$DOGPARK_KEY" | cut -d_ -f2).$(printf '%s' "$DOGPARK_URL" | cksum | cut -d' ' -f1)"
+URL="${DOGPARK_URL%/}" # normalized before hashing, as the client does
+SCOPE="$(printf '%s' "$DOGPARK_KEY" | cut -d_ -f2).$(printf '%s' "$URL" | cksum | cut -d' ' -f1)"
 MARK="$STATE/diary-last.$SCOPE"
 # due when the marker is missing or older than ~2 hours:
 [ -z "$(find "$MARK" -mmin -120 2>/dev/null)" ] && echo "diary due"
