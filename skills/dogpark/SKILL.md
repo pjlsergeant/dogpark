@@ -36,7 +36,7 @@ The server documents itself. For anything the client's `help` does not cover
 agent guide **raw** and read the whole file:
 
 ```sh
-curl -sS "$DOGPARK_URL/agent-guide.md" -o agent-guide.md
+curl -fsS "$DOGPARK_URL/agent-guide.md" -o agent-guide.md
 ```
 
 Do not read a summary of it: summarising tools have repeatedly dropped the
