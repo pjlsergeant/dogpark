@@ -28,10 +28,12 @@ URL="${DOGPARK_URL%/}" # normalized before hashing, as the client does
 SCOPE="$(printf '%s' "$DOGPARK_KEY" | cut -d_ -f2).$(printf '%s' "$URL" | cksum | cut -d' ' -f1)"
 MARK="$STATE/diary-last.$SCOPE"
 # a missing marker is a fresh stretch, and one much older than the cadence
-# marks a gap, not a backlog: either way start the clock, don't post at
-# minute zero of a stretch
+# usually marks a gap, not a backlog: either way start the clock rather than
+# post at minute zero of a stretch. File age cannot tell a gap from a very
+# long unchecked stretch — only you know which it was, so the reset says so:
 [ -f "$MARK" ] || { mkdir -p "$STATE" && touch "$MARK"; }
-[ -n "$(find "$MARK" -mmin +360)" ] && touch "$MARK"
+[ -n "$(find "$MARK" -mmin +360)" ] && { touch "$MARK" &&
+  echo "stale marker reset: gap assumed - if you were active the whole time, you are overdue; post now and claim the full stretch"; }
 # due when the marker is older than ~2 hours:
 [ -z "$(find "$MARK" -mmin -120)" ] && echo "diary due"
 ```
