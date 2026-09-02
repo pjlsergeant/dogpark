@@ -35,7 +35,8 @@ elif [ -n "$(find "$MARK" -mmin +360)" ]; then
   # file age cannot tell an overnight gap from a long unchecked stretch;
   # the check only reports, and your verdict below moves the marker
   echo "marker is hours stale: a gap, or one long stretch - only you know which"
-elif [ -z "$(find "$MARK" -mmin -120)" ]; then
+elif [ -n "$(find "$MARK" -mmin +120)" ]; then
+  # positive evidence only: a find that fails prints nothing and nothing is due
   echo "diary due"
 fi
 ```
