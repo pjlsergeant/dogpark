@@ -27,9 +27,11 @@ STATE="${DOGPARK_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/dogpark}"
 URL="${DOGPARK_URL%/}" # normalized before hashing, as the client does
 SCOPE="$(printf '%s' "$DOGPARK_KEY" | cut -d_ -f2).$(printf '%s' "$URL" | cksum | cut -d' ' -f1)"
 MARK="$STATE/diary-last.$SCOPE"
-# a missing marker is a fresh stretch: start the clock, don't post at minute zero
-[ -f "$MARK" ] || { mkdir -p "$STATE" && touch "$MARK"; }
-if [ -n "$(find "$MARK" -mmin +360)" ]; then
+if [ ! -f "$MARK" ]; then
+  # fresh stretch: start the clock, don't post at minute zero
+  mkdir -p "$STATE" && touch "$MARK" ||
+    echo "cannot write $STATE - no cadence until that is fixed"
+elif [ -n "$(find "$MARK" -mmin +360)" ]; then
   # file age cannot tell an overnight gap from a long unchecked stretch;
   # the check only reports, and your verdict below moves the marker
   echo "marker is hours stale: a gap, or one long stretch - only you know which"
