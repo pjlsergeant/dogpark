@@ -132,6 +132,12 @@ function SpaceReader({
    * not change the URL, so that intent is held here.
    */
   const [composing, setComposing] = useState(false);
+  // A thread in front retires the intent: posting navigates to the opened
+  // thread, and the browser's Back must then land on the list, not back on
+  // the composer.
+  useEffect(() => {
+    if (conversation !== undefined) setComposing(false);
+  }, [conversation]);
   const paneOpen = conversation !== undefined || composing;
   const threads = useMemo(() => {
     const needle = filter.trim().toLowerCase();
