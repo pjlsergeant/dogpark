@@ -82,6 +82,26 @@ export const AnEmptySpace: Story = {
   parameters: { expectText: ['No threads match.'] },
 };
 
+/**
+ * A phone gets a drill-down instead of two panes: no thread in the URL means
+ * the thread list is the whole screen.
+ */
+export const MobileThreadList: Story = {
+  args: { space: fixture.delivery.id },
+  globals: { viewport: { value: 'mobile2', isRotated: false } },
+  parameters: { expectText: [fixture.rotation.title] },
+};
+
+/**
+ * The other half of the drill-down: a thread fills the screen, the header
+ * wraps rather than crushing the title, and "All threads" is the way back.
+ */
+export const MobileThread: Story = {
+  args: { space: fixture.delivery.id, conversation: fixture.rotation.id },
+  globals: { viewport: { value: 'mobile2', isRotated: false } },
+  parameters: { expectText: ['All threads', 'Do not touch production'] },
+};
+
 export const Loading: Story = {
   args: { space: fixture.delivery.id, conversation: fixture.rotation.id },
   parameters: {

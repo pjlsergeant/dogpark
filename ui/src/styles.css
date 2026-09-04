@@ -887,6 +887,19 @@ kbd.lit {
   min-height: 0;
 }
 
+/* The way back up the mobile drill-down; a wide screen shows both panes and
+   has nowhere to go back to. */
+.reader-back {
+  display: none;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  font-size: 0.9rem;
+  font-weight: 550;
+}
+
 .thread-head {
   display: flex;
   justify-content: space-between;
@@ -1563,23 +1576,48 @@ kbd.lit {
 /* ----------------------------------------------------------- responsive */
 
 @media (max-width: 900px) {
-  .app {
-    grid-template-columns: 1fr;
-    height: auto;
+  /* The shell keeps its fixed height — 100dvh where the browser can say so,
+     so the composer rides above the collapsing browser chrome — and the
+     content scrolls inside it, exactly as on a wide screen. */
+  /* The fixed height lives on the shell — 100dvh where the browser can say
+     so, so the composer rides above the collapsing browser chrome — and the
+     app column takes what the banner leaves, not the whole viewport. */
+  .shell {
+    height: 100dvh;
   }
 
+  .app {
+    /* minmax(0, …), or the nav strip's min-content would widen the whole
+       page past the phone: a scroll container still reports its full
+       content as its intrinsic size. */
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  /* One compact bar: wordmark and session on the first line, the nav a
+     swipeable strip under them. Chord hints and the Keys button go — a
+     touch screen has no keyboard to explain. */
   .sidebar {
     flex-direction: row;
     align-items: center;
     flex-wrap: wrap;
     border-right: none;
     border-bottom: 1px solid var(--line);
-    gap: 10px;
+    gap: 4px 10px;
+    padding: 10px 12px;
   }
 
   .sidebar ul {
+    order: 3;
+    flex-basis: 100%;
     flex-direction: row;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+  }
+
+  .sidebar ul a {
+    padding: 5px 9px;
+    white-space: nowrap;
   }
 
   .sidebar ul a kbd {
@@ -1594,15 +1632,76 @@ kbd.lit {
     padding-top: 0;
   }
 
-  .split,
+  .sidebar-foot > button:first-child {
+    display: none;
+  }
+
+  /* Anything smaller and iOS Safari zooms the page into a focused field. */
+  input[type='text'],
+  input[type='password'],
+  input[type='search'],
+  input:not([type]),
+  select,
+  textarea {
+    font-size: 16px;
+  }
+
+  .screen {
+    padding: 14px 14px 48px;
+  }
+
+  .screen-head {
+    flex-wrap: wrap;
+  }
+
+  .split {
+    grid-template-columns: 1fr;
+  }
+
+  /* The reader becomes a drill-down: the thread list is one screen and the
+     thread another, `pane-open` (set by the screen) saying which is in
+     front, `.reader-back` the way back up. */
   .reader {
     grid-template-columns: 1fr;
   }
 
+  .reader:not(.pane-open) .reader-main {
+    display: none;
+  }
+
+  .reader.pane-open .reader-threads {
+    display: none;
+  }
+
   .reader-threads {
     border-right: none;
-    border-bottom: 1px solid var(--line);
-    max-height: 40vh;
+  }
+
+  .reader-back {
+    display: inline-flex;
+  }
+
+  /* Room is short: the title takes the line and the actions wrap under it
+     rather than crushing it a word to a line. */
+  .thread-head {
+    flex-wrap: wrap;
+    padding: 10px 12px;
+  }
+
+  .thread-head .row {
+    flex-wrap: wrap;
+  }
+
+  .thread-body {
+    padding: 12px 12px 16px;
+  }
+
+  .composer {
+    padding: 10px 12px 12px;
+  }
+
+  .composer-actions {
+    flex-wrap: wrap;
   }
 }
 
