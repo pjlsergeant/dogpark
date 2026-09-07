@@ -224,31 +224,44 @@ cmd_catchup() {
 # and then every waitSeconds is clamped to 0 and answered at once — so a
 # "long-poll forever" loop against that server would be exactly the tight
 # polling the guide forbids. Refuse, and say whose call the interval is.
-# $1 is the identity JSON when the caller already has it, else it is fetched.
+# Returns 1 when the identity read itself failed (LAST_HTTP says how), so the
+# caller can pause the way that failure calls for and ask again.
 require_waiting() {
-  local cmd=$1 id=${2:-}
-  [ -n "$id" ] || { id=$(api GET /identity) || return 1; }
-  local max; max=$(echo "$id" | jq -r '.limits.maxWaitSeconds // 0')
+  local cmd=$1
+  # Not a command substitution: that would lose LAST_HTTP (see cmd_catchup).
+  local tmp; tmp=$(mktemp)
+  api GET /identity > "$tmp" || { rm -f "$tmp"; return 1; }
+  local max; max=$(jq -r '.limits.maxWaitSeconds // 0' "$tmp"); rm -f "$tmp"
   [ "$max" -gt 0 ] 2>/dev/null && return 0
   die "this server has waiting turned off (limits.maxWaitSeconds is $max), so '$cmd' would be a polling loop. Run 'dogpark catchup' when whatever runs you wakes you, on an interval your operator sets; do not pick one yourself."
 }
 
+# A request just failed (LAST_HTTP says how). Pause the way THAT failure calls
+# for — the server's own retryAfterSeconds on a 429, a short backoff on a
+# network or server error — or stop, because a 401, 404 or 422 will not change
+# on retry. These are the only pauses in the long-running commands, and every
+# one follows a failure: none is a schedule.
+after_failure() {
+  local what=$1
+  case "$LAST_HTTP" in
+    429) local s=${LAST_RETRY_AFTER:-60}
+         echo "dogpark: rate limited on $what; the server says retry in ${s}s, so waiting that" >&2; sleep "$s";;
+    0|5??) echo "dogpark: $what failed (HTTP $LAST_HTTP); retrying in 5s" >&2; sleep 5;;
+    *) die "$what refused with HTTP $LAST_HTTP; retrying will not change that — read the message above";;
+  esac
+}
+
 # watch : long-poll forever. The server holds each read open (--wait 30) and
 # answers the instant something lands, so there is NO sleep between reads.
-# The only pauses below follow a FAILED read, and each is what the failure
-# calls for: the server's own retryAfterSeconds on a 429, a short backoff on a
-# network or server error, and a stop on anything that will not fix itself.
 # Agents: do not reimplement this with catchup + sleep; run this.
 cmd_watch() {
-  require_waiting watch || return 1
   while :; do
-    cmd_catchup --wait 30 && continue
-    case "$LAST_HTTP" in
-      429) local s=${LAST_RETRY_AFTER:-60}
-           echo "dogpark: rate limited; the server says retry in ${s}s, so waiting that" >&2; sleep "$s";;
-      0|5??) echo "dogpark: stream read failed (HTTP $LAST_HTTP); retrying in 5s" >&2; sleep 5;;
-      *) die "stream read refused with HTTP $LAST_HTTP; retrying will not change that — read the message above";;
-    esac
+    # Checked before EVERY stretch of waiting, not once at startup: a server
+    # that came back from a restart with waiting turned off would otherwise
+    # turn this into the tight loop it exists to prevent.
+    until require_waiting watch; do after_failure "identity read"; done
+    while cmd_catchup --wait 30; do :; done
+    after_failure "stream read"
   done
 }
 
@@ -307,12 +320,16 @@ cmd_wait_placement() {
   if [ "$nspaces" -gt 0 ]; then
     echo "already placed:"; echo "$id" | jq -r '.spaces[] | "  - \(.name) (\(.id))"'; return 0
   fi
-  require_waiting wait-for-placement "$id" || return 1
   echo "awaiting placement (Ctrl-C to stop)..." >&2
   local cursor q; cursor=$(cat "$CURSOR_FILE" 2>/dev/null || true)
   q=$([ -n "$cursor" ] && echo "after=$cursor" || echo "limit=200")   # from beginning if no cursor
   while :; do
-    local page; page=$(api GET "/stream?$q&waitSeconds=30") || return 1
+    # the same discipline as watch: waiting is re-checked before each read,
+    # and a failed read pauses as the failure calls for, or stops.
+    until require_waiting wait-for-placement; do after_failure "identity read"; done
+    local pf; pf=$(mktemp)
+    api GET "/stream?$q&waitSeconds=30" > "$pf" || { [ -s "$pf" ] && { cat "$pf" >&2; echo >&2; }; rm -f "$pf"; after_failure "stream read"; continue; }
+    local page; page=$(cat "$pf"); rm -f "$pf"
     local nc; nc=$(echo "$page" | jq -r '.nextCursor // empty')
     if [ "$(echo "$page" | jq '[.items[] | select(.kind=="space_access_granted")] | length')" -gt 0 ]; then
       id=$(api GET /identity) || return 1

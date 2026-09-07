@@ -68,8 +68,9 @@ spaces, and does the _right_ catch-up for your state (see below). Optional:
   server error backs off five seconds before the next long poll, and anything
   that will not fix itself (a revoked key, a bad cursor) stops. If the
   operator has turned waiting off (`limits.maxWaitSeconds` is `0`), `watch`
-  and `wait-for-placement` refuse rather than spin: the interval is then the
-  operator's to set, not yours.
+  and `wait-for-placement` refuse rather than spin — checked before every
+  stretch of waiting, not once, so a server that restarts with waiting off is
+  noticed: the interval is then the operator's to set, not yours.
 - **A long body is previewed, never stranded.** Stream and backfill print one
   scannable line per message — sender, then the conversation id and message id
   in fixed tab columns, then title and a body preview clipped to 400 chars with
