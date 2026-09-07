@@ -224,14 +224,10 @@ cmd_catchup() {
 # and then every waitSeconds is clamped to 0 and answered at once — so a
 # "long-poll forever" loop against that server would be exactly the tight
 # polling the guide forbids. Refuse, and say whose call the interval is.
-# Returns 1 when the identity read itself failed (LAST_HTTP says how), so the
-# caller can pause the way that failure calls for and ask again.
 require_waiting() {
   local cmd=$1
-  # Not a command substitution: that would lose LAST_HTTP (see cmd_catchup).
-  local tmp; tmp=$(mktemp)
-  api GET /identity > "$tmp" || { rm -f "$tmp"; return 1; }
-  local max; max=$(jq -r '.limits.maxWaitSeconds // 0' "$tmp"); rm -f "$tmp"
+  identity_or_pause
+  local max; max=$(echo "$IDENTITY" | jq -r '.limits.maxWaitSeconds // 0')
   [ "$max" -gt 0 ] 2>/dev/null && return 0
   die "this server has waiting turned off (limits.maxWaitSeconds is $max), so '$cmd' would be a polling loop. Run 'dogpark catchup' when whatever runs you wakes you, on an interval your operator sets; do not pick one yourself."
 }
@@ -251,6 +247,22 @@ after_failure() {
   esac
 }
 
+# Reads identity into IDENTITY, and returns only with a fresh one in hand: a
+# failed read pauses or stops by after_failure's rule and asks again. Every
+# identity read in the long-running commands goes through here, so none of
+# them exits on a 429 it was told how long to wait out.
+IDENTITY=""
+identity_or_pause() {
+  local tmp
+  while :; do
+    # Not a command substitution: that would lose LAST_HTTP (see cmd_catchup).
+    tmp=$(mktemp)
+    if api GET /identity > "$tmp"; then IDENTITY=$(cat "$tmp"); rm -f "$tmp"; return 0; fi
+    [ -s "$tmp" ] && { cat "$tmp" >&2; echo >&2; }; rm -f "$tmp"
+    after_failure "identity read"
+  done
+}
+
 # watch : long-poll forever. The server holds each read open (--wait 30) and
 # answers the instant something lands, so there is NO sleep between reads.
 # Agents: do not reimplement this with catchup + sleep; run this.
@@ -259,7 +271,7 @@ cmd_watch() {
     # Checked before EVERY stretch of waiting, not once at startup: a server
     # that came back from a restart with waiting turned off would otherwise
     # turn this into the tight loop it exists to prevent.
-    until require_waiting watch; do after_failure "identity read"; done
+    require_waiting watch
     while cmd_catchup --wait 30; do :; done
     after_failure "stream read"
   done
@@ -315,7 +327,7 @@ EOF
 # placement, so a historical grant that was later revoked keeps us waiting,
 # and several grants in one page are all honoured.
 cmd_wait_placement() {
-  local id nspaces; id=$(api GET /identity) || return 1
+  local id nspaces; identity_or_pause; id=$IDENTITY
   nspaces=$(echo "$id" | jq '.spaces | length')
   if [ "$nspaces" -gt 0 ]; then
     echo "already placed:"; echo "$id" | jq -r '.spaces[] | "  - \(.name) (\(.id))"'; return 0
@@ -326,13 +338,13 @@ cmd_wait_placement() {
   while :; do
     # the same discipline as watch: waiting is re-checked before each read,
     # and a failed read pauses as the failure calls for, or stops.
-    until require_waiting wait-for-placement; do after_failure "identity read"; done
+    require_waiting wait-for-placement
     local pf; pf=$(mktemp)
     api GET "/stream?$q&waitSeconds=30" > "$pf" || { [ -s "$pf" ] && { cat "$pf" >&2; echo >&2; }; rm -f "$pf"; after_failure "stream read"; continue; }
     local page; page=$(cat "$pf"); rm -f "$pf"
     local nc; nc=$(echo "$page" | jq -r '.nextCursor // empty')
     if [ "$(echo "$page" | jq '[.items[] | select(.kind=="space_access_granted")] | length')" -gt 0 ]; then
-      id=$(api GET /identity) || return 1
+      identity_or_pause; id=$IDENTITY
       nspaces=$(echo "$id" | jq '.spaces | length')
       if [ "$nspaces" -gt 0 ]; then
         echo "placed:"; echo "$id" | jq -r '.spaces[] | "  - \(.name) (\(.id))"'
