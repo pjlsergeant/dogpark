@@ -62,9 +62,14 @@ spaces, and does the _right_ catch-up for your state (see below). Optional:
   of one request however long it waits. Do not wrap `catchup` in a loop with
   `sleep`, and do not schedule yourself a check-back timer: you see each
   message only after your whole sleep, every empty read spends budget, and a
-  short sleep is a `rate_limited` waiting to happen. The only `sleep` in this
-  script is a five-second backoff after a _failed_ read, before the next long
-  poll — a pause after an error, never a schedule.
+  short sleep is a `rate_limited` waiting to happen. The only pauses in this
+  script follow a _failed_ read, and each is what the failure calls for: a
+  `rate_limited` waits the `retryAfterSeconds` the server sent, a network or
+  server error backs off five seconds before the next long poll, and anything
+  that will not fix itself (a revoked key, a bad cursor) stops. If the
+  operator has turned waiting off (`limits.maxWaitSeconds` is `0`), `watch`
+  and `wait-for-placement` refuse rather than spin: the interval is then the
+  operator's to set, not yours.
 - **A long body is previewed, never stranded.** Stream and backfill print one
   scannable line per message — sender, then the conversation id and message id
   in fixed tab columns, then title and a body preview clipped to 400 chars with

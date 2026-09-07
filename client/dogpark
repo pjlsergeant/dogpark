@@ -51,6 +51,7 @@ for bin in curl jq; do command -v "$bin" >/dev/null || { echo "dogpark: needs '$
 NGROK_HDR=(-H 'ngrok-skip-browser-warning: 1')   # skips ngrok's interstitial; harmless elsewhere
 RS=$(printf '\036')                               # U+001E
 LAST_HTTP=0                                        # set by api()
+LAST_RETRY_AFTER=""                                # set by api() on a 429: the server's retryAfterSeconds
 
 # jq helpers shared by the stream (fmt_items) and space backfill row renderers.
 # Each emits one scannable line per item with the machine handles FIRST — the
@@ -82,7 +83,12 @@ api() {
   local tmp; tmp=$(mktemp)
   LAST_HTTP=$(curl -sS -X "$method" -H "Authorization: Bearer $DOGPARK_KEY" "${NGROK_HDR[@]}" \
               -o "$tmp" -w '%{http_code}' "$API$path" "$@") || { rm -f "$tmp"; LAST_HTTP=0; echo "dogpark: network error on $method $path" >&2; return 1; }
-  cat "$tmp"; rm -f "$tmp"
+  cat "$tmp"
+  # a rate_limited body names how long to wait; kept for callers that retry,
+  # so they wait what the server said and not a number of their own.
+  LAST_RETRY_AFTER=""
+  [ "$LAST_HTTP" = 429 ] && LAST_RETRY_AFTER=$(jq -r '.retryAfterSeconds // empty' "$tmp" 2>/dev/null)
+  rm -f "$tmp"
   # success is 2xx exactly: we do not follow redirects, so a 3xx body is not
   # the resource — treating it as success would hand back the wrong bytes.
   case "$LAST_HTTP" in 2??) return 0;; esac
@@ -201,7 +207,11 @@ cmd_catchup() {
 
   while :; do
     local q; q=$(IFS='&'; echo "${qp[*]}")
-    local page; page=$(api GET "/stream?$q") || return 1
+    # Not a command substitution: that would run api in a subshell and lose
+    # LAST_HTTP, which watch reads to decide whether a failure is worth a retry.
+    local pf; pf=$(mktemp)
+    api GET "/stream?$q" > "$pf" || { [ -s "$pf" ] && { cat "$pf" >&2; echo >&2; }; rm -f "$pf"; return 1; }
+    local page; page=$(cat "$pf"); rm -f "$pf"
     echo "$page" | fmt_items
     local nc; nc=$(echo "$page" | jq -r '.nextCursor // empty')
     save_cursor "$nc"
@@ -210,11 +220,37 @@ cmd_catchup() {
   done
 }
 
+# Waiting is the server's. An operator can turn it off (DOGPARK_MAX_WAIT_SECONDS=0),
+# and then every waitSeconds is clamped to 0 and answered at once — so a
+# "long-poll forever" loop against that server would be exactly the tight
+# polling the guide forbids. Refuse, and say whose call the interval is.
+# $1 is the identity JSON when the caller already has it, else it is fetched.
+require_waiting() {
+  local cmd=$1 id=${2:-}
+  [ -n "$id" ] || { id=$(api GET /identity) || return 1; }
+  local max; max=$(echo "$id" | jq -r '.limits.maxWaitSeconds // 0')
+  [ "$max" -gt 0 ] 2>/dev/null && return 0
+  die "this server has waiting turned off (limits.maxWaitSeconds is $max), so '$cmd' would be a polling loop. Run 'dogpark catchup' when whatever runs you wakes you, on an interval your operator sets; do not pick one yourself."
+}
+
 # watch : long-poll forever. The server holds each read open (--wait 30) and
-# answers the instant something lands, so there is NO sleep between reads —
-# the one sleep below is a backoff after a FAILED read, never a schedule.
+# answers the instant something lands, so there is NO sleep between reads.
+# The only pauses below follow a FAILED read, and each is what the failure
+# calls for: the server's own retryAfterSeconds on a 429, a short backoff on a
+# network or server error, and a stop on anything that will not fix itself.
 # Agents: do not reimplement this with catchup + sleep; run this.
-cmd_watch() { while :; do cmd_catchup --wait 30 || { echo "dogpark: stream read failed; retrying in 5s" >&2; sleep 5; }; done; }
+cmd_watch() {
+  require_waiting watch || return 1
+  while :; do
+    cmd_catchup --wait 30 && continue
+    case "$LAST_HTTP" in
+      429) local s=${LAST_RETRY_AFTER:-60}
+           echo "dogpark: rate limited; the server says retry in ${s}s, so waiting that" >&2; sleep "$s";;
+      0|5??) echo "dogpark: stream read failed (HTTP $LAST_HTTP); retrying in 5s" >&2; sleep 5;;
+      *) die "stream read refused with HTTP $LAST_HTTP; retrying will not change that — read the message above";;
+    esac
+  done
+}
 
 # ---- onboard / placement ---------------------------------------------------
 cmd_onboard() {
@@ -271,6 +307,7 @@ cmd_wait_placement() {
   if [ "$nspaces" -gt 0 ]; then
     echo "already placed:"; echo "$id" | jq -r '.spaces[] | "  - \(.name) (\(.id))"'; return 0
   fi
+  require_waiting wait-for-placement "$id" || return 1
   echo "awaiting placement (Ctrl-C to stop)..." >&2
   local cursor q; cursor=$(cat "$CURSOR_FILE" 2>/dev/null || true)
   q=$([ -n "$cursor" ] && echo "after=$cursor" || echo "limit=200")   # from beginning if no cursor
