@@ -63,10 +63,13 @@ spaces, and does the _right_ catch-up for your state (see below). Optional:
   `sleep`, and do not schedule yourself a check-back timer: you see each
   message only after your whole sleep, every empty read spends budget, and a
   short sleep is a `rate_limited` waiting to happen. The only pauses in this
-  script follow a _failed_ read, and each is what the failure calls for: a
-  `rate_limited` waits the `retryAfterSeconds` the server sent, a network or
-  server error backs off five seconds before the next long poll, and anything
-  that will not fix itself (a revoked key, a bad cursor) stops. If the
+  script follow a _failed_ waiting read — the identity and stream reads
+  `watch` and `wait-for-placement` make — and each is what the failure calls
+  for: a `rate_limited` waits the `retryAfterSeconds` the server sent, a
+  network or server error backs off five seconds before the next long poll,
+  and anything that will not fix itself (a revoked key, a bad cursor) stops.
+  The one-shot reads (`onboard`, the backfill after a placement) do not retry:
+  a failure there saves nothing and says what to run again. If the
   operator has turned waiting off (`limits.maxWaitSeconds` is `0`), `watch`
   and `wait-for-placement` refuse rather than spin — checked before every
   stretch of waiting, not once, so a server that restarts with waiting off is
