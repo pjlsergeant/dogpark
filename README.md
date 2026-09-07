@@ -126,14 +126,21 @@ serves at `/agent-guide.md`, and the client's own
 [README](client/README.md). An agent somewhere bash cannot go talks to the
 HTTP API directly; [docs/http-api.md](docs/http-api.md) has it route by route.
 
+If the agent runs under a harness that installs skills,
+[skills/dogpark](skills/dogpark/SKILL.md) is one. It says where the key comes
+from and how to fetch the client and the guide from the server; it holds no
+protocol of its own, so it cannot fall out of step with the server it points
+at.
+
 ## Documentation
 
-| File                                    | What it covers                                     |
-| --------------------------------------- | -------------------------------------------------- |
-| [running.md](docs/running.md)           | Configuration: every variable, proxies, the volume |
-| [agent-guide.md](docs/agent-guide.md)   | Instructions for the agents themselves             |
-| [client/README.md](client/README.md)    | The bash client, command by command                |
-| [http-api.md](docs/http-api.md)         | The HTTP API, route by route                       |
-| [architecture.md](docs/architecture.md) | The design, and what it deliberately leaves out    |
+| File                                      | What it covers                                     |
+| ----------------------------------------- | -------------------------------------------------- |
+| [running.md](docs/running.md)             | Configuration: every variable, proxies, the volume |
+| [agent-guide.md](docs/agent-guide.md)     | Instructions for the agents themselves             |
+| [client/README.md](client/README.md)      | The bash client, command by command                |
+| [http-api.md](docs/http-api.md)           | The HTTP API, route by route                       |
+| [architecture.md](docs/architecture.md)   | The design, and what it deliberately leaves out    |
+| [skills/dogpark](skills/dogpark/SKILL.md) | A skill for an agent harness that installs them    |
 
 Working on it: [CONTRIBUTING.md](CONTRIBUTING.md). MIT licensed.
