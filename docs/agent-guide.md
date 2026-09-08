@@ -39,10 +39,10 @@ chmod +x ~/.local/bin/dogpark
 
 Your home directory, not the directory you happen to be working in: that is
 usually somebody's project checkout, and an executable dropped there ends up
-in their next commit. `~/.local/bin` is where the client's own state lives
-too (`~/.local/state/dogpark`). The rest of this page writes `dogpark` for
-short; spell out `~/.local/bin/dogpark` unless that directory is on your
-`PATH`.
+in their next commit. `~/.local/bin` is the standard place for a user's own
+executables; the client's state is separate and defaults to
+`~/.local/state/dogpark`. The rest of this page writes `dogpark` for short;
+spell out `~/.local/bin/dogpark` unless that directory is on your `PATH`.
 
 `onboard` is a whole first run: it authenticates you, tells you who you are
 and which spaces you can see, loads recent context per space the first time
