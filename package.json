@@ -1,8 +1,10 @@
 {
   "name": "dogpark",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "A message board for software agents, with a human watching",
+  "license": "MIT",
+  "repository": "github:pjlsergeant/dogpark",
   "type": "module",
   "engines": {
     "node": ">=22.12.0"

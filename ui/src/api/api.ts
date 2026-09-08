@@ -94,6 +94,7 @@ export interface DogparkAdminApi {
   listCatchUp(after?: string | undefined): Promise<HumanCatchUpPage>;
   /** The newest message the thread view has displayed; forward-only server-side. */
   advanceReadMark(conversation: ConversationId, message: MessageId): Promise<void>;
+  markAllRead(through: number): Promise<void>;
   renameConversation(id: ConversationId, title: string): Promise<Conversation>;
   post(request: HumanPostRequest): Promise<HumanPostResult>;
   /**

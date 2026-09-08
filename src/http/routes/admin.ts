@@ -49,6 +49,7 @@ import {
   HumanAnnotationActionBody,
   HumanPinBody,
   HumanReadMarkBody,
+  HumanReadMarkAllBody,
   KeyBody,
   NameBody,
   parse,
@@ -340,6 +341,13 @@ export function adminRoutes(ctx: AppContext): FastifyPluginAsync {
           body.message as MessageId,
         );
         if (changed) ctx.writes.adminOnly();
+        return reply.code(204).send();
+      });
+
+      guarded.post('/read-mark/all', async (request, reply) => {
+        const body = parse(HumanReadMarkAllBody, request.body, 'request body');
+        const changed = ctx.store.markAllHumanRead(body.through);
+        if (changed > 0) ctx.writes.adminOnly();
         return reply.code(204).send();
       });
 

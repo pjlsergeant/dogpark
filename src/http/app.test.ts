@@ -2510,4 +2510,42 @@ describe("the human's long poll and space counts", () => {
     const spaces = z.array(SpaceSummarySchema).parse((await me.get('/api/admin/spaces')).json());
     expect(spaces[0]?.unreadCount).toBe(0);
   });
+
+  it('marks all catch-up rows through the displayed bound and rejects invalid bounds', async () => {
+    const me = await human();
+    const space = (await me.post('/api/admin/spaces', { name: 'all read' })).json() as {
+      id: string;
+    };
+    await me.post('/api/admin/messages', {
+      target: { space: space.id, title: 'older' },
+      body: 'one',
+    });
+    const newest = (
+      await me.post('/api/admin/messages', {
+        target: { space: space.id, title: 'newest' },
+        body: 'two',
+      })
+    ).json() as { conversation: { id: string } };
+    const shown = HumanCatchUpPageSchema.parse((await me.get('/api/admin/catch-up')).json());
+    const through = shown.conversations[0]!.latestActivitySeq;
+
+    const marked = await me.send('POST', '/api/admin/read-mark/all', { through });
+    expect(marked.statusCode, marked.body).toBe(204);
+    expect(
+      HumanCatchUpPageSchema.parse((await me.get('/api/admin/catch-up')).json()).conversations,
+    ).toEqual([]);
+
+    await me.post('/api/admin/messages', {
+      target: { conversation: newest.conversation.id },
+      body: 'after the screen was rendered',
+    });
+    const after = HumanCatchUpPageSchema.parse((await me.get('/api/admin/catch-up')).json());
+    expect(after.conversations).toEqual([
+      expect.objectContaining({ id: newest.conversation.id, unreadCount: 1 }),
+    ]);
+    expect((await me.send('POST', '/api/admin/read-mark/all', {})).statusCode).toBe(400);
+    expect((await me.send('POST', '/api/admin/read-mark/all', { through: 0 })).statusCode).toBe(
+      400,
+    );
+  });
 });

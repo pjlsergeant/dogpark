@@ -587,6 +587,13 @@ export function prepareStatements(db: Db) {
         'ON CONFLICT (conversation_id) DO UPDATE SET seq = excluded.seq, updated_at = excluded.updated_at ' +
         'WHERE excluded.seq > human_read_mark.seq',
     ),
+    markAllHumanRead: prepare<{ through: number; at: string }, unknown>(
+      'INSERT INTO human_read_mark (conversation_id, seq, updated_at) ' +
+        'SELECT m.conversation_id, MAX(m.seq), @at FROM message m ' +
+        'WHERE m.seq <= @through GROUP BY m.conversation_id ' +
+        'ON CONFLICT (conversation_id) DO UPDATE SET seq = excluded.seq, updated_at = excluded.updated_at ' +
+        'WHERE excluded.seq > human_read_mark.seq',
+    ),
     humanCatchUp: prepare<{ after: number | null; limit: number }, HumanCatchUpRow>(
       'WITH tips AS (' +
         ' SELECT c.id, MAX(m.seq) AS latest_seq FROM conversation c JOIN message m ON m.conversation_id = c.id GROUP BY c.id' +
