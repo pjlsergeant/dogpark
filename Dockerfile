@@ -3,7 +3,7 @@
 # Dogpark is one process and a SQLite file (ADR-0008), so this is one image
 # with a volume, and nothing else.
 
-FROM node:22-bookworm AS build
+FROM node:22-trixie AS build
 WORKDIR /app
 
 # Dependencies before sources, so editing a source file does not reinstall.
@@ -34,7 +34,7 @@ RUN npm run build \
  && npm run build:ui \
  && npm prune --omit=dev
 
-FROM node:22-bookworm-slim AS runtime
+FROM node:22-trixie-slim AS runtime
 ENV NODE_ENV=production \
     DOGPARK_PORT=8080 \
     DOGPARK_DATA_DIR=/data
