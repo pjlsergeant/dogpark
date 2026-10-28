@@ -1069,3 +1069,29 @@ describe('Reader annotations', () => {
     expect(await screen.findByText(/reopen went wrong/)).toBeTruthy();
   });
 });
+
+describe('Reader mobile drill-down', () => {
+  test('Back after starting a thread lands on the list, not the composer', async () => {
+    const api = fixtureApi();
+    const ui = (conversation?: ConversationId) => (
+      <AppProvider value={{ api, session: { displayName: 'pete' }, logout: () => {} }}>
+        <ToastHost>
+          <ReaderScreen space={fixture.delivery.id} conversation={conversation} />
+        </ToastHost>
+      </AppProvider>
+    );
+    const { container, rerender } = render(ui(undefined));
+    await screen.findByText(fixture.rotation.title);
+    await userEvent.click(screen.getByText('+ New thread'));
+    expect(container.querySelector('.reader')?.classList.contains('pane-open')).toBe(true);
+    // Posting navigates to the opened thread…
+    rerender(ui(fixture.rotation.id));
+    await waitFor(() => expect(container.querySelectorAll('.message').length).toBeGreaterThan(0));
+    // …and the browser's Back removes it again: the drill-down must show the
+    // list, not the new-thread composer the intent already spent.
+    rerender(ui(undefined));
+    await waitFor(() =>
+      expect(container.querySelector('.reader')?.classList.contains('pane-open')).toBe(false),
+    );
+  });
+});

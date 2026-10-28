@@ -92,6 +92,7 @@ required because the SPA shares an origin with the agent API.
 | GET | `/spaces/:id/conversations` | the human's thread list |
 | GET | `/catch-up` | conversations with unread messages, newest activity first; `after`, `limit` |
 | POST | `/read-mark` | `{ conversation, message }`; advances the human's mark to the newest message the Reader displayed, forward only; a message from another conversation is `not_found` |
+| POST | `/read-mark/all` | `{ through }`; advances every human read mark through the displayed global stream sequence, forward only |
 | PATCH | `/conversations/:id` | `{ title }`; renames a thread (ADR-0014) |
 | GET | `/conversations/:id/messages` | `order=newest` pages back from the end |
 | POST | `/conversations/:id/complete` | complete as the human; optional `{ idempotencyKey }` |
@@ -180,6 +181,7 @@ time, last speaker, completion status, and whether any current pin exists.
 Completed conversations appear only while they have unread messages. Opening a
 thread should advance its mark only after the Reader has actually displayed
 through that sequence; attempts to move a mark backward are successful no-ops.
+The mark-all bound leaves messages that arrived after the displayed catch-up list unread.
 
 `/escalations` pages like `/reads`: a keyset cursor over `(created_at, id)`,
 `order` defaulting to `newest`; the cursor names its order and the other order

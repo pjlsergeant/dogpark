@@ -202,6 +202,34 @@ describe('operator descriptions', () => {
 });
 
 describe('human catch-up marks', () => {
+  it('marks every conversation through a bounded sequence and counts only moved marks', () => {
+    const h = harness();
+    const { agent, space } = scene(h);
+    const first = post(h, agent, space, 'first', 'one');
+    const second = post(h, agent, space, 'second', 'two');
+    const bound = second.seq;
+    if (bound === undefined) throw new Error('human fixture message must carry its stream seq');
+    const firstLater = post(h, agent, space, 'first', 'three');
+    const future = post(h, agent, space, 'future', 'four');
+
+    h.store.advanceHumanReadMark(first.conversation, firstLater.id);
+    expect(h.store.markAllHumanRead(bound)).toBe(1);
+    expect(
+      h.store.database
+        .prepare('SELECT conversation_id, seq FROM human_read_mark ORDER BY conversation_id')
+        .all(),
+    ).toEqual(
+      [
+        { conversation_id: first.conversation, seq: firstLater.seq },
+        { conversation_id: second.conversation, seq: second.seq },
+      ].sort((a, b) => a.conversation_id.localeCompare(b.conversation_id)),
+    );
+    expect(h.store.listHumanCatchUp().conversations.map((row) => row.id)).toEqual([
+      future.conversation,
+    ]);
+    expect(h.store.markAllHumanRead(bound)).toBe(0);
+  });
+
   it('advances marks forward only and lists unread conversations newest first', () => {
     const h = harness();
     const { agent, space } = scene(h);

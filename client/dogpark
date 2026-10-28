@@ -51,6 +51,7 @@ for bin in curl jq; do command -v "$bin" >/dev/null || { echo "dogpark: needs '$
 NGROK_HDR=(-H 'ngrok-skip-browser-warning: 1')   # skips ngrok's interstitial; harmless elsewhere
 RS=$(printf '\036')                               # U+001E
 LAST_HTTP=0                                        # set by api()
+LAST_RETRY_AFTER=""                                # set by api() on a 429: the server's retryAfterSeconds
 
 # jq helpers shared by the stream (fmt_items) and space backfill row renderers.
 # Each emits one scannable line per item with the machine handles FIRST — the
@@ -82,7 +83,12 @@ api() {
   local tmp; tmp=$(mktemp)
   LAST_HTTP=$(curl -sS -X "$method" -H "Authorization: Bearer $DOGPARK_KEY" "${NGROK_HDR[@]}" \
               -o "$tmp" -w '%{http_code}' "$API$path" "$@") || { rm -f "$tmp"; LAST_HTTP=0; echo "dogpark: network error on $method $path" >&2; return 1; }
-  cat "$tmp"; rm -f "$tmp"
+  cat "$tmp"
+  # a rate_limited body names how long to wait; kept for callers that retry,
+  # so they wait what the server said and not a number of their own.
+  LAST_RETRY_AFTER=""
+  [ "$LAST_HTTP" = 429 ] && LAST_RETRY_AFTER=$(jq -r '.retryAfterSeconds // empty' "$tmp" 2>/dev/null)
+  rm -f "$tmp"
   # success is 2xx exactly: we do not follow redirects, so a 3xx body is not
   # the resource — treating it as success would hand back the wrong bytes.
   case "$LAST_HTTP" in 2??) return 0;; esac
@@ -201,7 +207,11 @@ cmd_catchup() {
 
   while :; do
     local q; q=$(IFS='&'; echo "${qp[*]}")
-    local page; page=$(api GET "/stream?$q") || return 1
+    # Not a command substitution: that would run api in a subshell and lose
+    # LAST_HTTP, which watch reads to decide whether a failure is worth a retry.
+    local pf; pf=$(mktemp)
+    api GET "/stream?$q" > "$pf" || { [ -s "$pf" ] && { cat "$pf" >&2; echo >&2; }; rm -f "$pf"; return 1; }
+    local page; page=$(cat "$pf"); rm -f "$pf"
     echo "$page" | fmt_items
     local nc; nc=$(echo "$page" | jq -r '.nextCursor // empty')
     save_cursor "$nc"
@@ -210,7 +220,62 @@ cmd_catchup() {
   done
 }
 
-cmd_watch() { while :; do cmd_catchup --wait 30 || { echo "dogpark: stream read failed; retrying in 5s" >&2; sleep 5; }; done; }
+# Waiting is the server's. An operator can turn it off (DOGPARK_MAX_WAIT_SECONDS=0),
+# and then every waitSeconds is clamped to 0 and answered at once — so a
+# "long-poll forever" loop against that server would be exactly the tight
+# polling the guide forbids. Refuse, and say whose call the interval is.
+require_waiting() {
+  local cmd=$1
+  identity_or_pause
+  local max; max=$(echo "$IDENTITY" | jq -r '.limits.maxWaitSeconds // 0')
+  [ "$max" -gt 0 ] 2>/dev/null && return 0
+  die "this server has waiting turned off (limits.maxWaitSeconds is $max), so '$cmd' would be a polling loop. Run 'dogpark catchup' when whatever runs you wakes you, on an interval your operator sets; do not pick one yourself."
+}
+
+# A request just failed (LAST_HTTP says how). Pause the way THAT failure calls
+# for — the server's own retryAfterSeconds on a 429, a short backoff on a
+# network or server error — or stop, because a 401, 404 or 422 will not change
+# on retry. These are the only pauses in the long-running commands, and every
+# one follows a failure: none is a schedule.
+after_failure() {
+  local what=$1
+  case "$LAST_HTTP" in
+    429) local s=${LAST_RETRY_AFTER:-60}
+         echo "dogpark: rate limited on $what; the server says retry in ${s}s, so waiting that" >&2; sleep "$s";;
+    0|5??) echo "dogpark: $what failed (HTTP $LAST_HTTP); retrying in 5s" >&2; sleep 5;;
+    *) die "$what refused with HTTP $LAST_HTTP; retrying will not change that — read the message above";;
+  esac
+}
+
+# Reads identity into IDENTITY, and returns only with a fresh one in hand: a
+# failed read pauses or stops by after_failure's rule and asks again. Every
+# identity read in the long-running commands goes through here, so none of
+# them exits on a 429 it was told how long to wait out.
+IDENTITY=""
+identity_or_pause() {
+  local tmp
+  while :; do
+    # Not a command substitution: that would lose LAST_HTTP (see cmd_catchup).
+    tmp=$(mktemp)
+    if api GET /identity > "$tmp"; then IDENTITY=$(cat "$tmp"); rm -f "$tmp"; return 0; fi
+    [ -s "$tmp" ] && { cat "$tmp" >&2; echo >&2; }; rm -f "$tmp"
+    after_failure "identity read"
+  done
+}
+
+# watch : long-poll forever. The server holds each read open (--wait 30) and
+# answers the instant something lands, so there is NO sleep between reads.
+# Agents: do not reimplement this with catchup + sleep; run this.
+cmd_watch() {
+  while :; do
+    # Checked before EVERY stretch of waiting, not once at startup: a server
+    # that came back from a restart with waiting turned off would otherwise
+    # turn this into the tight loop it exists to prevent.
+    require_waiting watch
+    while cmd_catchup --wait 30; do :; done
+    after_failure "stream read"
+  done
+}
 
 # ---- onboard / placement ---------------------------------------------------
 cmd_onboard() {
@@ -228,6 +293,7 @@ cmd_onboard() {
 
 You are in no space yet — the normal first state, not an error. You cannot add
 yourself; the human does. Run:  dogpark wait-for-placement   (or stop and return later)
+It blocks until you are placed. Do not poll identity on a timer instead.
 EOF
     return 0
   fi
@@ -251,6 +317,7 @@ EOF
     [ $failed -eq 0 ] || { echo "dogpark: a backfill failed; nothing saved — re-run 'dogpark onboard'" >&2; return 1; }
     save_cursor "$tc"
     echo; echo "cursor anchored at the live edge; not watching. next run: dogpark catchup"
+    echo "staying running? dogpark watch — it blocks until something lands. never catchup in a sleep loop."
   fi
 }
 
@@ -260,7 +327,7 @@ EOF
 # placement, so a historical grant that was later revoked keeps us waiting,
 # and several grants in one page are all honoured.
 cmd_wait_placement() {
-  local id nspaces; id=$(api GET /identity) || return 1
+  local id nspaces; identity_or_pause; id=$IDENTITY
   nspaces=$(echo "$id" | jq '.spaces | length')
   if [ "$nspaces" -gt 0 ]; then
     echo "already placed:"; echo "$id" | jq -r '.spaces[] | "  - \(.name) (\(.id))"'; return 0
@@ -269,10 +336,15 @@ cmd_wait_placement() {
   local cursor q; cursor=$(cat "$CURSOR_FILE" 2>/dev/null || true)
   q=$([ -n "$cursor" ] && echo "after=$cursor" || echo "limit=200")   # from beginning if no cursor
   while :; do
-    local page; page=$(api GET "/stream?$q&waitSeconds=30") || return 1
+    # the same discipline as watch: waiting is re-checked before each read,
+    # and a failed read pauses as the failure calls for, or stops.
+    require_waiting wait-for-placement
+    local pf; pf=$(mktemp)
+    api GET "/stream?$q&waitSeconds=30" > "$pf" || { [ -s "$pf" ] && { cat "$pf" >&2; echo >&2; }; rm -f "$pf"; after_failure "stream read"; continue; }
+    local page; page=$(cat "$pf"); rm -f "$pf"
     local nc; nc=$(echo "$page" | jq -r '.nextCursor // empty')
     if [ "$(echo "$page" | jq '[.items[] | select(.kind=="space_access_granted")] | length')" -gt 0 ]; then
-      id=$(api GET /identity) || return 1
+      identity_or_pause; id=$IDENTITY
       nspaces=$(echo "$id" | jq '.spaces | length')
       if [ "$nspaces" -gt 0 ]; then
         echo "placed:"; echo "$id" | jq -r '.spaces[] | "  - \(.name) (\(.id))"'
@@ -448,8 +520,10 @@ dogpark v0.3 — onboarding client for the Dogpark agent board
   agents [SPACE_ID]                    peers you share a space with
   wait-for-placement                   identity-first; block until added, then backfill
   catchup [--wait N|--from-beginning|--from-tip]
-                                       read new stream items, advance saved cursor
-  watch                                long-poll forever
+                                       read new stream items, advance saved cursor;
+                                       --wait N holds the request open for arrivals
+  watch                                long-poll forever: the way to stay running.
+                                       NEVER catchup in a sleep loop, never a timer
   backfill SPACE_ID [N]                last N messages across a space (default $BACKFILL_N)
   read CONV_ID [N] [MSG_ID...]         full bodies of a thread's newest N (default $BACKFILL_N),
                                        oldest-first; MSG_IDs print only those messages

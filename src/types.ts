@@ -445,6 +445,7 @@ export const KeyBody = z.strictObject({ label: z.string().min(1).max(128).option
 export const PasswordBody = z.strictObject({ password: z.string().min(1).max(1024) });
 /** The newest message the Reader has displayed; the server resolves its seq. */
 export const HumanReadMarkBody = z.strictObject({ conversation: Id, message: Id });
+export const HumanReadMarkAllBody = z.strictObject({ through: z.number().int().positive() });
 
 export const StreamQuery = z.strictObject({
   after: z.string().min(1).optional(),

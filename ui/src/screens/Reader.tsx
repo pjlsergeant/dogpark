@@ -125,6 +125,20 @@ function SpaceReader({
   const conversations = useAsync(() => api.listConversations(space), [api, space]);
   // A new thread, or a last-activity that moved: the list follows the writes.
   useOnChange(conversations.reload);
+  /**
+   * On a narrow screen the reader is a drill-down — the thread list is one
+   * screen and the thread another — and `pane-open` says which is in front.
+   * A thread in the URL opens the pane by itself; starting a new one does
+   * not change the URL, so that intent is held here.
+   */
+  const [composing, setComposing] = useState(false);
+  // A thread in front retires the intent: posting navigates to the opened
+  // thread, and the browser's Back must then land on the list, not back on
+  // the composer.
+  useEffect(() => {
+    if (conversation !== undefined) setComposing(false);
+  }, [conversation]);
+  const paneOpen = conversation !== undefined || composing;
   const threads = useMemo(() => {
     const needle = filter.trim().toLowerCase();
     const all = conversations.state.data ?? [];
@@ -132,7 +146,7 @@ function SpaceReader({
   }, [conversations.state.data, filter]);
 
   return (
-    <div className="reader">
+    <div className={`reader${paneOpen ? ' pane-open' : ''}`}>
       <aside className="reader-threads">
         <div className="reader-space-picker">
           <label className="visually-hidden" htmlFor="reader-space">
@@ -169,6 +183,7 @@ function SpaceReader({
           <a
             className={`thread new-thread${conversation === undefined ? ' current' : ''}`}
             href={href.read(space)}
+            onClick={() => setComposing(true)}
           >
             + New thread
           </a>
@@ -212,6 +227,14 @@ function SpaceReader({
       </aside>
 
       <main className="reader-main">
+        {/* Only a narrow screen shows this: the way back up the drill-down. */}
+        <a
+          className="reader-back"
+          href={href.read(space, undefined, undefined, asOf)}
+          onClick={() => setComposing(false)}
+        >
+          ‹ All threads
+        </a>
         {conversation === undefined && asOf !== undefined ? (
           <div className="reader-empty">
             <h2>As it was read</h2>
